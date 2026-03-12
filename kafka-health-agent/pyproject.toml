@@ -1,5 +1,5 @@
 [project]
-name = "kafka-health-agent"
+name = "This repository contains a collection of autonomous agents built with google ADK"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
