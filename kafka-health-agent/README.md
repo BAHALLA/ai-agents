@@ -60,6 +60,9 @@ The agent is equipped with the following tools to manage your cluster:
 - **`get_topic_metadata`**: Provides detailed information about a specific topic, including partitions, leaders, replicas, and ISRs.
 - **`create_kafka_topic`**: Allows creating new topics with custom partition counts and replication factors.
 - **`delete_kafka_topic`**: Deletes an existing topic from the cluster.
+- **`list_consumer_groups`**: Lists all available consumer groups in the cluster.
+- **`describe_consumer_groups`**: Provides detailed information about specific consumer groups (state, members, assignments).
+- **`get_consumer_lag`**: Calculates consumer lag (latest offset - committed offset) for a given group and topic.
 
 ## Project Structure
 
