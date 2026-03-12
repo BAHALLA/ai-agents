@@ -29,11 +29,11 @@ services:
         condition: service_healthy
     ports:
       - "9092:9092"
-      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
 
@@ -58,7 +58,6 @@ services:
 
       # Kafka Streams friendly settings
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
@@ -74,18 +73,12 @@ services:
     restart: unless-stopped
     depends_on:
       - kafka
-      - schema-registry
     ports:
       - "8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local-kafka-cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
       DYNAMIC_CONFIG_ENABLED: 'true'
-      # Enable all features for learning
-      # KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: connect
-      # Optional: Enable JMX metrics
-      # KAFKA_CLUSTERS_0_METRICS_PORT: 9997
 
 volumes:
   zk-data:
