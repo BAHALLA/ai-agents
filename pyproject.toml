@@ -18,5 +18,14 @@ kafka-health-agent = { workspace = true }
 devops-assistant = { workspace = true }
 ops-journal = { workspace = true }
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
 [tool.uv.workspace]
 members = ["core", "agents/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,4 +1,4 @@
-.PHONY: help install infra-up infra-down infra-reset \
+.PHONY: help install test infra-up infra-down infra-reset \
        run-kafka-health run-kafka-health-cli \
        run-devops run-devops-cli run-devops-persistent \
        run-journal run-journal-cli run-journal-persistent
@@ -10,6 +10,9 @@ help: ## Show this help
 
 install: ## Install all workspace packages
 	uv sync
+
+test: ## Run all tests
+	uv run pytest tests/ -v
 
 infra-up: ## Start shared infrastructure (Kafka, Zookeeper, Kafka UI)
 	docker compose up -d

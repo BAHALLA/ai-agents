@@ -1,16 +1,23 @@
 """Kafka admin tools exposed to the agent."""
 
-import os
 from typing import Any, Dict, List, Optional
 
-from ai_agents_core import destructive
+from ai_agents_core import AgentConfig, destructive
 from confluent_kafka import KafkaException, TopicPartition, ConsumerGroupTopicPartitions
 from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
 
+class KafkaConfig(AgentConfig):
+    """Kafka-specific configuration."""
+    kafka_bootstrap_servers: str = "localhost:9092"
+
+
+# Loaded once at import time; agent.py calls load_agent_env() first.
+_config = KafkaConfig()
+
+
 def _get_admin_client() -> AdminClient:
-    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    return AdminClient({"bootstrap.servers": bootstrap})
+    return AdminClient({"bootstrap.servers": _config.kafka_bootstrap_servers})
 
 
 def get_kafka_cluster_health() -> Dict[str, Any]:
