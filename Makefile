@@ -19,7 +19,7 @@ lint: ## Run linter checks (ruff check + format check)
 	uv run ruff check .
 	uv run ruff format --check .
 
-format: ## Auto-fix lint and format issues
+fmt: ## Auto-fix lint and format issues
 	uv run ruff check --fix .
 	uv run ruff format .
 

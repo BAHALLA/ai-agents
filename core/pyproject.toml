@@ -9,3 +9,6 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.2.2",
 ]
+
+[tool.setuptools.packages.find]
+include = ["ai_agents_core*"]

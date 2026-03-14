@@ -11,6 +11,9 @@ dependencies = [
     "aiosqlite>=0.20.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["devops_assistant*"]
+
 [tool.uv.sources]
 ai-agents-core = { workspace = true }
 kafka-health-agent = { workspace = true }
