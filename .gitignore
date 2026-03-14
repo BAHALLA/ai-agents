@@ -15,4 +15,6 @@ wheels/
 
 # ADK
 **/.adk/
-kafka_health_agent/.adk/
+
+# uv
+uv.lock

@@ -1,22 +1,15 @@
+"""Kafka admin tools exposed to the agent."""
+
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dotenv import load_dotenv
-from google.adk.agents import Agent
-from confluent_kafka.admin import AdminClient, NewTopic, ConfigResource, OffsetSpec
+from typing import Any, Dict, List, Optional
+
 from confluent_kafka import KafkaException, TopicPartition, ConsumerGroupTopicPartitions
-
-# Load environment variables from .env file in the same directory as this script
-env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path)
-
-MODEL_NAME = os.getenv("GEMINI_MODEL_VERSION", "gemini-2.0-flash")
-BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
 
 def _get_admin_client() -> AdminClient:
-    """Returns an AdminClient instance."""
-    return AdminClient({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    return AdminClient({"bootstrap.servers": bootstrap})
 
 
 def get_kafka_cluster_health() -> Dict[str, Any]:
@@ -30,9 +23,7 @@ def get_kafka_cluster_health() -> Dict[str, Any]:
         metadata = admin.list_topics(timeout=10)
         brokers = metadata.brokers
         num_brokers = len(brokers)
-
         health_status = "healthy" if num_brokers > 0 else "unhealthy"
-
         return {
             "status": "success",
             "health": health_status,
@@ -78,10 +69,8 @@ def create_kafka_topic(
     new_topic = NewTopic(
         topic_name, num_partitions=num_partitions, replication_factor=replication_factor
     )
-
     try:
         futures = admin.create_topics([new_topic])
-        # Wait for the operation to complete
         for topic, future in futures.items():
             try:
                 future.result()
@@ -209,18 +198,21 @@ def describe_consumer_groups(group_ids: List[str]) -> Dict[str, Any]:
                         "member_id": m.member_id,
                         "client_id": m.client_id,
                         "host": m.host,
-                        "assignment": [f"{tp.topic} [{tp.partition}]" for tp in m.assignment.topic_partitions] if m.assignment else []
+                        "assignment": [
+                            f"{tp.topic} [{tp.partition}]"
+                            for tp in m.assignment.topic_partitions
+                        ] if m.assignment else [],
                     })
                 results.append({
                     "group_id": desc.group_id,
                     "state": str(desc.state),
                     "protocol_type": desc.protocol_type,
                     "is_simple_consumer_group": desc.is_simple_consumer_group,
-                    "members": members
+                    "members": members,
                 })
             except Exception as e:
                 results.append({"group_id": group_id, "error": str(e)})
-        
+
         return {"status": "success", "groups": results}
     except Exception as e:
         return {"status": "error", "message": f"Failed to describe consumer groups: {str(e)}"}
@@ -231,44 +223,51 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
 
     Args:
         group_id: The ID of the consumer group.
-        topic_name: Optional topic name to filter by. If not provided, all topics assigned to the group are checked.
+        topic_name: Optional topic name to filter by.
 
     Returns:
         A dictionary with partition-level lag information.
     """
     admin = _get_admin_client()
     try:
-        # 1. Get committed offsets for the group
-        offsets_future = admin.list_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id)])
+        offsets_future = admin.list_consumer_group_offsets(
+            [ConsumerGroupTopicPartitions(group_id)]
+        )
         committed_offsets = offsets_future[group_id].result().topic_partitions
 
-        # Filter by topic if requested
         if topic_name:
             committed_offsets = [tp for tp in committed_offsets if tp.topic == topic_name]
 
         if not committed_offsets:
             return {
-                "status": "success", 
-                "message": f"No offsets found for group '{group_id}'" + (f" and topic '{topic_name}'" if topic_name else ""), 
-                "lag_info": []
+                "status": "success",
+                "message": (
+                    f"No offsets found for group '{group_id}'"
+                    + (f" and topic '{topic_name}'" if topic_name else "")
+                ),
+                "lag_info": [],
             }
 
-        # 2. Get latest offsets (Log-End Offsets) for these topic/partitions
-        # latest_offsets_request expects a dict of {TopicPartition: OffsetSpec}
-        latest_offsets_request = {TopicPartition(tp.topic, tp.partition): OffsetSpec.latest() for tp in committed_offsets}
+        latest_offsets_request = {
+            TopicPartition(tp.topic, tp.partition): OffsetSpec.latest()
+            for tp in committed_offsets
+        }
         latest_offsets_future = admin.list_offsets(latest_offsets_request)
-        
+
         lag_info = []
         total_lag = 0
-        
+
         for tp, future in latest_offsets_future.items():
             try:
                 latest_offset_res = future.result()
                 latest_offset = latest_offset_res.offset
-                
-                # Find the committed offset for this TP
-                committed_offset_tp = next((c for c in committed_offsets if c.topic == tp.topic and c.partition == tp.partition), None)
-                
+
+                committed_offset_tp = next(
+                    (c for c in committed_offsets
+                     if c.topic == tp.topic and c.partition == tp.partition),
+                    None,
+                )
+
                 if committed_offset_tp and committed_offset_tp.offset >= 0:
                     lag = latest_offset - committed_offset_tp.offset
                     total_lag += lag
@@ -277,7 +276,7 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
                         "partition": tp.partition,
                         "committed_offset": committed_offset_tp.offset,
                         "latest_offset": latest_offset,
-                        "lag": lag
+                        "lag": lag,
                     })
                 else:
                     lag_info.append({
@@ -285,43 +284,20 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
                         "partition": tp.partition,
                         "committed_offset": "N/A",
                         "latest_offset": latest_offset,
-                        "lag": "unknown"
+                        "lag": "unknown",
                     })
             except Exception as e:
                 lag_info.append({
                     "topic": tp.topic,
                     "partition": tp.partition,
-                    "error": str(e)
+                    "error": str(e),
                 })
 
         return {
             "status": "success",
             "group_id": group_id,
             "total_lag": total_lag,
-            "lag_details": lag_info
+            "lag_details": lag_info,
         }
-
     except Exception as e:
         return {"status": "error", "message": f"Failed to calculate lag: {str(e)}"}
-
-
-root_agent = Agent(
-    name="kafka_health_agent",
-    model=MODEL_NAME,
-    description=("Agent to monitor and report on the health of a Kafka cluster."),
-    instruction=(
-        "You are a specialized agent for Kafka monitoring. You can check cluster health, "
-        "manage topics, and inspect consumer groups and lag. Use the provided tools to "
-        "retrieve cluster information and troubleshoot performance or connectivity issues."
-    ),
-    tools=[
-        get_kafka_cluster_health,
-        list_kafka_topics,
-        create_kafka_topic,
-        delete_kafka_topic,
-        get_topic_metadata,
-        list_consumer_groups,
-        describe_consumer_groups,
-        get_consumer_lag,
-    ],
-)

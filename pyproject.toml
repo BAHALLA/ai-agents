@@ -1,0 +1,17 @@
+[project]
+name = "ai-agents"
+version = "0.1.0"
+description = "A collection of autonomous AI agents"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ai-agents-core",
+    "kafka-health-agent",
+]
+
+[tool.uv.sources]
+ai-agents-core = { workspace = true }
+kafka-health-agent = { workspace = true }
+
+[tool.uv.workspace]
+members = ["core", "agents/*"]
