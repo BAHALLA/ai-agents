@@ -100,15 +100,12 @@ async def test_planner_routing_eval(monkeypatch):
     right specialist AgentTool. Mocks both kafka admin and the ES
     session at the same client-getter layer the unit tests use.
 
-    Thresholds in ``evals/test_config.json`` are deliberately set to 0.0
-    (smoke-test mode). The expected ``tool_uses`` in the JSON specifies
-    only the AgentTool name; the actual call carries an LLM-generated
-    ``request`` arg whose text is non-deterministic, so strict
-    trajectory matching would always fail. As written, this test
-    asserts that the agent loads with the planner attached and runs the
-    full tool path end-to-end (mock kafka admin → AgentTool → response).
-    Tighten thresholds once you adopt a strategy for matching
-    AgentTool args (e.g., regex matchers or per-arg wildcards)."""
+    Thresholds in ``evals/test_config.json`` are set to 1.0 for the
+    custom ``tool_trajectory_name_match`` metric. The expected ``tool_uses``
+    in the JSON specifies only the AgentTool name; the actual call carries
+    an LLM-generated ``request`` arg whose text is non-deterministic.
+    Our custom metric ignores the exact arguments and strictly matches
+    the tool trajectory names."""
     if not _has_llm_credentials():
         pytest.skip(
             "Agent eval requires Gemini credentials: set GOOGLE_API_KEY / "
