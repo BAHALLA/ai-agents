@@ -182,48 +182,6 @@
         "user_id": "test_user",
         "state": {"user_role": "viewer"}
       }
-    },
-    {
-      "eval_id": "patch_deployment",
-      "conversation": [
-        {
-          "invocation_id": "inv-016",
-          "user_content": {
-            "parts": [{"text": "Update the web-app deployment in default to use image nginx:1.26"}],
-            "role": "user"
-          },
-          "final_response": {
-            "parts": [
-              {
-                "text": "I have successfully patched the web-app deployment to use the nginx:1.26 image."
-              }
-            ],
-            "role": "model"
-          },
-          "intermediate_data": {
-            "tool_uses": [
-              {
-                "name": "patch_deployment",
-                "args": {
-                  "name": "web-app",
-                  "namespace": "default",
-                  "patch": {
-                    "spec": {
-                      "template": {"spec": {"containers": [{"name": "web-app", "image": "nginx:1.26"}]}}
-                    }
-                  }
-                }
-              }
-            ],
-            "intermediate_responses": []
-          }
-        }
-      ],
-      "session_input": {
-        "app_name": "k8s_health_agent",
-        "user_id": "test_user",
-        "state": {"user_role": "operator"}
-      }
     }
   ]
 }

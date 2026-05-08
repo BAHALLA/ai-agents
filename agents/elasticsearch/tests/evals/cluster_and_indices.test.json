@@ -94,7 +94,7 @@
         {
           "invocation_id": "inv-103",
           "user_content": {
-            "parts": [{"text": "Are there any unassigned shards in the cluster?"}],
+            "parts": [{"text": "Run a shard-allocation diagnostic — list any unassigned shards and their unassigned reasons."}],
             "role": "user"
           },
           "final_response": {
