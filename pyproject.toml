@@ -16,7 +16,7 @@ dependencies = [
     "ops-journal",
     "slack-bot",
     "google-chat-bot",
-    "google-adk>=1.32.0",
+    "google-adk>=1.33.0",
 ]
 
 [project.optional-dependencies]
