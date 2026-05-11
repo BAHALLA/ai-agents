@@ -53,8 +53,21 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Set up Python
+        run: uv python install 3.14
+
       - name: Bandit check
-        run: uvx bandit -r agents/ core/ -ll
+        run: uvx --python 3.14 bandit -r agents/ core/ -ll
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
 
   test:
     name: Test

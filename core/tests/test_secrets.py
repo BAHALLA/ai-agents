@@ -113,5 +113,5 @@ class TestSecretsManager:
 # ── Protocol ────────────────────────────────────────────────────────
 
 
-def test_filebackend_satisfies_protocol():
-    assert isinstance(FileBackend("/tmp"), SecretsBackend)
+def test_filebackend_satisfies_protocol(tmp_path):
+    assert isinstance(FileBackend(str(tmp_path)), SecretsBackend)
