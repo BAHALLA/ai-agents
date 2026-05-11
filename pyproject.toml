@@ -25,6 +25,14 @@ dependencies = [
 postgres = [
     "orrery-core[postgres]",
 ]
+# Install with: uv sync --extra auth
+auth = [
+    "orrery-core[auth]",
+]
+# Install with: uv sync --extra server
+server = [
+    "orrery-core[server]",
+]
 
 [tool.uv.sources]
 orrery-core = { workspace = true }

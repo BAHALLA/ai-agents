@@ -4,6 +4,33 @@ Common errors across every surface, with pointers to the deeper fix. If the symp
 
 ## Authentication & authorization
 
+### `401 Missing bearer token` / `401 Invalid token` on `POST /chat`
+The HTTP front door (`orrery_core.server`) requires a valid JWT bearer token whenever `AUTH_ENABLED=true`. Common causes:
+
+- **No Authorization header.** Send `Authorization: Bearer <jwt>`. `/healthz` and `/readyz` are intentionally exempt.
+- **Audience / issuer mismatch.** The token's `aud` and `iss` claims must match `JWT_AUDIENCE` / `JWT_ISSUER` byte-for-byte. The server returns a generic 401 to avoid leaking which check failed — set `LOG_LEVEL=DEBUG` to see the underlying PyJWT message.
+- **Token expired.** `exp` is mandatory; the default clock-skew leeway is 30s. NTP-drift is the right fix, not raising `JWT_LEEWAY_SECONDS`.
+- **Stale JWKS cache (RS256).** Public keys are cached for 10 minutes per pod. If the IdP just rotated, restart the pod or wait for the next refresh.
+- **`JWT_SECRET` mismatch (HS256).** The verifying secret must match what your gateway uses to sign. If you set it via `secretsVolume`, confirm `ORRERY_SECRETS_DIR/JWT_SECRET` exists in the pod (`kubectl exec ... -- ls /var/run/secrets/orrery`).
+
+Full setup recipes: [Security & auth](config/security.md).
+
+### `JWT_SECRET is required when JWT_ALGORITHM=HS256` at startup
+The chart was rendered with `auth.enabled=true` but no secret reached the pod. Either:
+
+- Set `JWT_SECRET` under the chart's `secrets:` block (Helm-managed), or
+- Add it to the `existingSecret` you reference, or
+- Enable `secretsVolume` and put `JWT_SECRET` in the mounted Secret.
+
+`create_app()` validates the JWT config eagerly so you catch this at boot rather than on the first request.
+
+### "User has admin role in the JWT but is denied"
+Three things to check, in order:
+
+1. The `JWT_ROLE_CLAIM` env var matches the claim your IdP actually puts roles in (Auth0 typically namespaces it as `https://YOUR_API/roles`).
+2. The role value is one of `admin` / `operator` / `viewer` — or one of the aliases (`orrery-admin`, `orrery_operator`). Custom names need an explicit `RolePolicy`.
+3. The HTTP front door re-stamps `_auth` on every `POST /chat`, and `AuthPlugin.before_agent_callback` re-applies `set_user_role` on every turn — so the role tracks the verified token live. If you're not going through `/chat` (e.g. you're inside the Slack or Google Chat handler), the role is whatever the transport set at session creation; restart the thread to pick up env-var changes.
+
 ### `401 Unauthorized: Invalid ID token` (Google Chat)
 - `GOOGLE_CHAT_AUDIENCE` must match the HTTP endpoint URL **byte-for-byte**, including the trailing slash. Google signs the JWT audience with the exact string you paste in the Chat API Configuration tab.
 - If your logs show a `service-NNN@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` identity, add it to `GOOGLE_CHAT_IDENTITIES`.

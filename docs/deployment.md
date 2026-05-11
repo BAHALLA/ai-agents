@@ -133,7 +133,101 @@ ingress:
 
 ---
 
-## Step 4 — Verify
+## Step 4 — Enable authentication
+
+If you are exposing the agent over HTTP (Ingress, `orrery_core.server`,
+`adk web`), turn on the JWT bearer-token front door before sending real
+traffic. Without it, RBAC roles in the JWT are not verifiable and any
+caller on the network can self-declare as `admin`. The Slack and Google
+Chat bots authenticate at their own layer and are unaffected.
+
+For the full threat model and provider-specific JWKS endpoints, see
+[`config/security.md`](config/security.md).
+
+### Option A — IdP-fronted (RS256/JWKS, recommended for production)
+
+Most production deployments will sit behind Auth0, Keycloak, Okta, or
+Google IAP. The chart only needs the JWKS URL and the audience/issuer
+your IdP mints tokens with:
+
+```yaml
+auth:
+  enabled: true
+  algorithm: RS256
+  jwksUrl: https://your-tenant.auth0.com/.well-known/jwks.json
+  audience: https://orrery.your-org.com
+  issuer: https://your-tenant.auth0.com/
+  roleClaim: https://orrery.your-org.com/roles   # Auth0 custom claim
+```
+
+No `JWT_SECRET` is needed — public keys are fetched from the JWKS URL
+and cached for 10 minutes.
+
+### Option B — Shared secret (HS256, dev / gateway-fronted)
+
+Suitable when a trusted gateway (Envoy, oauth2-proxy, internal SSO)
+mints tokens with a shared secret, or for local testing.
+
+```yaml
+auth:
+  enabled: true
+  algorithm: HS256
+  audience: orrery
+  issuer: https://your-gateway
+
+# Provide JWT_SECRET via the existingSecret created in Step 2 (preferred)
+# or under `secrets` (Helm-managed). Keep it ≥ 32 bytes.
+```
+
+```bash
+kubectl -n orrery patch secret orrery-assistant-secrets \
+  --type=merge \
+  -p "{\"stringData\":{\"JWT_SECRET\":\"$(openssl rand -hex 32)\"}}"
+```
+
+### Mount JWT_SECRET (and other secrets) via a file volume
+
+For compliance-bound deployments where API keys must not appear in the
+pod's environment, use the file-backed `SecretsManager`:
+
+```yaml
+secretsVolume:
+  enabled: true
+  secretName: orrery-secrets-volume   # created out-of-band by ESO / Vault / Sealed Secrets
+  mountPath: /var/run/secrets/orrery
+```
+
+The chart sets `ORRERY_SECRETS_DIR` to the mount path; each key in the
+Secret becomes a file under it, and `default_secrets.get("JWT_SECRET")`
+resolves transparently. Falls back to env vars when a key is not in the
+volume, so this composes with the existing `envFrom` flow.
+
+### Roll out
+
+```bash
+helm upgrade orrery-assistant deploy/helm/orrery-assistant \
+  -n orrery -f my-values.yaml
+
+kubectl -n orrery rollout status deployment/orrery-assistant
+```
+
+Verify the rollout enforces auth:
+
+```bash
+kubectl -n orrery port-forward svc/orrery-assistant 8000:8000
+
+# Unauthenticated call → 401
+curl -i http://localhost:8000/chat -d '{"message":"hi"}' -H 'Content-Type: application/json'
+# HTTP/1.1 401 Unauthorized
+# WWW-Authenticate: Bearer
+
+# /healthz and /readyz remain unauthenticated by design.
+curl http://localhost:8000/healthz
+```
+
+---
+
+## Step 5 — Verify
 
 ```bash
 # Pods come up and pass readiness
@@ -158,7 +252,7 @@ open http://localhost:8000
 
 ---
 
-## Step 5 — Zero-downtime rolling updates
+## Step 6 — Zero-downtime rolling updates
 
 The Helm chart configures `maxSurge: 1, maxUnavailable: 0`, a 10-second
 preStop sleep, and 60-second `terminationGracePeriodSeconds`. This
@@ -189,7 +283,7 @@ helm rollback orrery-assistant -n orrery
 
 ---
 
-## Step 6 — Autoscaling
+## Step 7 — Autoscaling
 
 The HPA scales on CPU (70%) and memory (80%) utilization between 2 and 6
 replicas. Scale-up is rate-limited to 1 pod per minute to avoid LLM bill
@@ -216,6 +310,24 @@ Check the logs — the most common causes are:
 - `DatabaseSessionService` complains about missing driver: ensure the
   image was built with `uv sync --extra postgres` (the provided
   `Dockerfile` includes this by default).
+- `auth.enabled=true` but `JWT_SECRET` is unset (HS256) or
+  `JWT_JWKS_URL` is unset (RS256). `create_app()` calls
+  `cfg.jwt.validate()` at startup precisely so this fails fast — look
+  for `JWT_SECRET is required` / `JWT_JWKS_URL is required` in the
+  logs.
+
+### `401 Invalid token` on every `/chat` call after enabling auth
+
+- The token's `aud` / `iss` claims don't match `auth.audience` /
+  `auth.issuer` in `values.yaml`. The server rejects mismatched tokens
+  silently to avoid leaking the validation strategy — turn on
+  `LOG_LEVEL=DEBUG` to see the underlying PyJWT error.
+- Clock drift between the IdP and the cluster exceeds
+  `auth.leewaySeconds` (default 30s). NTP is the right fix; don't
+  raise leeway above 60s in production.
+- For RS256/JWKS, the IdP rotated its signing keys and the pod's
+  in-memory JWKS cache is stale. The cache expires every 10 minutes;
+  if you need a faster cut, restart the pod.
 
 ### Readiness probe flaps
 
@@ -245,6 +357,6 @@ hit rate. The most common cause is that context caching is disabled
 ## Related AEPs
 
 - [AEP-011](enhancements/aep-011-deployment-hardening.md) — this guide's implementation
-- AEP-013 — security hardening (JWT auth, PII redaction) — next up
-- AEP-014 — supply chain security (SBOM, cosign signing)
+- [AEP-013](enhancements/aep-013-security-hardening.md) — security hardening; JWT auth landed in Step 4 above. PII redaction + prompt-injection screening + Gemini safety filters are the remaining sub-PRs.
+- AEP-014 — supply chain security (SBOM, cosign signing, image scan gate)
 - AEP-015 — cost observability and per-tenant budgets

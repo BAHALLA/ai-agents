@@ -90,6 +90,11 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /home/appuser/.cache
+            {{- if .Values.secretsVolume.enabled }}
+            - name: orrery-secrets
+              mountPath: {{ .Values.secretsVolume.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -97,6 +102,11 @@ spec:
         - name: cache
           emptyDir:
             sizeLimit: 512Mi
+        {{- if .Values.secretsVolume.enabled }}
+        - name: orrery-secrets
+          secret:
+            secretName: {{ .Values.secretsVolume.secretName }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

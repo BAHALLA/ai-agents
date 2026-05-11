@@ -37,6 +37,14 @@ Open [http://localhost:8000](http://localhost:8000).
     (Kafka, Kubernetes, Prometheus) will report that those systems aren't
     reachable — use the Full stack option below for the complete experience.
 
+!!! warning "Dev mode — no authentication"
+    The Docker quick-start and `make run-devops` run **unauthenticated** on
+    purpose, so you can try the agent without setting up an IdP. **Do not
+    expose this on the public internet.** For any deployment beyond
+    localhost, enable JWT auth via `orrery_core.server` — see
+    [Production deployment → Step 4](deployment.md#step-4-enable-authentication)
+    and the [Security guide](config/security.md).
+
 ### Full stack (Kafka + Postgres + Prometheus + Loki + Alertmanager)
 
 Download the compose file and start everything. Still no clone required:
@@ -122,6 +130,7 @@ Ask: **"Scale the 'web-app' deployment to 3 replicas."**
 *   📋 **[Agents overview](agents-overview.md)** — Every agent, its tools, and what role can call them.
 *   ⚙️ **[General configuration](config/general.md)** — Tune LLM providers and infrastructure.
 *   🛡️ **[Guardrails & RBAC](guardrails.md)** — Three risk tiers, three roles, and how confirmation works.
+*   🔐 **[Security & auth](config/security.md)** — JWT bearer-token verification, claim-to-role mapping, and mounted-secret volumes.
 *   🏗️ **[Adding an agent](adding-an-agent.md)** — Build your own specialized DevOps expert.
 *   📊 **[Observability](metrics.md)** — Monitor agent performance with Prometheus.
 *   🆘 **[Troubleshooting](troubleshooting.md)** — Common errors and their fixes.

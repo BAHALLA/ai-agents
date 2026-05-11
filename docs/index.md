@@ -110,6 +110,12 @@ graph LR
 
     Three risk tiers, three roles, and how the confirmation gate works end-to-end.
 
+-   :material-key-variant:{ .lg .middle } __[Security & auth](config/security.md)__
+
+    ---
+
+    JWT-authenticated HTTP front door, claim-to-role mapping, and the `SecretsManager` for mounted Kubernetes Secrets.
+
 -   :material-brain:{ .lg .middle } __[Cross-session memory](memory.md)__
 
     ---

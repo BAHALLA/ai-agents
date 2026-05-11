@@ -42,6 +42,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from .activity import activity_tracker
 from .audit import audit_logger
+from .auth import AuthPlugin
 from .error_handlers import graceful_model_error, graceful_tool_error
 from .metrics import MetricsCollector
 from .rbac import RolePolicy, ensure_default_role
@@ -383,18 +384,21 @@ def default_plugins(
     enable_activity_tracking: bool = True,
     enable_memory: bool = False,
     memory_min_events: int = 4,
+    enable_auth: bool = False,
+    require_auth: bool = True,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
     Returns plugins in the correct registration order:
 
-    1. GuardrailsPlugin  — RBAC + confirmation
-    2. ResiliencePlugin   — circuit breaker
-    3. MetricsPlugin      — Prometheus metrics (wired to circuit breaker)
-    4. AuditPlugin        — structured audit logs
-    5. ActivityPlugin     — session activity tracking (optional)
-    6. MemoryPlugin       — cross-session memory persistence (optional)
-    7. ErrorHandlerPlugin — graceful error recovery
+    1. AuthPlugin         — applies verified JWT role (optional, must run first)
+    2. GuardrailsPlugin   — RBAC + confirmation
+    3. ResiliencePlugin   — circuit breaker
+    4. MetricsPlugin      — Prometheus metrics (wired to circuit breaker)
+    5. AuditPlugin        — structured audit logs
+    6. ActivityPlugin     — session activity tracking (optional)
+    7. MemoryPlugin       — cross-session memory persistence (optional)
+    8. ErrorHandlerPlugin — graceful error recovery
 
     Args:
         role_policy: Custom ``RolePolicy`` for RBAC overrides.
@@ -405,18 +409,31 @@ def default_plugins(
         enable_activity_tracking: Whether to track activity in session state.
         enable_memory: Whether to auto-save sessions to long-term memory.
         memory_min_events: Minimum events before a session is saved to memory.
+        enable_auth: Whether to apply ``AuthPlugin``. Pair with an HTTP front
+            door (see :mod:`orrery_core.server`) that writes the verified
+            ``_auth`` payload to session state.
+        require_auth: When ``enable_auth=True``, force ``viewer`` if no
+            ``_auth`` payload is present. Set ``False`` only for migration
+            windows where some transports have not been wired yet.
     """
     resilience = ResiliencePlugin(
         failure_threshold=circuit_breaker_threshold,
         recovery_timeout=circuit_breaker_timeout,
     )
 
-    plugins: list[BasePlugin] = [
-        GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode),
-        resilience,
-        MetricsPlugin(circuit_breaker=resilience.circuit_breaker),
-        AuditPlugin(log_path=audit_log_path),
-    ]
+    plugins: list[BasePlugin] = []
+
+    if enable_auth:
+        plugins.append(AuthPlugin(require_auth=require_auth))
+
+    plugins.extend(
+        [
+            GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode),
+            resilience,
+            MetricsPlugin(circuit_breaker=resilience.circuit_breaker),
+            AuditPlugin(log_path=audit_log_path),
+        ]
+    )
 
     if enable_activity_tracking:
         plugins.append(ActivityPlugin())

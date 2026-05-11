@@ -76,7 +76,9 @@ graph LR
 ### 🛡️ Safety & Governance
 - **Human-in-the-Loop** — Mutating (`@confirm`) and destructive (`@destructive`) tools require explicit human confirmation.
 - **RBAC Hierarchy** — Three-role system (**Viewer**, **Operator**, **Admin**) enforced globally via plugins.
+- **JWT authentication** — Opt-in HTTP front door (`orrery_core.server`) verifies HS256 or RS256/JWKS bearer tokens, maps claims → roles, and rejects unauthenticated traffic. See [`docs/config/security.md`](https://bahalla.github.io/orrery/config/security/).
 - **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context.
+- **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
 
 ### 🔌 Integration & Observability
 - **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (with interactive buttons / Cards v2).

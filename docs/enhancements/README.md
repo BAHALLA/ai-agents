@@ -13,7 +13,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | P0 | [AEP-002](aep-002-agent-evaluation.md) | Agent Evaluation Framework | **completed** | High | Critical |
 | P0 | [AEP-003](aep-003-memory-service.md) | Cross-Session Memory Service | **completed** | Medium | High |
 | P0 | [AEP-011](aep-011-deployment-hardening.md) | Production Deployment Hardening | **completed** | High | Critical |
-| P0 | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | proposed | High | Critical |
+| P0 | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | in-progress | High | Critical |
 | P0 | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | proposed | Medium | High |
 | P1 | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | **completed** | Medium | High |
 | P1 | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | **completed** | Low | High |

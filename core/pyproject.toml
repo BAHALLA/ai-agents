@@ -19,6 +19,21 @@ postgres = [
     "psycopg2-binary>=2.9.9",
     "asyncpg>=0.30.0",
 ]
+# Install with: uv sync --extra auth
+# JWT verification for HS256 + RS256/JWKS. Required to use verify_token()
+# but NOT required for AuthPlugin alone (e.g. when a transport like
+# Google Chat verifies tokens itself and writes _auth into state).
+auth = [
+    "pyjwt[crypto]>=2.10.0",
+]
+# Install with: uv sync --extra server
+# Adds FastAPI + Uvicorn for the authenticated HTTP front door
+# (orrery_core.server). Includes the auth dependencies transitively.
+server = [
+    "pyjwt[crypto]>=2.10.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["orrery_core*"]

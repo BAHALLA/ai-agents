@@ -2,6 +2,13 @@ from google.adk.tools.agent_tool import AgentTool as AgentTool
 
 from .activity import activity_tracker as activity_tracker
 from .audit import audit_logger as audit_logger
+from .auth import AUTH_STATE_KEY as AUTH_STATE_KEY
+from .auth import AuthContext as AuthContext
+from .auth import AuthError as AuthError
+from .auth import AuthPlugin as AuthPlugin
+from .auth import JWTConfig as JWTConfig
+from .auth import extract_role as extract_role
+from .auth import verify_token as verify_token
 from .base import create_agent as create_agent
 from .base import create_loop_agent as create_loop_agent
 from .base import create_parallel_agent as create_parallel_agent
@@ -59,6 +66,10 @@ from .resilience import CircuitState as CircuitState
 from .resilience import with_retry as with_retry
 from .runner import create_context_cache_config as create_context_cache_config
 from .runner import run_persistent as run_persistent
+from .secrets import FileBackend as FileBackend
+from .secrets import SecretsBackend as SecretsBackend
+from .secrets import SecretsManager as SecretsManager
+from .secrets import default_secrets as default_secrets
 from .tool_result import ResultStatus as ResultStatus
 from .tool_result import ToolResult as ToolResult
 from .validation import K8S_NAME_PATTERN as K8S_NAME_PATTERN

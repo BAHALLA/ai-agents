@@ -4,7 +4,8 @@ Every tool on the platform falls into one of three risk tiers, set by decorators
 
 Related pages:
 - [ADR-001: RBAC](adr/001-rbac.md) — design rationale for the three-role hierarchy.
-- [Testing RBAC across surfaces](rbac-testing.md) — how to exercise each tier from ADK Web, Slack, Google Chat, and the CLI.
+- [Testing RBAC across surfaces](rbac-testing.md) — how to exercise each tier from ADK Web, Slack, Google Chat, the JWT front door, and the CLI.
+- [Security & auth](config/security.md) — JWT bearer-token verification, claim-to-role mapping, and the secrets manager. RBAC is only as trustworthy as the identity that set the role.
 - [Core Library → RBAC](core/README.md#role-based-access-control-rbac) — `authorize`, `RolePolicy`, `@requires_role`, `set_user_role` reference.
 
 ## The three tiers

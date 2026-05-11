@@ -1,0 +1,8 @@
+# Personal / one-off scripts — keep them in this directory without committing.
+*.local.sh
+*.local.py
+*.local.*
+
+# Token files accidentally written to disk during testing.
+*.jwt
+*.token

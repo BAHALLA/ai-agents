@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
+| **Status** | in-progress (auth layer landed; PII redaction + injection screening + Gemini safety filters remaining) |
 | **Priority** | P0 |
 | **Effort** | High (7-10 days) |
 | **Impact** | Critical |

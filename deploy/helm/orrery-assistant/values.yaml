@@ -149,12 +149,62 @@ secrets:
   # ELASTICSEARCH_PASSWORD: ""
   # ELASTICSEARCH_API_KEY: ""
   # DATABASE_URL: "postgresql+asyncpg://user:pass@postgres:5432/agents"
-  # JWT_SECRET: ""
+  # JWT_SECRET: ""  # only used when auth.enabled and auth.algorithm=HS256
 
 ## Name of a pre-existing Secret. If set, Helm will NOT manage secrets —
 ## keys are mounted via envFrom.secretRef. This is the recommended path
 ## for production.
 existingSecret: ""
+
+## ── Authentication (AEP-013) ───────────────────────────────────────
+## JWT bearer-token verification for the HTTP front door. Required for
+## any deployment that exposes orrery_core.server over HTTP — without it
+## the RBAC roles encoded in the JWT are not verifiable and `adk web`
+## style entry points trust the caller's self-declared identity.
+##
+## The Slack and Google Chat transports authenticate at their own layer
+## (Slack signing secret, Google OIDC) and ignore these settings.
+##
+## When enabled, the chart writes AUTH_ENABLED + JWT_* into the
+## ConfigMap. JWT_SECRET is treated as a secret — set it under `secrets`
+## (HS256) or omit it entirely and use `secretsVolume` for a mounted
+## Kubernetes Secret instead.
+auth:
+  enabled: false
+  ## "HS256" — symmetric, requires JWT_SECRET (under `secrets`).
+  ## "RS256" / "ES256" — asymmetric, requires JWKS URL (IdP-fronted).
+  algorithm: HS256
+  ## JWKS endpoint for asymmetric algorithms. Common values:
+  ##   Auth0    https://YOUR_TENANT.auth0.com/.well-known/jwks.json
+  ##   Keycloak https://KC/realms/REALM/protocol/openid-connect/certs
+  ##   Okta     https://YOUR_ORG.okta.com/oauth2/default/v1/keys
+  ##   Google   https://www.googleapis.com/oauth2/v3/certs
+  jwksUrl: ""
+  ## Bind tokens to this service. Strongly recommended in production —
+  ## prevents tokens minted for another audience from being accepted.
+  audience: ""
+  issuer: ""
+  ## Custom claim that carries the role list. Auth0 RBAC typically uses
+  ## "https://YOUR_API/roles". Defaults to "roles" for HS256 / Keycloak.
+  roleClaim: roles
+  ## Clock-skew tolerance for exp/nbf validation.
+  leewaySeconds: 30
+  ## CORS allowlist for browser clients of POST /chat (comma-separated).
+  corsOrigins: ""
+
+## ── Mounted-secrets volume (ORRERY_SECRETS_DIR) ────────────────────
+## Mount a Kubernetes Secret as files under /var/run/secrets/orrery so
+## SecretsManager can resolve JWT_SECRET / API keys via the file backend
+## without exposing them in the pod's environment. Recommended over
+## envFrom.secretRef for sensitive secrets in compliance-bound deployments.
+##
+## When enabled, the chart sets ORRERY_SECRETS_DIR on the container and
+## mounts `secretName` at `mountPath`. The Secret must be created out of
+## band (External Secrets Operator, Sealed Secrets, Vault Agent Injector).
+secretsVolume:
+  enabled: false
+  secretName: orrery-secrets-volume
+  mountPath: /var/run/secrets/orrery
 
 networkPolicy:
   enabled: true

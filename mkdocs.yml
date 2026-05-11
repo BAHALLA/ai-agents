@@ -96,6 +96,7 @@ nav:
     - Configuration:
       - General: config/general.md
       - Agents: config/agents.md
+      - Security: config/security.md
   - Architecture:
     - Design Patterns: agent-design-patterns.md
     - ADRs:

@@ -6,10 +6,22 @@
        run-k8s run-k8s-cli \
        run-observability run-observability-cli \
        run-elasticsearch run-elasticsearch-cli \
-       run-assistant run-assistant-cli run-assistant-persistent \
+       run-assistant run-assistant-api run-assistant-cli run-assistant-persistent \
+       _ensure-dev-jwt-secret dev-token dev-token-viewer dev-token-operator dev-token-admin \
+       rotate-dev-jwt-secret print-dev-jwt-config \
        run-journal run-journal-cli run-journal-persistent \
        run-slack-bot run-slack-bot-socket \
        run-google-chat run-google-chat-pubsub
+
+# ── Local dev auth configuration ───────────────────────
+# A persistent JWT secret for local-only dev work. Stored outside the
+# repo so it can't be accidentally committed. Both `run-assistant-api`
+# (which boots the authenticated server) and `dev-token` (which mints
+# test tokens) read from this file, so a token minted in one terminal
+# always validates against the server running in another.
+DEV_JWT_SECRET_FILE := $(HOME)/.cache/orrery/jwt-secret
+DEV_JWT_AUDIENCE    := orrery-local
+DEV_JWT_ISSUER      := https://dev.local
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -125,6 +137,50 @@ run-elasticsearch-cli: ## Run elasticsearch-agent in terminal
 
 run-assistant: ## Launch orrery-assistant in ADK Dev UI
 	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run adk web
+
+_ensure-dev-jwt-secret:
+	@if [ ! -f $(DEV_JWT_SECRET_FILE) ]; then \
+		mkdir -p $$(dirname $(DEV_JWT_SECRET_FILE)) && \
+		openssl rand -hex 32 > $(DEV_JWT_SECRET_FILE) && \
+		chmod 600 $(DEV_JWT_SECRET_FILE) && \
+		echo "▶ Generated dev JWT secret at $(DEV_JWT_SECRET_FILE)"; \
+	fi
+
+run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front door (auth ON, dev secret)
+	@echo "▶ Auth enabled — mint a token in another terminal with: make dev-token"
+	cd agents/orrery-assistant && \
+		AUTH_ENABLED=true \
+		JWT_ALGORITHM=HS256 \
+		JWT_SECRET=$$(cat $(DEV_JWT_SECRET_FILE)) \
+		JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
+		JWT_ISSUER=$(DEV_JWT_ISSUER) \
+		ENABLE_METRICS_SERVER=true \
+		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
+
+dev-token: _ensure-dev-jwt-secret ## Mint a JWT for local testing (ROLE=viewer|operator|admin, default admin)
+	@JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
+	JWT_ISSUER=$(DEV_JWT_ISSUER) \
+		uv run python scripts/dev_token.py \
+			--role $(or $(ROLE),admin) \
+			--secret-file $(DEV_JWT_SECRET_FILE)
+
+dev-token-viewer: _ensure-dev-jwt-secret ## Mint a viewer-role JWT
+	@$(MAKE) --no-print-directory dev-token ROLE=viewer
+
+dev-token-operator: _ensure-dev-jwt-secret ## Mint an operator-role JWT
+	@$(MAKE) --no-print-directory dev-token ROLE=operator
+
+dev-token-admin: _ensure-dev-jwt-secret ## Mint an admin-role JWT
+	@$(MAKE) --no-print-directory dev-token ROLE=admin
+
+print-dev-jwt-config: _ensure-dev-jwt-secret ## Show the dev auth config (secret path, audience, issuer)
+	@echo "Secret file: $(DEV_JWT_SECRET_FILE)"
+	@echo "Audience:    $(DEV_JWT_AUDIENCE)"
+	@echo "Issuer:      $(DEV_JWT_ISSUER)"
+
+rotate-dev-jwt-secret: ## Regenerate the dev JWT secret (invalidates existing tokens)
+	@rm -f $(DEV_JWT_SECRET_FILE)
+	@$(MAKE) --no-print-directory _ensure-dev-jwt-secret
 
 run-assistant-cli: ## Run orrery-assistant in terminal
 	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run adk run orrery_assistant

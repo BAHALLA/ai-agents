@@ -1,8 +1,11 @@
 # Testing RBAC across surfaces
 
-RBAC is enforced uniformly by the `GuardrailsPlugin`, but **how the user's role gets into session state differs per surface**. This page walks through how to exercise each role (`viewer`, `operator`, `admin`) from every integration — ADK Web, the ADK CLI, the persistent runner, Slack, Google Chat, and a raw Python `Runner`.
+RBAC is enforced uniformly by the `GuardrailsPlugin`, but **how the user's role gets into session state differs per surface**. This page walks through how to exercise each role (`viewer`, `operator`, `admin`) from every integration — ADK Web, the ADK CLI, the persistent runner, Slack, Google Chat, the authenticated HTTP front door, and a raw Python `Runner`.
 
 For the design rationale, see [ADR-001: RBAC](adr/001-rbac.md). For the API surface (`authorize`, `RolePolicy`, `@requires_role`, `set_user_role`), see the [Core Library RBAC section](core/README.md#role-based-access-control-rbac).
+
+!!! info "RBAC needs a trusted identity to be useful"
+    Self-declared roles (e.g. setting `user_role` from a state editor) are only safe for local development. Any production deployment should go through a transport that *verifies* identity before calling `set_user_role()`: Slack signing secrets, Google Chat OIDC tokens, or the JWT front door at `orrery_core.server`. See [Security & auth](config/security.md).
 
 ## How roles are resolved
 
@@ -22,6 +25,7 @@ Before every agent turn, `GuardrailsPlugin.before_agent_callback` runs `ensure_d
 | Persistent CLI (`make run-devops-persistent`) | `admin` (hard-coded) | Edit `core/orrery_core/runner.py:141` to change |
 | Slack bot | `viewer` unless mapped | Set `SLACK_ADMIN_USERS` / `SLACK_OPERATOR_USERS`; start a **new thread** |
 | Google Chat bot | `viewer` unless mapped | Set `GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`; start a **new thread** |
+| HTTP front door (`orrery_core.server`) | Derived from JWT every request | Mint a JWT with the matching `JWT_ROLE_CLAIM` value (`admin` / `operator` / `viewer` or aliases) |
 | Custom `Runner` in Python | Whatever your code sets | Call `set_user_role(initial_state, role)` before `create_session()` |
 
 !!! warning "Roles are baked into the session at creation time"
@@ -136,6 +140,42 @@ Google Chat resolves the role from the signed-in user's email claim in the token
 
 !!! note "Swapping users is easier than swapping roles"
     If you control multiple Workspace accounts, the fastest way to exercise all three tiers is to list one account per tier in the env vars and @-mention from each one. No restart needed.
+
+## Testing with the HTTP front door (`orrery_core.server`)
+
+The JWT front door is the production replacement for `adk web`. The role is **verified per request** from the JWT — there is no env-var knob, and there is no per-thread session sticky like Slack / Google Chat. Unlike the chat transports, role changes apply immediately on the next call rather than at the next thread.
+
+1. Start the server with `AUTH_ENABLED=true` and either `JWT_SECRET` (HS256) or `JWT_JWKS_URL` (RS256). See [Security & auth](config/security.md) for full setup.
+2. Mint a test token. Easiest path for HS256:
+
+    ```bash
+    python -c '
+    import jwt, time
+    print(jwt.encode({
+        "sub": "alice@example.com",
+        "aud": "orrery",
+        "iss": "https://test",
+        "exp": int(time.time()) + 3600,
+        "roles": ["operator"],
+    }, "your-shared-secret", algorithm="HS256"))
+    '
+    ```
+
+3. Call `/chat`:
+
+    ```bash
+    curl http://localhost:8000/chat \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"message": "create a kafka topic called test-rbac with 3 partitions"}'
+    ```
+
+4. To test a different role, mint a token with a different `roles` claim and send again. Same `session_id` is fine — `_auth` is re-stamped per request and `AuthPlugin.before_agent_callback` re-applies the role on every turn.
+
+5. RBAC denial returns inside the agent's response (the HTTP layer returns 200; the agent body explains the denial). Authentication failure returns `401` with `WWW-Authenticate: Bearer`.
+
+!!! tip "Role aliases"
+    `extract_role()` accepts `admin` / `orrery-admin` / `orrery_admin` for the admin tier, and the same pattern for operator. Auth0 deployments typically use a namespaced custom claim like `https://your-api/roles`; set `JWT_ROLE_CLAIM` accordingly.
 
 ## Testing with a custom `Runner` in Python
 

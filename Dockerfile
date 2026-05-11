@@ -38,8 +38,9 @@ RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
 
 # Cache mount keeps repeated builds fast without bloating the final image.
 # `--extra postgres` pulls in the Postgres driver used by the session store.
+# `--extra server` pulls in FastAPI, Uvicorn, and PyJWT for the authenticated HTTP front door.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres
+    uv sync --no-dev --frozen --extra postgres --extra server
 
 # Copy actual source code
 COPY core/ core/
@@ -47,7 +48,7 @@ COPY agents/ agents/
 
 # Reinstall workspace packages with real source
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres
+    uv sync --no-dev --frozen --extra postgres --extra server
 
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.14-slim-bookworm

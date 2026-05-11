@@ -8,3 +8,24 @@ data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- if .Values.auth.enabled }}
+  AUTH_ENABLED: "true"
+  JWT_ALGORITHM: {{ .Values.auth.algorithm | quote }}
+  {{- with .Values.auth.jwksUrl }}
+  JWT_JWKS_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.auth.audience }}
+  JWT_AUDIENCE: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.auth.issuer }}
+  JWT_ISSUER: {{ . | quote }}
+  {{- end }}
+  JWT_ROLE_CLAIM: {{ .Values.auth.roleClaim | quote }}
+  JWT_LEEWAY_SECONDS: {{ .Values.auth.leewaySeconds | quote }}
+  {{- with .Values.auth.corsOrigins }}
+  ORRERY_CORS_ORIGINS: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.secretsVolume.enabled }}
+  ORRERY_SECRETS_DIR: {{ .Values.secretsVolume.mountPath | quote }}
+  {{- end }}
