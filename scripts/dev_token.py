@@ -42,9 +42,9 @@ _DEV_FALLBACK_SECRET = "x" * 64  # 64-byte filler, NOT for production use
 # The default location ``make run-assistant-api`` writes the dev secret
 # to. Lives under XDG_CACHE_HOME (~/.cache) so it sits outside any repo
 # checkout and is not at risk of being committed.
-DEFAULT_SECRET_FILE = Path(
-    os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-) / "orrery" / "jwt-secret"
+DEFAULT_SECRET_FILE = (
+    Path(os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "orrery" / "jwt-secret"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,8 +164,7 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            f"# subject={args.subject} role={args.role} "
-            f"aud={args.audience} iss={args.issuer}",
+            f"# subject={args.subject} role={args.role} aud={args.audience} iss={args.issuer}",
             file=sys.stderr,
         )
         print(
