@@ -19,6 +19,7 @@ from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
+from google.adk.workflow import Workflow
 from google.genai import types
 
 from .health import HealthServer
@@ -66,7 +67,7 @@ def create_context_cache_config(
 
 
 async def run_persistent(
-    agent: Agent,
+    agent: Agent | Workflow,
     *,
     app_name: str,
     db_url: str | None = None,

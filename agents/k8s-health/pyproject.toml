@@ -5,7 +5,7 @@ description = "Agent for monitoring and managing Kubernetes clusters"
 requires-python = ">=3.14"
 dependencies = [
     "orrery-core",
-    "kubernetes>=31.0.0",
+    "kubernetes>=36.0.2",
 ]
 
 [tool.uv.sources]

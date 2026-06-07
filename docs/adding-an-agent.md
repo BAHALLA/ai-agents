@@ -6,7 +6,7 @@ This guide provides a step-by-step walkthrough for building a new specialist age
 
 Before you start coding, decide on your agent's role:
 -   **Specialist (LLM-routed):** A standalone expert with specific tools. Most agents fit here.
--   **Sequential/Parallel Workflow:** A deterministic pipeline for repetitive tasks.
+-   **Graph-based Workflow:** A deterministic pipeline built with ADK 2.0 `Workflow` edges for repetitive tasks.
 -   **Coordinator:** An orchestrator that delegates to other agents.
 
 ---

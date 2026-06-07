@@ -264,7 +264,9 @@ def with_retry(
                         last_error = exc
                         if attempt < max_retries:
                             jittered = _compute_delay(attempt)
-                            _log_retry(func.__name__, attempt, exc, jittered)
+                            _log_retry(
+                                getattr(func, "__name__", repr(func)), attempt, exc, jittered
+                            )
                             await asyncio.sleep(jittered)
                 assert last_error is not None
                 raise last_error
@@ -281,7 +283,7 @@ def with_retry(
                     last_error = exc
                     if attempt < max_retries:
                         jittered = _compute_delay(attempt)
-                        _log_retry(func.__name__, attempt, exc, jittered)
+                        _log_retry(getattr(func, "__name__", repr(func)), attempt, exc, jittered)
                         time.sleep(jittered)
             assert last_error is not None
             raise last_error

@@ -29,7 +29,7 @@ help: ## Show this help
 # ── Setup ──────────────────────────────────────────────
 
 install: ## Install all workspace packages
-	uv sync
+	uv sync --all-extras
 
 test: ## Run all tests (excludes evals)
 	uv run pytest -v

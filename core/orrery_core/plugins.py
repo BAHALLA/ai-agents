@@ -309,8 +309,9 @@ class MemoryPlugin(BasePlugin):
         """Save session to memory after the root agent finishes."""
         inv = callback_context._invocation_context  # noqa: SLF001
 
-        # Only fire for the root agent
-        if agent.name != inv.agent.name:
+        # Only fire for the root agent. In ADK 2.0 inv.agent is typed
+        # BaseNode | None, so guard before comparing names.
+        if inv.agent is None or agent.name != inv.agent.name:
             return None
 
         memory_service = inv.memory_service

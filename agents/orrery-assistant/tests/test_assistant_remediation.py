@@ -1,82 +1,91 @@
-"""Unit tests for the remediation loop module."""
+"""Unit tests for the graph-based remediation nodes (ADR-003)."""
 
 from unittest.mock import MagicMock
 
 import pytest
-from google.adk.agents import LoopAgent
 
-# Importing agent validates that the full module loads without errors
+# Importing agent validates that the full graph module loads without errors
 from orrery_assistant.agent import root_agent  # noqa: F401
 from orrery_assistant.remediation import (
-    exit_loop,
+    MAX_REMEDIATION_ITERATIONS,
+    mark_remediation_resolved,
     remediation_actor,
-    remediation_loop,
-    remediation_pipeline,
     remediation_summarizer,
     remediation_verifier,
+    verify_route,
 )
 
-# ── exit_loop tool ───────────────────────────────────────────────────
+
+def _Ctx(state: dict | None = None) -> MagicMock:
+    """Minimal Context double exposing mutable state + a settable route."""
+    ctx = MagicMock()
+    ctx.state = state or {}
+    ctx.route = None
+    return ctx
 
 
-class TestExitLoop:
+# ── mark_remediation_resolved tool ───────────────────────────────────
+
+
+class TestMarkRemediationResolved:
     @pytest.mark.asyncio
-    async def test_sets_escalate_flag(self):
+    async def test_sets_resolved_flag_in_state(self):
         ctx = MagicMock()
-        result = await exit_loop("issue resolved", tool_context=ctx)
-        assert ctx.actions.escalate is True
-        assert ctx.actions.skip_summarization is True
+        ctx.state = {}
+        result = await mark_remediation_resolved("issue resolved", tool_context=ctx)
+        assert ctx.state["remediation_resolved"] is True
+        assert ctx.state["remediation_resolution_reason"] == "issue resolved"
         assert result["status"] == "remediation_complete"
         assert result["reason"] == "issue resolved"
 
-    @pytest.mark.asyncio
-    async def test_returns_reason(self):
-        ctx = MagicMock()
-        result = await exit_loop("pods healthy", tool_context=ctx)
-        assert result["reason"] == "pods healthy"
+
+# ── verify_route loop logic (replaces LoopAgent + exit_loop) ─────────
 
 
-# ── Agent wiring ─────────────────────────────────────────────────────
+class TestVerifyRoute:
+    def test_routes_done_when_resolved(self):
+        ctx = _Ctx({"remediation_resolved": True})
+        assert verify_route(ctx) == "done"
+        assert ctx.route == "done"
+
+    def test_routes_retry_when_unresolved_under_cap(self):
+        ctx = _Ctx({"remediation_resolved": False, "remediation_iteration": 0})
+        assert verify_route(ctx) == "retry"
+        assert ctx.state["remediation_iteration"] == 1
+
+    def test_increments_iteration_each_call(self):
+        ctx = _Ctx({"remediation_iteration": 0})
+        verify_route(ctx)
+        verify_route(ctx)
+        assert ctx.state["remediation_iteration"] == 2
+
+    def test_routes_done_at_iteration_cap(self):
+        ctx = _Ctx({"remediation_iteration": MAX_REMEDIATION_ITERATIONS - 1})
+        assert verify_route(ctx) == "done"
 
 
-class TestRemediationAgentWiring:
+# ── Node wiring ──────────────────────────────────────────────────────
+
+
+class TestRemediationNodeWiring:
     def test_remediation_actor_has_tools(self):
         tool_names = {
             getattr(t, "name", getattr(t, "__name__", None)) for t in remediation_actor.tools
         }
-        assert "restart_deployment" in tool_names
-        assert "scale_deployment" in tool_names
-        assert "rollback_deployment" in tool_names
-        assert "log_operation" in tool_names
+        assert {"restart_deployment", "scale_deployment", "rollback_deployment"} <= tool_names
 
     def test_remediation_actor_has_output_key(self):
         assert remediation_actor.output_key == "remediation_action"
 
-    def test_remediation_verifier_has_tools(self):
+    def test_remediation_verifier_signals_via_resolve_tool(self):
         tool_names = {
             getattr(t, "name", getattr(t, "__name__", None)) for t in remediation_verifier.tools
         }
-        assert "get_deployment_status" in tool_names
-        assert "list_pods" in tool_names
-        assert "get_pod_logs" in tool_names
-        assert "exit_loop" in tool_names
+        assert "mark_remediation_resolved" in tool_names
+        assert "exit_loop" not in tool_names
 
     def test_remediation_verifier_has_output_key(self):
         assert remediation_verifier.output_key == "verification_result"
-
-    def test_remediation_loop_is_loop_agent(self):
-        assert isinstance(remediation_loop, LoopAgent)
-
-    def test_remediation_loop_max_iterations(self):
-        assert remediation_loop.max_iterations == 3
-
-    def test_remediation_loop_has_actor_and_verifier(self):
-        names = [a.name for a in remediation_loop.sub_agents]
-        assert names == ["remediation_actor", "remediation_verifier"]
-
-    def test_remediation_pipeline_includes_loop_and_summarizer(self):
-        names = [a.name for a in remediation_pipeline.sub_agents]
-        assert names == ["remediation_loop", "remediation_summarizer"]
 
     def test_remediation_summarizer_has_output_key(self):
         assert remediation_summarizer.output_key == "remediation_summary"

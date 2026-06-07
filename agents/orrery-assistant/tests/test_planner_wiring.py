@@ -1,19 +1,26 @@
-"""Structural tests for planner attachment across orrery-assistant agents.
+"""Structural tests for the graph root + planner attachment (ADR-003).
 
-These are deterministic, LLM-free checks that verify the right agents pick
-up a planner when ``ORRERY_PLANNER`` is set, and tool-leaf agents stay
-planner-free regardless. They complement the per-planner unit tests in
-``core/tests/test_base.py::TestResolvePlanner`` and the agent-level evals
-in ``test_orrery_eval.py``.
+These are deterministic, LLM-free checks that verify the Workflow graph is
+wired correctly, the deterministic routing functions behave, and the right
+reasoning agents pick up a planner when ``ORRERY_PLANNER`` is set while
+tool-leaf agents stay planner-free. They complement the per-planner unit
+tests in ``core/tests/test_base.py::TestResolvePlanner`` and the agent-level
+evals in ``test_orrery_eval.py``.
 
 The agent module reads ``ORRERY_PLANNER`` once at import time, so each
 test reloads the module after setting the env var.
+
+The root is now a ``Workflow`` (not an ``LlmAgent``), so it has no planner;
+planner assertions target the reasoning nodes (triage_summarizer,
+remediation_actor).
 """
 
 import importlib
 import sys
+from unittest.mock import MagicMock
 
 import pytest
+from google.adk import Workflow
 from google.adk.planners import BuiltInPlanner, PlanReActPlanner
 
 
@@ -52,9 +59,9 @@ def clean_planner_env(monkeypatch):
 class TestPlannerWiring:
     def test_default_no_planner(self, clean_planner_env):
         agent_mod, rem_mod = _reload_agent()
-        # All agents — including the three that *can* opt in — start with
-        # no planner when ORRERY_PLANNER is unset. Zero behavior change.
-        assert agent_mod.root_agent.planner is None
+        # The reasoning agents that *can* opt in start planner-free when
+        # ORRERY_PLANNER is unset. Zero behavior change.
+        assert agent_mod.orrery_chat_agent.planner is None
         assert agent_mod.triage_summarizer.planner is None
         assert rem_mod.remediation_actor.planner is None
 
@@ -62,8 +69,8 @@ class TestPlannerWiring:
         monkeypatch.setenv("ORRERY_PLANNER", "plan_react")
         agent_mod, rem_mod = _reload_agent()
 
-        # Three reasoning-heavy agents opt in.
-        assert isinstance(agent_mod.root_agent.planner, PlanReActPlanner)
+        # The reasoning-heavy orchestrator/synthesis/actor agents opt in.
+        assert isinstance(agent_mod.orrery_chat_agent.planner, PlanReActPlanner)
         assert isinstance(agent_mod.triage_summarizer.planner, PlanReActPlanner)
         assert isinstance(rem_mod.remediation_actor.planner, PlanReActPlanner)
 
@@ -97,7 +104,6 @@ class TestPlannerWiring:
         monkeypatch.setenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
         with caplog.at_level("WARNING", logger="orrery.base"):
             agent_mod, rem_mod = _reload_agent()
-        assert agent_mod.root_agent.planner is None
         assert agent_mod.triage_summarizer.planner is None
         assert rem_mod.remediation_actor.planner is None
 
@@ -105,6 +111,159 @@ class TestPlannerWiring:
         monkeypatch.setenv("ORRERY_PLANNER", "builtin")
         # MODEL_PROVIDER unset defaults to gemini in resolve_planner.
         agent_mod, rem_mod = _reload_agent()
-        assert isinstance(agent_mod.root_agent.planner, BuiltInPlanner)
         assert isinstance(agent_mod.triage_summarizer.planner, BuiltInPlanner)
         assert isinstance(rem_mod.remediation_actor.planner, BuiltInPlanner)
+
+
+# ── Graph structure + deterministic routing (ADR-003) ────────────────
+
+
+class TestGraphStructure:
+    def test_root_is_workflow(self):
+        agent_mod, _ = _reload_agent()
+        assert isinstance(agent_mod.root_agent, Workflow)
+        assert agent_mod.root_agent is agent_mod.orrery_workflow
+
+    def test_graph_contains_expected_nodes(self):
+        agent_mod, _ = _reload_agent()
+        node_names = {n.name for n in agent_mod.orrery_workflow.graph.nodes}
+        # dispatch + conversational branch + parallel checkers + barrier
+        # + triage chain + remediation loop
+        expected = {
+            "intent_router",
+            "orrery_chat_agent",
+            "kafka_health_checker",
+            "k8s_health_checker",
+            "docker_health_checker",
+            "observability_health_checker",
+            "elasticsearch_health_checker",
+            "health_join",
+            "triage_summarizer",
+            "journal_writer",
+            "triage_route",
+            "remediation_actor",
+            "remediation_verifier",
+            "verify_route",
+            "remediation_summarizer",
+            "final_report",
+        }
+        assert expected <= node_names
+
+    def test_chat_agent_has_specialist_tools(self):
+        agent_mod, _ = _reload_agent()
+        tool_names = {
+            getattr(getattr(t, "agent", t), "name", getattr(t, "name", None))
+            for t in agent_mod.orrery_chat_agent.tools
+        }
+        # The six specialists are reachable via AgentTool for free-form routing.
+        for specialist in (
+            "kafka_health_agent",
+            "k8s_health_agent",
+            "observability_agent",
+            "elasticsearch_agent",
+            "docker_agent",
+            "ops_journal_agent",
+        ):
+            assert specialist in tool_names
+
+
+class TestIntentRouter:
+    def _ctx(self, text: str) -> MagicMock:
+        ctx = MagicMock()
+        ctx.user_content = MagicMock()
+        ctx.user_content.parts = [MagicMock(text=text)]
+        ctx.route = None
+        return ctx
+
+    @pytest.mark.parametrize(
+        "text",
+        ["run a full triage", "check everything", "is everything healthy", "system health report"],
+    )
+    def test_triage_phrases_route_to_triage(self, text):
+        agent_mod, _ = _reload_agent()
+        assert agent_mod.intent_router(self._ctx(text)) == "triage"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["is kafka healthy?", "restart the web deployment", "show me pod logs", "hello"],
+    )
+    def test_targeted_phrases_route_to_chat(self, text):
+        agent_mod, _ = _reload_agent()
+        assert agent_mod.intent_router(self._ctx(text)) == "chat"
+
+
+class TestTriageRouting:
+    def test_record_triage_verdict_normalizes_and_stores(self):
+        agent_mod, _ = _reload_agent()
+        import asyncio
+
+        ctx = MagicMock()
+        ctx.state = {}
+        result = asyncio.run(
+            agent_mod.record_triage_verdict("CRITICAL", "report body", tool_context=ctx)
+        )
+        assert ctx.state["incident_severity"] == "critical"
+        assert ctx.state["triage_report"] == "report body"
+        assert result["overall_status"] == "critical"
+
+    def test_record_triage_verdict_unknown_defaults_to_degraded(self):
+        agent_mod, _ = _reload_agent()
+        import asyncio
+
+        ctx = MagicMock()
+        ctx.state = {}
+        asyncio.run(agent_mod.record_triage_verdict("bogus", "r", tool_context=ctx))
+        assert ctx.state["incident_severity"] == "degraded"
+
+    def test_triage_route_remediates_on_issues(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"incident_severity": "critical"}
+        ctx.route = None
+        assert agent_mod.triage_route(ctx) == "remediate"
+        assert ctx.state["remediation_iteration"] == 0
+        assert ctx.state["remediation_resolved"] is False
+
+    def test_triage_route_resolves_when_healthy(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"incident_severity": "healthy"}
+        ctx.route = None
+        assert agent_mod.triage_route(ctx) == "resolved"
+
+    def test_missing_verdict_infers_from_status_and_flags(self):
+        """No structured verdict + a problem signal in a status report must
+        not silently resolve — it infers degraded and sets the flag."""
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"k8s_status": "pod web-1 is in CrashLoopBackOff"}
+        ctx.route = None
+        assert agent_mod.triage_route(ctx) == "remediate"
+        assert ctx.state["triage_verdict_missing"] is True
+        assert ctx.state["incident_severity"] == "degraded"
+
+    def test_missing_verdict_clean_status_resolves_but_flags(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"k8s_status": "all nodes ready", "kafka_status": "2 brokers online"}
+        ctx.route = None
+        assert agent_mod.triage_route(ctx) == "resolved"
+        assert ctx.state["triage_verdict_missing"] is True
+
+    def test_final_report_surfaces_missing_verdict_caveat(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"incident_severity": "healthy", "triage_verdict_missing": True}
+        assert "manual review" in agent_mod.final_report(ctx).lower()
+
+    def test_final_report_prefers_remediation_summary(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"remediation_summary": "fixed it"}
+        assert agent_mod.final_report(ctx) == "fixed it"
+
+    def test_final_report_falls_back_to_severity(self):
+        agent_mod, _ = _reload_agent()
+        ctx = MagicMock()
+        ctx.state = {"incident_severity": "healthy"}
+        assert "healthy" in agent_mod.final_report(ctx)

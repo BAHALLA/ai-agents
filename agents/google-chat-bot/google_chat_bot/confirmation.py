@@ -229,6 +229,13 @@ def apply_chat_confirmation(agent: Any, store: ConfirmationStore) -> int:
             if inner is not None:
                 visit(inner)
 
+        # Graph-based Workflow root (ADR-003): the tool-calling LlmAgents live
+        # as nodes in ``graph.nodes`` rather than ``sub_agents``/``tools``.
+        graph = getattr(node, "graph", None)
+        if graph is not None:
+            for gnode in getattr(graph, "nodes", None) or ():
+                visit(gnode)
+
     visit(agent)
     return wired
 

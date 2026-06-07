@@ -4,10 +4,15 @@ version = "0.1.9"
 description = "Shared utilities for AI agents"
 requires-python = ">=3.14"
 dependencies = [
-    "google-adk[eval]>=1.31.1",
-    "litellm>=1.83.10",
-    "pydantic>=2.12.5",
-    "pydantic-settings>=2.14.0",
+    # [db] pulls sqlalchemy, which ADK 2.0 moved out of the base package into
+    # an extra; runner.py imports DatabaseSessionService unconditionally.
+    "google-adk[eval,db]>=2.2.0",
+    # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
+    # google-cloud-aiplatform[evaluation]). Floor stays at 1.83.14, which
+    # already closes the CVEs patched in 709abb1.
+    "litellm>=1.83.14,<1.86.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
     "prometheus-client>=0.25.0",
     "python-dotenv>=1.2.2",
 ]

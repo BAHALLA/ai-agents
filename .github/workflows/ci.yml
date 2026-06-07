@@ -21,7 +21,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --extra postgres
+        run: uv sync --all-extras
 
       - name: Ruff check
         run: uv run ruff check .
@@ -82,7 +82,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --extra postgres
+        run: uv sync --all-extras
 
       - name: Run tests
         run: uv run pytest -v
@@ -101,7 +101,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --extra postgres
+        run: uv sync --all-extras
 
       - name: Run evaluations
         env:

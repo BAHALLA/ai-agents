@@ -1,8 +1,13 @@
 # ADR-002: AgentTool vs Sub-Agents for Multi-Agent Composition
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-003](003-graph-workflow-inversion.md)
 **Date:** 2026-03-22
 **Author:** Taoufiq
+
+> **Superseded (2026-06-07):** The LLM root orchestrator this ADR describes was
+> replaced by a graph-based `Workflow` root in ADR-003. The AgentTool-vs-sub-agent
+> guidance below no longer applies to the orrery-assistant root, but is retained for
+> historical context and still informs standalone multi-agent composition.
 
 ## Context
 

@@ -110,23 +110,16 @@ def test_real_orrery_assistant_tree():
     store = ConfirmationStore()
     wired = apply_chat_confirmation(root_agent, store)
 
-    # At minimum root + 5 triage health checkers + summarizer + journal
-    # writer + 6 AgentTool specialists (kafka/k8s/obs/es/docker/journal)
-    # + remediation sub-agents. Exact count may drift as agents land —
-    # assert a reasonable lower bound instead of an exact number.
+    # The graph root (ADR-003) exposes its tool-calling LlmAgents as graph
+    # nodes: 5 triage health checkers + triage_summarizer + journal_writer
+    # + remediation actor/verifier/summarizer = 10. Assert a lower bound so
+    # the count can drift as nodes land.
     assert wired >= 10, f"expected ≥10 LlmAgents wired, got {wired}"
 
-    # Spot-check a known sub-agent: the k8s specialist exposed as an
-    # AgentTool on root must have the Chat callback (this is the exact
-    # regression path from the conversation log).
-    k8s_agent = next(
-        (
-            getattr(t, "agent")  # noqa: B009
-            for t in root_agent.tools
-            if getattr(t, "agent", None) is not None
-            and getattr(getattr(t, "agent"), "name", "") == "k8s_health_agent"  # noqa: B009
-        ),
-        None,
-    )
-    assert k8s_agent is not None, "k8s_health_agent AgentTool not found on root"
-    assert callable(k8s_agent.before_tool_callback)
+    # Spot-check a known graph node with destructive tools: the remediation
+    # actor must carry the Chat callback so restart/scale/rollback fire an
+    # interactive Card instead of plain-text confirmation.
+    nodes = root_agent.graph.nodes if root_agent.graph is not None else ()
+    actor = next((n for n in nodes if getattr(n, "name", "") == "remediation_actor"), None)
+    assert actor is not None, "remediation_actor node not found in graph"
+    assert callable(getattr(actor, "before_tool_callback", None))

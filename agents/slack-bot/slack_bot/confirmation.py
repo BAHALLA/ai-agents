@@ -180,3 +180,40 @@ def slack_confirmation(
         }
 
     return callback
+
+
+def wire_tool_callbacks(root: Any, callbacks: list[Callable[..., Any]]) -> int:
+    """Assign ``before_tool_callback`` to every tool-calling LlmAgent under *root*.
+
+    Handles both an ``LlmAgent`` root (walks ``sub_agents`` + ``AgentTool``s) and
+    a graph-based ``Workflow`` root (walks ``graph.nodes``), so Slack confirmation
+    buttons fire for guarded tools no matter where the tool-calling agent lives.
+    See ADR-003. Returns the number of agents wired.
+    """
+    seen: set[int] = set()
+    wired = 0
+
+    def visit(node: Any) -> None:
+        nonlocal wired
+        if node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+
+        tools = getattr(node, "tools", None)
+        if tools is not None:
+            node.before_tool_callback = callbacks
+            wired += 1
+
+        for sub in getattr(node, "sub_agents", None) or ():
+            visit(sub)
+        for tool in tools or ():
+            inner = getattr(tool, "agent", None)
+            if inner is not None:
+                visit(inner)
+        graph = getattr(node, "graph", None)
+        if graph is not None:
+            for gnode in getattr(graph, "nodes", None) or ():
+                visit(gnode)
+
+    visit(root)
+    return wired

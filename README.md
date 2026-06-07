@@ -136,7 +136,7 @@ open http://localhost:8000
 | [**slack-bot**](https://bahalla.github.io/orrery/agents/slack-bot/) | Interactive Slack integration with confirmation buttons. |
 | [**google-chat-bot**](https://bahalla.github.io/orrery/agents/google-chat-bot/) | Google Chat integration with interactive Cards v2. |
 | [**ops-journal**](https://bahalla.github.io/orrery/agents/ops-journal/) | Persistent notes and session-level bookmarks. |
-| **remediation-pipeline** | Closed-loop LoopAgent (act → verify → retry, max 3) exposed to the orchestrator. |
+| **remediation-nodes** | Closed-loop actor and verifier nodes wired via graph routing. |
 
 ## 📚 Documentation
 
@@ -144,6 +144,11 @@ open http://localhost:8000
 - ⚙️ **[Configuration](https://bahalla.github.io/orrery/config/general/)** — LLM providers, env vars, and infrastructure.
 - 🛠️ **[Developer Guide](https://bahalla.github.io/orrery/adding-an-agent/)** — How to build and test your own specialist agents.
 - 🏗️ **[Architecture](https://bahalla.github.io/orrery/agent-design-patterns/)** — Design patterns, RBAC, and ADRs.
+
+## ⚖️ License
+
+This project is licensed under the [MIT License](LICENSE).
+-design-patterns/)** — Design patterns, RBAC, and ADRs.
 
 ## ⚖️ License
 

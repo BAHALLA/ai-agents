@@ -23,7 +23,7 @@ For how agents are composed inside `orrery-assistant`, see [ADR-002: Agent Compo
 
 ## orrery-assistant
 
-The root orchestrator. Analyzes user intent and delegates to specialists via either **AgentTool** (LLM-routed) or **SequentialAgent / ParallelAgent / LoopAgent** sub-agents (deterministic pipelines).
+The root orchestrator. Uses an ADK 2.0 **Workflow** graph and an `intent_router` to dispatch user intent to either a conversational LLM (`orrery_chat_agent`) or a deterministic incident triage pipeline.
 
 **Run it:**
 ```bash
@@ -33,9 +33,9 @@ make run-devops-persistent   # SQLite-backed sessions + memory
 ```
 
 **Exposed capabilities:**
-- `incident_triage_agent` — parallel health checks across Kafka, K8s, Docker, observability, and Elasticsearch, then summarizes and journals
-- `kafka_health_agent`, `k8s_health_agent`, `observability_agent`, `elasticsearch_agent`, `docker_agent`, `ops_journal_agent` — direct specialist delegation
-- `remediation_pipeline` — `LoopAgent` that acts → verifies → retries up to 3 times; exits when the verifier calls `exit_loop`
+- `orrery_chat_agent` — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal`
+- `health_join` — parallel health check barrier across 5 subsystems
+- `remediation_actor` / `remediation_verifier` — closed-loop remediation graph that acts → verifies → retries up to 3 times via state counters
 
 ---
 

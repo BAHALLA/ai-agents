@@ -1,14 +1,23 @@
-"""Closed-loop remediation agents using ADK LoopAgent.
+"""Closed-loop remediation nodes for the graph-based Workflow root.
 
-Provides a remediation loop pattern: Act -> Verify -> (exit or retry).
-The loop runs up to ``max_iterations`` times before giving up, and a
-verifier agent can signal early exit via the ``exit_loop`` tool.
+Provides the remediation subgraph building blocks: an actor, a verifier, a
+deterministic routing function, and a summarizer. The act -> verify -> retry
+loop is wired by the Workflow graph in ``agent.py`` via a ``RoutingMap``:
 
-RBAC: The remediation actor inherits the guardrails from the tools it
-calls (@destructive, @confirm), so only operator/admin roles can trigger
-destructive actions inside the loop.
+    remediation_actor -> remediation_verifier -> verify_route
+        -> {"retry": remediation_actor, "done": remediation_summarizer}
+
+``verify_route`` replaces ADK 1.x's ``LoopAgent`` (max_iterations) + ``exit_loop``
+(``actions.escalate``): the verifier signals success by calling
+``mark_remediation_resolved``, and ``verify_route`` enforces the iteration cap.
+See ADR-003.
+
+RBAC: The remediation actor inherits the guardrails from the tools it calls
+(@destructive, @confirm), so only operator/admin roles can trigger destructive
+actions inside the loop.
 """
 
+from google.adk.agents.context import Context
 from google.adk.tools.tool_context import ToolContext
 
 from k8s_health_agent.tools import (
@@ -23,36 +32,37 @@ from k8s_health_agent.tools import (
 )
 from kafka_health_agent.tools import get_consumer_lag, get_kafka_cluster_health
 from ops_journal_agent.tools import log_operation
-from orrery_core import (
-    create_agent,
-    create_loop_agent,
-    create_sequential_agent,
-    resolve_planner,
-)
+from orrery_core import create_agent, resolve_planner
+
+# Maximum act -> verify cycles before giving up (replaces LoopAgent.max_iterations).
+MAX_REMEDIATION_ITERATIONS = 3
 
 # Reading the planner choice once: the actor benefits most (must reason about
 # blast radius before each destructive call), the verifier is a straight
 # diagnostic readout where planning adds latency without adding signal.
 _planner = resolve_planner()
 
-# ── Exit loop tool ────────────────────────────────────────────────────
+# ── Resolution signal tool ────────────────────────────────────────────
 
 
-async def exit_loop(
+async def mark_remediation_resolved(
     reason: str,
     tool_context: ToolContext,
 ) -> dict:
-    """Signal that remediation is complete and the loop should stop.
+    """Signal that remediation succeeded and the loop should stop.
+
+    The graph's ``verify_route`` reads ``remediation_resolved`` from state on
+    the next step and routes to the summarizer instead of retrying.
 
     Args:
         reason: Why remediation is considered complete.
         tool_context: ADK tool context (injected automatically).
 
     Returns:
-        A dict confirming the loop exit.
+        A dict confirming the resolution was recorded.
     """
-    tool_context.actions.escalate = True
-    tool_context.actions.skip_summarization = True
+    tool_context.state["remediation_resolved"] = True
+    tool_context.state["remediation_resolution_reason"] = reason
     return {"status": "remediation_complete", "reason": reason}
 
 
@@ -100,8 +110,8 @@ remediation_verifier = create_agent(
         "- get_events: Look for new warnings or errors\n"
         "- get_consumer_lag: Check if Kafka lag is decreasing\n"
         "- get_kafka_cluster_health: Verify Kafka cluster status\n\n"
-        "If the issue is RESOLVED, call exit_loop with a reason explaining "
-        "what was fixed.\n\n"
+        "If the issue is RESOLVED, call mark_remediation_resolved with a reason "
+        "explaining what was fixed.\n\n"
         "If the issue PERSISTS, describe what is still wrong in your output "
         "so the actor can try a different approach on the next iteration."
     ),
@@ -113,22 +123,30 @@ remediation_verifier = create_agent(
         get_events,
         get_consumer_lag,
         get_kafka_cluster_health,
-        exit_loop,
+        mark_remediation_resolved,
     ],
     output_key="verification_result",
 )
 
-# ── Remediation loop ──────────────────────────────────────────────────
 
-remediation_loop = create_loop_agent(
-    name="remediation_loop",
-    description=(
-        "Closed-loop remediation: takes an action, verifies it worked, "
-        "and retries with a different approach if not (up to 3 iterations)."
-    ),
-    sub_agents=[remediation_actor, remediation_verifier],
-    max_iterations=3,
-)
+# ── Loop routing (replaces LoopAgent + exit_loop) ─────────────────────
+
+
+def verify_route(ctx: Context) -> str:
+    """Decide whether to retry remediation or finish.
+
+    Bumps the iteration counter and routes ``"done"`` when the verifier marked
+    the incident resolved or the iteration cap is reached, else ``"retry"``.
+
+    Returns the chosen route (also set on ``ctx.route`` for the graph).
+    """
+    iteration = ctx.state.get("remediation_iteration", 0) + 1
+    ctx.state["remediation_iteration"] = iteration
+    resolved = bool(ctx.state.get("remediation_resolved"))
+    route = "done" if resolved or iteration >= MAX_REMEDIATION_ITERATIONS else "retry"
+    ctx.route = route
+    return route
+
 
 # ── Remediation summary ──────────────────────────────────────────────
 
@@ -146,14 +164,4 @@ remediation_summarizer = create_agent(
     ),
     tools=[log_operation],
     output_key="remediation_summary",
-)
-
-# ── Full remediation pipeline ─────────────────────────────────────────
-
-remediation_pipeline = create_sequential_agent(
-    name="remediation_pipeline",
-    description=(
-        "Full remediation pipeline: runs the remediation loop, then summarizes the outcome."
-    ),
-    sub_agents=[remediation_loop, remediation_summarizer],
 )

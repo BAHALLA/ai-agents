@@ -24,7 +24,7 @@ from slowapi.util import get_remote_address
 from orrery_core import MetricsPlugin, authorize, default_plugins
 
 from .config import SlackBotConfig
-from .confirmation import ConfirmationStore, slack_confirmation
+from .confirmation import ConfirmationStore, slack_confirmation, wire_tool_callbacks
 from .handler import APP_NAME, SlackAgentHandler
 from .session_map import SessionMap
 
@@ -103,14 +103,17 @@ async def lifespan(app: FastAPI):
 
     # Slack-specific confirmation buttons are kept as agent-level callback.
     # Cross-cutting concerns (RBAC, metrics, audit, etc.) are handled by plugins.
-    root_agent.before_tool_callback = [
-        authorize(),
-        slack_confirmation(
-            store=store,
-            slack_client=bolt_app.client,
-            channel_ref=channel_ref,
-        ),
-    ]
+    wire_tool_callbacks(
+        root_agent,
+        [
+            authorize(),
+            slack_confirmation(
+                store=store,
+                slack_client=bolt_app.client,
+                channel_ref=channel_ref,
+            ),
+        ],
+    )
 
     # Use default plugins but skip the guardrail gate (Slack has its own
     # confirmation flow via interactive buttons).

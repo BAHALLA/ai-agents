@@ -44,6 +44,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.workflow import Workflow
 from google.genai import types as genai_types
 
 try:
@@ -112,7 +113,7 @@ class ChatResponse(BaseModel):
 
 def create_app(
     *,
-    root_agent: Agent,
+    root_agent: Agent | Workflow,
     app_name: str,
     plugins: Sequence[BasePlugin] | None = None,
     config: ServerConfig | None = None,

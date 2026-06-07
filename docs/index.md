@@ -58,7 +58,9 @@ graph LR
     end
 
     subgraph Orchestrator
-        ROOT[Orrery Assistant]
+        ROOT[Orrery Workflow]
+        ROUTER{Intent Router}
+        CHAT[Orrery Chat]
     end
 
     subgraph Specialists
@@ -80,12 +82,10 @@ graph LR
     WEB --> ROOT
     SLACK --> ROOT
     GCHAT --> ROOT
-
-    ROOT --> KAFKA
-    ROOT --> K8S
-    ROOT --> OBS
-    ROOT --> DOCKER
-    ROOT --> JOURNAL
+    ROOT --> ROUTER
+    ROUTER -- "chat" --> CHAT
+    ROUTER -- "triage" --> KAFKA & K8S & OBS & DOCKER
+    CHAT --> KAFKA & K8S & OBS & DOCKER & JOURNAL
 
     ROOT -.-> P1
     ROOT -.-> P2

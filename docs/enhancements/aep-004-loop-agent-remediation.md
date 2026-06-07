@@ -1,5 +1,7 @@
 # AEP-004: LoopAgent for Self-Healing Remediation
 
+> **Update (2026-06-07):** The `LoopAgent` implementation described here has been migrated to a native ADK 2.0 Graph Workflow. See [ADR-003](../adr/003-graph-workflow-inversion.md) for details on the new `verify_route` function node that replaces `LoopAgent`.
+
 | Field | Value |
 |-------|-------|
 | **Status** | completed |

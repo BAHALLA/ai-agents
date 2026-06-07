@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Graph-Based Workflow Root (ADR-003)**: The orchestrator root is now a deterministic ADK 2.0 `Workflow` graph. An `intent_router` dynamically dispatches turns to either a conversational LLM orchestrator (`orrery_chat_agent`) or a deterministic incident triage pipeline.
+- **Remediation Subgraph**: The self-healing loop is now expressed via explicit graph edges (`remediation_actor` → `remediation_verifier` → `verify_route`), strictly bounded by a state counter instead of the legacy `LoopAgent`.
+
+### Removed
+- **Deprecated Agent Factories**: Removed `create_sequential_agent`, `create_parallel_agent`, and `create_loop_agent` from `orrery_core.base` as they are deprecated in ADK 2.0 in favor of the `Workflow` API.
+- **Legacy Routing Evals**: Removed `planner_routing` eval which asserted the old `AgentTool` LLM routing that is now handled by the graph's `intent_router`.
+
 ### Security
 - **CVE remediation across the dependency graph**: Bumped `litellm` `1.82.6 → 1.83.14` to address 7 advisories — 2 CRITICAL (CVE-2026-35030 OIDC auth bypass / privilege escalation, CVE-2026-42208 SQL injection) and 5 HIGH (CVE-2026-35029 RCE via unrestricted proxy config, CVE-2026-40217 arbitrary code execution via bytecode rewriting, CVE-2026-42203 SSTI in `/prompts/test`, CVE-2026-42271 authenticated command execution via MCP stdio test endpoints, GHSA-69x8-hrgq-fjj8 password hash exposure / pass-the-hash bypass). Five transitive HIGH-severity bumps came along for free: `mako 1.3.10 → 1.3.12` (CVE-2026-44307 Windows path traversal via backslash URI), `pyasn1 0.6.2 → 0.6.3` (CVE-2026-30922 unbounded-recursion DoS), `pyopenssl 25.3.0 → 26.2.0` (CVE-2026-27459 DTLS cookie callback buffer overflow), `python-multipart 0.0.22 → 0.0.28` (CVE-2026-42561 unbounded multipart-header DoS), and `urllib3 2.6.3 → 2.7.0` (CVE-2026-44431 cross-origin sensitive-header forwarding, CVE-2026-44432 decompression-bomb safeguard bypass).
 - **Trivy filesystem scan in CI** (`.github/workflows/ci.yml` — security job): New `aquasecurity/trivy-action@0.28.0` step runs `scan-type: fs` with `scanners: vuln,misconfig,secret` against the workspace, gating on `HIGH,CRITICAL` with `ignore-unfixed: true` and `exit-code: 1`. Catches the vulnerable-dependency class that Bandit (a Python static analyser) doesn't see, plus IaC misconfig in `Dockerfile` / `deploy/terraform/`, plus committed secrets.

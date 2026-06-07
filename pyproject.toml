@@ -16,7 +16,7 @@ dependencies = [
     "ops-journal",
     "slack-bot",
     "google-chat-bot",
-    "google-adk>=1.33.0",
+    "google-adk>=2.2.0",
 ]
 
 [project.optional-dependencies]
@@ -49,17 +49,17 @@ google-chat-bot = { workspace = true }
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
-    "hypothesis>=6.152.4",
-    "ruff>=0.15.12",
-    "ty>=0.0.34",
+    "pytest-asyncio>=1.4.0",
+    "hypothesis>=6.155.2",
+    "ruff>=0.15.16",
+    "ty>=0.0.44",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
     "mkdocstrings[python]>=1.0.4",
     "mkdocs-minify-plugin>=0.8.0",
-    "mkdocs-git-revision-date-localized-plugin>=1.5.1",
+    "mkdocs-git-revision-date-localized-plugin>=1.5.3",
     "mkdocs-gen-files>=0.6.1",
-    "pymdown-extensions>=10.21.2",
+    "pymdown-extensions>=10.21.3",
 ]
 
 [tool.uv.workspace]
@@ -108,6 +108,10 @@ filterwarnings = [
     "ignore:\\[EXPERIMENTAL\\] feature.* is enabled:UserWarning:google.adk.features.*",
     "ignore:.*_UnionGenericAlias.*:DeprecationWarning:google.genai.types",
     "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning:slowapi.extension",
+    # Third-party deprecations we don't control (ADK internal agent-config base
+    # class; Starlette TestClient's httpx shim used by fastapi.testclient).
+    "ignore:BaseAgentConfig is deprecated.*:DeprecationWarning",
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated.*",
 ]
 testpaths = [
     "core/tests",

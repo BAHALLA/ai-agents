@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from google.adk.agents import Agent, LoopAgent, ParallelAgent, SequentialAgent
+from google.adk.agents import Agent
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.models.base_llm import BaseLlm
 from google.adk.planners import BasePlanner
@@ -214,58 +214,3 @@ def create_agent(
         kwargs["output_key"] = output_key
 
     return Agent(**kwargs)
-
-
-def create_sequential_agent(
-    *,
-    name: str,
-    description: str = "",
-    sub_agents: Sequence[BaseAgent],
-) -> SequentialAgent:
-    """Create a SequentialAgent that runs sub-agents one after another.
-
-    Sub-agents can pass data via output_key which writes to session state,
-    making it available to subsequent agents in the sequence.
-    """
-    return SequentialAgent(name=name, description=description, sub_agents=list(sub_agents))
-
-
-def create_parallel_agent(
-    *,
-    name: str,
-    description: str = "",
-    sub_agents: Sequence[BaseAgent],
-) -> ParallelAgent:
-    """Create a ParallelAgent that runs sub-agents concurrently.
-
-    Each sub-agent runs in an isolated branch context. Use output_key on
-    sub-agents to write results to session state for downstream agents.
-    """
-    return ParallelAgent(name=name, description=description, sub_agents=list(sub_agents))
-
-
-def create_loop_agent(
-    *,
-    name: str,
-    description: str = "",
-    sub_agents: Sequence[BaseAgent],
-    max_iterations: int = 3,
-) -> LoopAgent:
-    """Create a LoopAgent that runs sub-agents in a loop until exit or max iterations.
-
-    Sub-agents execute sequentially in each iteration. A sub-agent can signal
-    loop termination by calling a tool that sets
-    ``tool_context.actions.escalate = True``.
-
-    Use this for closed-loop remediation patterns:
-    Act -> Verify -> (exit or retry).
-
-    Args:
-        max_iterations: Safety limit to prevent runaway loops.
-    """
-    return LoopAgent(
-        name=name,
-        description=description,
-        sub_agents=list(sub_agents),
-        max_iterations=max_iterations,
-    )

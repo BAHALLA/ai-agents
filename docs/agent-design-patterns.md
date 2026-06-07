@@ -6,46 +6,54 @@ This document analyzes the platform's architecture against the [Google Cloud Age
 
 | Pattern Category | Key Patterns | Implementation in this Project |
 | :--- | :--- | :--- |
-| **Multi-Agent (MAS)** | Coordinator | `orrery_assistant` (Root Agent) uses `AgentTool` to route requests. |
-| | Sequential | `incident_triage_agent` runs a fixed pipeline: Triage → Summarize → Save. |
-| | Parallel | `health_check_agent` runs K8s, Kafka, and Docker checks concurrently. |
-| | Hierarchical | Root Orchestrator → Workflow Agents → Specialist Workers. |
+| **Multi-Agent (MAS)** | Coordinator | `orrery_chat_agent` uses `AgentTool` to route requests. |
+| | Workflow Graph | `orrery_workflow` is an ADK 2.0 graph combining LLM routing and fixed pipelines. |
+| | JoinNode Barrier | `health_join` synchronizes concurrent K8s, Kafka, and Docker checks. |
+| | Hierarchical | Root Workflow → Intent Router → Specialist Workers / Triage Pipeline. |
 | **Iterative & Feedback** | ReAct | Default behavior for all `LlmAgent` instances (Thought/Action/Observation). |
-| | Loop / Refinement | `LoopAgent` remediation loop: act → verify → retry (AEP-004). |
+| | Graph Cycles | Remediation subgraph uses `verify_route` to loop: act → verify → retry. |
 | | Generator/Critic | Evaluation framework uses LLM-as-a-judge (AEP-002). |
 | **Specialized** | Human-in-the-Loop | `GuardrailsPlugin` gates tools with `@confirm` and `@destructive`. |
-| | Custom Logic | Enforced via `SequentialAgent` and `ParallelAgent` factory functions. |
+| | Custom Logic | Enforced via native Python `FunctionNode`s like `intent_router` and `triage_route`. |
 
 ## Composition at a Glance
 
 ```mermaid
 graph TD
-    ROOT[orrery_assistant<br/>Coordinator — LLM routing]
+    ROOT[orrery_workflow<br/>Graph Root]
+    ROUTER{intent_router}
+    CHAT[orrery_chat_agent<br/>LLM Orchestrator]
 
-    ROOT -->|sub-agent| TRIAGE[incident_triage_agent<br/>SequentialAgent]
-    ROOT -->|AgentTool| KAFKA[kafka_health_agent]
-    ROOT -->|AgentTool| K8S[k8s_health_agent]
-    ROOT -->|AgentTool| OBS[observability_agent]
-    ROOT -->|AgentTool| DOCKER[docker_agent]
-    ROOT -->|AgentTool| JOURNAL[ops_journal_agent]
-    ROOT -->|AgentTool| REM[remediation_pipeline<br/>LoopAgent, max=3]
-
-    TRIAGE --> HC[health_check_agent<br/>ParallelAgent]
+    ROOT --> ROUTER
+    ROUTER -->|chat| CHAT
+    
+    CHAT -->|AgentTool| KAFKA[kafka_health_agent]
+    CHAT -->|AgentTool| K8S[k8s_health_agent]
+    CHAT -->|AgentTool| OBS[observability_agent]
+    CHAT -->|AgentTool| DOCKER[docker_agent]
+    CHAT -->|AgentTool| JOURNAL[ops_journal_agent]
+    
+    ROUTER -->|triage| HC[health_checkers<br/>Parallel edges]
     HC --> HC1[kafka_checker]
     HC --> HC2[k8s_checker]
     HC --> HC3[docker_checker]
     HC --> HC4[obs_checker]
-    TRIAGE --> SUM[triage_summarizer]
-    TRIAGE --> JW[journal_writer]
+    HC --> HC5[es_checker]
+    HC1 & HC2 & HC3 & HC4 & HC5 --> HJ[health_join<br/>JoinNode]
+    HJ --> SUM[triage_summarizer]
+    SUM --> JW[journal_writer]
+    JW --> TROUTE{triage_route}
 
-    REM --> ACT[remediation_actor]
-    REM --> VER[remediation_verifier]
+    TROUTE -->|remediate| ACT[remediation_actor]
+    ACT --> VER[remediation_verifier]
+    VER --> VROUTE{verify_route}
+    VROUTE -->|retry| ACT
 ```
 
-Deterministic workflows (triage, remediation) live under `sub_agents` —
-their execution order is fixed. Specialists live behind `AgentTool` so
-the root LLM picks them based on the user's intent. See
-[ADR-002](adr/002-agent-tool-vs-sub-agents.md) for the rationale.
+Deterministic workflows (triage, remediation) are modeled as native graph edges —
+their execution order is fixed. Specialists live behind `AgentTool` on the `orrery_chat_agent` so
+the conversational LLM picks them based on the user's intent. See
+[ADR-003](adr/003-graph-workflow-inversion.md) for the rationale.
 
 ---
 
@@ -53,22 +61,20 @@ the root LLM picks them based on the user's intent. See
 
 ### 1. Multi-Agent Systems (MAS)
 
-The project leverages the **Coordinator Pattern** as its primary entry point. The root `orrery_assistant` does not perform technical tasks itself; instead, it analyzes user intent and delegates to specialized agents.
+The project leverages the **Hybrid Graph Workflow Pattern** as its primary entry point. The root `orrery_workflow` does not perform technical tasks itself; instead, it uses a `FunctionNode` (`intent_router`) to analyze user intent and delegates to either a conversational LLM or a deterministic pipeline.
 
-*   **LLM-Driven Routing (AgentTool):** As defined in [ADR-002](adr/002-agent-tool-vs-sub-agents.md), specialists like `kafka_agent` and `k8s_agent` are exposed as tools. The LLM decides when to invoke them based on their descriptions.
-*   **Deterministic Workflows (Sub-agents):** For complex, repeatable tasks like incident triage, the system switches to **Sequential** and **Parallel** patterns. The `incident_triage_agent` ensures that all systems are checked simultaneously before a summary is generated, providing a predictable and high-quality output that pure LLM routing might miss.
+*   **LLM-Driven Routing (AgentTool):** As defined in [ADR-002](adr/002-agent-tool-vs-sub-agents.md) (and preserved in ADR-003), specialists like `kafka_health_agent` and `k8s_health_agent` are exposed as tools on the `orrery_chat_agent`. The LLM decides when to invoke them based on their descriptions.
+*   **Deterministic Workflows (Graph Edges):** For complex, repeatable tasks like incident triage, the system uses ADK 2.0 `Workflow` graph edges. The parallel health checkers ensure that all systems are checked simultaneously before the `health_join` node synchronizes execution and proceeds to the summary.
 
 ### 2. Iterative & Feedback Patterns
 
 Every individual agent in the project follows the **ReAct (Reason and Act)** pattern. When an agent is given a task, it iterates through "Thoughts" and "Actions" (tool calls) until it observes enough information to provide a final response.
 
-**Iterative Refinement** is implemented in the remediation layer ([AEP-004](enhancements/aep-004-loop-agent-remediation.md)). The `LoopAgent`-based `remediation_pipeline` implements a **closed-loop remediation** pattern:
+**Iterative Refinement** is implemented in the remediation layer using a graph-based cyclic subgraph:
 
 1.  **Act**: The `remediation_actor` attempts a fix (restart, scale, or rollback a deployment).
 2.  **Verify**: The `remediation_verifier` checks system health using diagnostic tools.
-3.  **Decide**: If resolved, the verifier calls `exit_loop` (sets `escalate = True`). If still failing, the loop retries with a different action — up to 3 iterations.
-
-The `remediation_pipeline` is exposed as an `AgentTool` on the root orchestrator, so the user can trigger it after a triage with "fix it" or "auto-remediate".
+3.  **Decide**: The `verify_route` node (a deterministic `FunctionNode`) increments a state counter. If resolved, it routes to `"done"`. If still failing, it routes back to `"retry"` — up to 3 iterations.
 
 **Planning (opt-in).** Reasoning-heavy agents — the root orchestrator, the `triage_summarizer`, and the `remediation_actor` — accept an optional ADK planner via `create_agent(planner=…)`. Set `ORRERY_PLANNER=plan_react` to attach a provider-agnostic [`PlanReActPlanner`](https://adk.dev/agents/llm-agents/) (works with Gemini, Claude, OpenAI, and Ollama via LiteLLM); set `ORRERY_PLANNER=builtin` to use Gemini's native thinking tokens (`BuiltInPlanner`). The planner is resolved once at import time and shared across the opted-in agents in `orrery-assistant`. Tool-leaf agents — per-system health checkers, the remediation verifier, the journal writer — intentionally skip the planner: they execute one short tool sequence per turn, so an extra reasoning pass would add latency without changing the output. Default is **no planner** (zero behavior change). See [Configuration → LLM Provider](config/general.md#planning) for the env-var matrix.
 
@@ -187,10 +193,8 @@ every supported provider.
 
 - **No hard numeric cap** on tools or sub-agents — ADK delegates these limits to the
   underlying model.
-- **`LoopAgent`** should always set `max_iterations`. This project uses `3` (see
-  [AEP-004](enhancements/aep-004-loop-agent-remediation.md)). There is no default safety
-  net.
-- **`ParallelAgent` fan-out** is bounded only by your Python asyncio thread pool and the
+- **Graph cycles** should always enforce an iteration cap. This project uses `MAX_REMEDIATION_ITERATIONS = 3` in `verify_route` (see [ADR-003](adr/003-graph-workflow-inversion.md)). There is no default safety net.
+- **Graph tuple fan-out** is bounded only by your Python asyncio thread pool and the
   downstream systems' concurrency limits. Add per-system semaphores where relevant.
 - **`session.state`** is a dict shared across agents in a run. It is not size-limited by
   ADK, but large payloads here bloat every subsequent LLM call. Prefer `output_key` with

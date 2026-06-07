@@ -24,7 +24,7 @@ from slack_bolt.async_app import AsyncApp
 from orrery_core import authorize, default_plugins
 
 from .config import SlackBotConfig
-from .confirmation import ConfirmationStore, slack_confirmation
+from .confirmation import ConfirmationStore, slack_confirmation, wire_tool_callbacks
 from .handler import APP_NAME, SlackAgentHandler
 from .session_map import SessionMap
 
@@ -168,14 +168,17 @@ async def main() -> None:
 
     session_service = DatabaseSessionService(db_url=config.slack_db_url)
 
-    root_agent.before_tool_callback = [
-        authorize(),
-        slack_confirmation(
-            store=store,
-            slack_client=bolt_app.client,
-            channel_ref=channel_ref,
-        ),
-    ]
+    wire_tool_callbacks(
+        root_agent,
+        [
+            authorize(),
+            slack_confirmation(
+                store=store,
+                slack_client=bolt_app.client,
+                channel_ref=channel_ref,
+            ),
+        ],
+    )
 
     app = App(
         name=APP_NAME,
