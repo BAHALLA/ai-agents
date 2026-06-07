@@ -118,20 +118,19 @@ class TestPlannerWiring:
 # ── Graph structure + deterministic routing (ADR-003) ────────────────
 
 
-class TestGraphStructure:
-    def test_root_is_workflow(self):
+class TestRootAndGraphStructure:
+    def test_root_is_conversational_chat_agent(self):
         agent_mod, _ = _reload_agent()
-        assert isinstance(agent_mod.root_agent, Workflow)
-        assert agent_mod.root_agent is agent_mod.orrery_workflow
+        # The interactive root is the chat coordinator, NOT the Workflow (ADK
+        # forbids a chat-mode agent as a routed graph node).
+        assert agent_mod.root_agent is agent_mod.orrery_chat_agent
+        assert not isinstance(agent_mod.root_agent, Workflow)
 
-    def test_graph_contains_expected_nodes(self):
+    def test_triage_workflow_is_separate_graph(self):
         agent_mod, _ = _reload_agent()
-        node_names = {n.name for n in agent_mod.orrery_workflow.graph.nodes}
-        # dispatch + conversational branch + parallel checkers + barrier
-        # + triage chain + remediation loop
+        assert isinstance(agent_mod.orrery_triage_workflow, Workflow)
+        node_names = {n.name for n in agent_mod.orrery_triage_workflow.graph.nodes}
         expected = {
-            "intent_router",
-            "orrery_chat_agent",
             "kafka_health_checker",
             "k8s_health_checker",
             "docker_health_checker",
@@ -148,14 +147,15 @@ class TestGraphStructure:
             "final_report",
         }
         assert expected <= node_names
+        # The chat coordinator must NOT be a node in the deterministic graph.
+        assert "orrery_chat_agent" not in node_names
 
-    def test_chat_agent_has_specialist_tools(self):
+    def test_coordinator_has_specialists_and_triage_tools(self):
         agent_mod, _ = _reload_agent()
         tool_names = {
             getattr(getattr(t, "agent", t), "name", getattr(t, "name", None))
             for t in agent_mod.orrery_chat_agent.tools
         }
-        # The six specialists are reachable via AgentTool for free-form routing.
         for specialist in (
             "kafka_health_agent",
             "k8s_health_agent",
@@ -163,33 +163,9 @@ class TestGraphStructure:
             "elasticsearch_agent",
             "docker_agent",
             "ops_journal_agent",
+            "incident_triage_agent",  # broad-sweep delegation tool
         ):
             assert specialist in tool_names
-
-
-class TestIntentRouter:
-    def _ctx(self, text: str) -> MagicMock:
-        ctx = MagicMock()
-        ctx.user_content = MagicMock()
-        ctx.user_content.parts = [MagicMock(text=text)]
-        ctx.route = None
-        return ctx
-
-    @pytest.mark.parametrize(
-        "text",
-        ["run a full triage", "check everything", "is everything healthy", "system health report"],
-    )
-    def test_triage_phrases_route_to_triage(self, text):
-        agent_mod, _ = _reload_agent()
-        assert agent_mod.intent_router(self._ctx(text)) == "triage"
-
-    @pytest.mark.parametrize(
-        "text",
-        ["is kafka healthy?", "restart the web deployment", "show me pod logs", "hello"],
-    )
-    def test_targeted_phrases_route_to_chat(self, text):
-        agent_mod, _ = _reload_agent()
-        assert agent_mod.intent_router(self._ctx(text)) == "chat"
 
 
 class TestTriageRouting:

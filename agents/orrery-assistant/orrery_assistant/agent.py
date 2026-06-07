@@ -1,19 +1,27 @@
-"""Hybrid graph root for the orrery assistant (ADK 2.0).
+"""Root orchestrator for the orrery assistant (ADK 2.0).
 
-A top-level ``Workflow`` keeps the conversational LLM orchestrator (free-form
-specialist routing) *and* adds a deterministic incident-response pipeline. An
-``intent_router`` dispatches each turn: explicit "run a full triage" requests
-take the structured graph path; everything else falls through to the
-conversational ``orrery_chat_agent`` (which routes to specialists via AgentTools).
-See ADR-003.
+The interactive root is ``orrery_chat_agent`` — a conversational chat-mode
+``LlmAgent`` that routes free-form queries to specialist agents via ``AgentTool``
+and delegates broad "run a triage" requests to ``incident_triage_agent``. This is
+the standard ADK 2.0 coordinator pattern; a chat-mode agent must be the root (ADK
+forbids it as a routed node inside a graph).
 
-    START ─▶ intent_router
-              ├─("triage")▶ [parallel] 5 health checkers ─▶ health_join (JoinNode)
-              │                └▶ triage_summarizer ─▶ journal_writer ─▶ triage_route
-              │                      ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
-              │                      │                    └▶ verify_route ─("done")▶ summarizer ─▶ final_report
-              │                      └─("resolved")▶ final_report
-              └─("chat", default)▶ orrery_chat_agent (LLM + 6 specialist AgentTools + memory)
+The deterministic, parallel, bounded-loop pipeline lives in
+``orrery_triage_workflow`` (a graph ``Workflow``) as a separate batch/scheduled
+entrypoint — `make run-triage` — because a ``Workflow`` cannot be a sub-agent or
+``AgentTool`` of the chat coordinator. Both reuse the same node agents. See ADR-003.
+
+    orrery_chat_agent (chat-mode LlmAgent, ROOT)
+      ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
+      ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
+      └─ PreloadMemoryTool
+
+    orrery_triage_workflow (Workflow, separate entrypoint)
+      START ─▶ [parallel] 5 health checkers ─▶ health_join (JoinNode)
+            ─▶ triage_summarizer ─▶ journal_writer ─▶ triage_route
+                  ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
+                  │                    └▶ verify_route ─("done")▶ summarizer ─▶ final_report
+                  └─("resolved")▶ final_report
 """
 
 from typing import Any
@@ -216,26 +224,73 @@ journal_writer = create_agent(
 )
 
 
-# ── Conversational orchestrator (default branch) ──────────────────────
+# ── Conversational triage sub-agent ───────────────────────────────────
 
-orrery_chat_agent = create_agent(
-    name="orrery_chat_agent",
-    description="Conversational DevOps assistant that routes queries to specialist agents.",
+# A single-turn agent the coordinator delegates to for "run a triage". It sweeps
+# every subsystem with the same health-check tools the deterministic graph uses,
+# then records a structured verdict. (The deterministic, parallel, bounded-loop
+# version lives in `orrery_triage_workflow` below for batch/scheduled runs.)
+incident_triage_agent = create_agent(
+    name="incident_triage_agent",
+    description="Runs a full health sweep across all systems and returns a triage report.",
     planner=_planner,
     instruction=(
-        "You are a DevOps assistant. Answer the user's question by delegating to "
-        "the right specialist tool based on intent:\n"
+        "Run a full incident triage. Check the health of Kafka, Kubernetes, Docker, "
+        "Observability (Prometheus/Alertmanager), and Elasticsearch using your tools. "
+        "Then synthesize a single triage report (overall status: healthy/degraded/critical, "
+        "issues per system, recommended next actions) and call record_triage_verdict ONCE "
+        "with overall_status and the full report text. Be concise and actionable."
+    ),
+    tools=[
+        get_kafka_cluster_health,
+        list_kafka_topics,
+        list_consumer_groups,
+        get_consumer_lag,
+        get_cluster_info,
+        get_nodes,
+        get_events,
+        list_pods,
+        list_containers,
+        get_container_stats,
+        docker_compose_status,
+        get_prometheus_targets,
+        get_prometheus_alerts,
+        get_active_alerts,
+        query_prometheus,
+        es_get_cluster_health,
+        es_list_indices,
+        es_get_shard_allocation,
+        list_eck_clusters,
+        record_triage_verdict,
+    ],
+)
+
+
+# ── Conversational root coordinator ───────────────────────────────────
+
+# The interactive root. A chat-mode LlmAgent (default for a root agent) that holds
+# real conversational history and delegates to specialists via AgentTool. It must
+# be the root — ADK 2.0 forbids a chat-mode agent as a routed node inside a graph.
+orrery_chat_agent = create_agent(
+    name="orrery_chat_agent",
+    description="Conversational DevOps orchestrator that routes queries to specialist agents.",
+    planner=_planner,
+    instruction=(
+        "You are a DevOps assistant that coordinates specialist agents. Delegate based "
+        "on the user's intent:\n"
         "- **kafka_health_agent**: Kafka cluster health, topics, consumer groups, lag.\n"
-        "- **k8s_health_agent**: Kubernetes cluster info, nodes, pods, deployments, "
-        "logs, events, scaling, restarts, and rollbacks.\n"
+        "- **k8s_health_agent**: Kubernetes cluster info, nodes, pods, deployments, logs, "
+        "events, scaling, restarts, and rollbacks.\n"
         "- **observability_agent**: Prometheus metrics/alerts, Loki logs, Alertmanager.\n"
-        "- **elasticsearch_agent**: Elasticsearch health, indices, shards, ILM, "
-        "snapshots, and ECK Kubernetes CRs.\n"
+        "- **elasticsearch_agent**: Elasticsearch health, indices, shards, ILM, snapshots, "
+        "and ECK Kubernetes CRs.\n"
         "- **docker_agent**: Docker containers, logs, stats, compose status.\n"
-        "- **ops_journal_agent**: Notes, past findings, activity, preferences, bookmarks.\n\n"
-        "Use individual specialist tools for targeted investigations. For a broad "
-        "'is everything healthy?' / 'run a full triage' request, tell the user it runs "
-        "as a structured triage workflow (they can ask to 'run a triage').\n\n"
+        "- **ops_journal_agent**: Notes, past findings, activity, preferences, bookmarks.\n"
+        "- **incident_triage_agent**: a broad health sweep across ALL systems — use it when "
+        "the user asks 'is everything healthy?', 'run a triage', or 'check all systems'.\n\n"
+        "Use individual specialists for targeted questions; use incident_triage_agent for "
+        "broad sweeps. Remediation (restart/scale/rollback) is available via k8s_health_agent "
+        "and is guarded — it requires human approval.\n\n"
         "After a significant investigation, proactively offer to save findings via "
         "ops_journal_agent. Relevant context from past sessions is loaded automatically — "
         "use it to correlate with similar past incidents."
@@ -247,51 +302,13 @@ orrery_chat_agent = create_agent(
         AgentTool(agent=elasticsearch_agent),
         AgentTool(agent=docker_agent_root),
         AgentTool(agent=journal_agent),
+        AgentTool(agent=incident_triage_agent),
         PreloadMemoryTool(),
     ],
 )
 
 
-# ── Intent router (dispatch: structured triage vs conversational) ─────
-
-# Phrases that divert a turn to the deterministic triage pipeline. Everything
-# else (including targeted "is kafka healthy?") falls through to the chat agent,
-# which routes to a specialist — so misclassification only ever degrades to the
-# conversational path, never blocks an answer.
-_TRIAGE_INTENT = (
-    "triage",
-    "health check",
-    "healthcheck",
-    "check all",
-    "check everything",
-    "all systems",
-    "everything healthy",
-    "everything ok",
-    "everything okay",
-    "system health",
-    "overall health",
-    "full health",
-    "health of all",
-)
-
-
-def _latest_user_text(ctx: Context) -> str:
-    """Best-effort extraction of the current turn's user message text."""
-    content = getattr(ctx, "user_content", None)
-    parts = getattr(content, "parts", None) or []
-    return " ".join(getattr(p, "text", "") or "" for p in parts)
-
-
-def intent_router(ctx: Context) -> str:
-    """Dispatch the turn: ``"triage"`` for explicit health-sweep requests,
-    otherwise ``"chat"`` (the conversational specialist-routing agent)."""
-    text = _latest_user_text(ctx).lower()
-    route = "triage" if any(kw in text for kw in _TRIAGE_INTENT) else "chat"
-    ctx.route = route
-    return route
-
-
-# ── Deterministic routing nodes ───────────────────────────────────────
+# ── Deterministic routing nodes (used by orrery_triage_workflow) ──────
 
 # Strong, problem-only signals scanned in the per-system status reports as a
 # fallback when the LLM fails to emit a structured verdict. Kept conservative
@@ -376,22 +393,22 @@ def final_report(ctx: Context) -> str:
     return f"Triage complete — system status: {severity}. No remediation required.{caveat}"
 
 
-# ── Root Workflow graph ───────────────────────────────────────────────
+# ── Deterministic triage Workflow (batch / scheduled, not the chat root) ──
 
-orrery_workflow = Workflow(
-    name="orrery_assistant",
+# The graph-native, parallel, bounded-loop pipeline. A `Workflow` can't be a
+# sub-agent or AgentTool of the chat coordinator (it isn't a BaseAgent), and a
+# chat agent can't be a routed node — so the deterministic graph is a standalone
+# entrypoint (see run_triage.py / `make run-triage`) that reuses the same nodes.
+orrery_triage_workflow = Workflow(
+    name="orrery_triage",
     description=(
-        "Hybrid DevOps root: a conversational orchestrator that routes free-form "
-        "queries to specialist agents, plus a deterministic incident-response "
-        "pipeline (parallel health checks across Kafka, Kubernetes, Docker, "
-        "Observability, and Elasticsearch → triage → journaling → conditional "
-        "closed-loop remediation) for explicit 'run a triage' requests."
+        "Deterministic incident-response pipeline: parallel health checks across "
+        "Kafka, Kubernetes, Docker, Observability, and Elasticsearch → triage → "
+        "journaling → conditional closed-loop remediation. Run via `make run-triage`."
     ),
     edges=[
-        # Dispatch the turn: structured triage vs conversational chat.
-        ("START", intent_router),
-        (intent_router, {"triage": HEALTH_CHECKERS, "chat": orrery_chat_agent}),
-        # Triage branch: parallel health checks → barrier → triage → journal → route
+        # Parallel health checks → barrier → triage → journal → route
+        ("START", HEALTH_CHECKERS),
         (HEALTH_CHECKERS, health_join),
         (health_join, triage_summarizer, journal_writer, triage_route),
         (triage_route, {"remediate": remediation_actor, "resolved": final_report}),
@@ -402,13 +419,13 @@ orrery_workflow = Workflow(
     ],
 )
 
-# Exported as `root_agent` so app.py / ADK web pick it up as the App root.
-root_agent = orrery_workflow
+# The interactive root is the conversational coordinator (ADK web / app.py / CLI).
+root_agent = orrery_chat_agent
 
 # ADK web/api_server picks up `app` (with context caching) over bare `root_agent`.
 app = App(
     name="orrery_assistant",
-    root_agent=orrery_workflow,
+    root_agent=orrery_chat_agent,
     plugins=default_plugins(enable_memory=True),
     context_cache_config=create_context_cache_config(),
 )

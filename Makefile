@@ -6,7 +6,7 @@
        run-k8s run-k8s-cli \
        run-observability run-observability-cli \
        run-elasticsearch run-elasticsearch-cli \
-       run-assistant run-assistant-api run-assistant-cli run-assistant-persistent \
+       run-assistant run-assistant-api run-assistant-cli run-assistant-persistent run-triage \
        run-devops run-devops-cli run-devops-persistent \
        _ensure-dev-jwt-secret dev-token dev-token-viewer dev-token-operator dev-token-admin \
        rotate-dev-jwt-secret print-dev-jwt-config \
@@ -188,6 +188,9 @@ run-assistant-cli: ## Run orrery-assistant in terminal
 
 run-assistant-persistent: ## Run orrery-assistant with SQLite persistence
 	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run python run_persistent.py
+
+run-triage: ## Run the deterministic triage Workflow once (batch / scheduled)
+	cd agents/orrery-assistant && uv run python run_triage.py
 
 # Legacy aliases — docs and CLAUDE.md historically use `run-devops*` (pre-orrery
 # rebrand). Kept so the documented commands keep working.

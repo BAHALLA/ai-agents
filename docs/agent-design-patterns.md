@@ -7,33 +7,30 @@ This document analyzes the platform's architecture against the [Google Cloud Age
 | Pattern Category | Key Patterns | Implementation in this Project |
 | :--- | :--- | :--- |
 | **Multi-Agent (MAS)** | Coordinator | `orrery_chat_agent` uses `AgentTool` to route requests. |
-| | Workflow Graph | `orrery_workflow` is an ADK 2.0 graph combining LLM routing and fixed pipelines. |
+| | Workflow Graph | `orrery_triage_workflow` is an ADK 2.0 graph executing a fixed pipeline. |
 | | JoinNode Barrier | `health_join` synchronizes concurrent K8s, Kafka, and Docker checks. |
-| | Hierarchical | Root Workflow → Intent Router → Specialist Workers / Triage Pipeline. |
+| | Hierarchical | Root Orchestrator → Specialist Workers / Triage Sub-agent. |
 | **Iterative & Feedback** | ReAct | Default behavior for all `LlmAgent` instances (Thought/Action/Observation). |
 | | Graph Cycles | Remediation subgraph uses `verify_route` to loop: act → verify → retry. |
 | | Generator/Critic | Evaluation framework uses LLM-as-a-judge (AEP-002). |
 | **Specialized** | Human-in-the-Loop | `GuardrailsPlugin` gates tools with `@confirm` and `@destructive`. |
-| | Custom Logic | Enforced via native Python `FunctionNode`s like `intent_router` and `triage_route`. |
+| | Custom Logic | Enforced via native Python `FunctionNode`s like `triage_route`. |
 
 ## Composition at a Glance
 
 ```mermaid
 graph TD
-    ROOT[orrery_workflow<br/>Graph Root]
-    ROUTER{intent_router}
-    CHAT[orrery_chat_agent<br/>LLM Orchestrator]
+    ROOT[orrery_chat_agent<br/>LLM Orchestrator]
 
-    ROOT --> ROUTER
-    ROUTER -->|chat| CHAT
+    ROOT -->|AgentTool| KAFKA[kafka_health_agent]
+    ROOT -->|AgentTool| K8S[k8s_health_agent]
+    ROOT -->|AgentTool| OBS[observability_agent]
+    ROOT -->|AgentTool| DOCKER[docker_agent]
+    ROOT -->|AgentTool| JOURNAL[ops_journal_agent]
+    ROOT -->|AgentTool| TRIAGE[incident_triage_agent]
     
-    CHAT -->|AgentTool| KAFKA[kafka_health_agent]
-    CHAT -->|AgentTool| K8S[k8s_health_agent]
-    CHAT -->|AgentTool| OBS[observability_agent]
-    CHAT -->|AgentTool| DOCKER[docker_agent]
-    CHAT -->|AgentTool| JOURNAL[ops_journal_agent]
-    
-    ROUTER -->|triage| HC[health_checkers<br/>Parallel edges]
+    WORKFLOW[orrery_triage_workflow<br/>Graph]
+    WORKFLOW -->|START| HC[health_checkers<br/>Parallel edges]
     HC --> HC1[kafka_checker]
     HC --> HC2[k8s_checker]
     HC --> HC3[docker_checker]
@@ -50,7 +47,7 @@ graph TD
     VROUTE -->|retry| ACT
 ```
 
-Deterministic workflows (triage, remediation) are modeled as native graph edges —
+Deterministic workflows (triage, remediation) are modeled as native graph edges in `orrery_triage_workflow` —
 their execution order is fixed. Specialists live behind `AgentTool` on the `orrery_chat_agent` so
 the conversational LLM picks them based on the user's intent. See
 [ADR-003](adr/003-graph-workflow-inversion.md) for the rationale.
@@ -61,7 +58,7 @@ the conversational LLM picks them based on the user's intent. See
 
 ### 1. Multi-Agent Systems (MAS)
 
-The project leverages the **Hybrid Graph Workflow Pattern** as its primary entry point. The root `orrery_workflow` does not perform technical tasks itself; instead, it uses a `FunctionNode` (`intent_router`) to analyze user intent and delegates to either a conversational LLM or a deterministic pipeline.
+The project leverages the **Coordinator Pattern** as its primary entry point. The root `orrery_chat_agent` handles user requests and routes to specialists. A separate deterministic pipeline, `orrery_triage_workflow`, handles complex repetitive tasks.
 
 *   **LLM-Driven Routing (AgentTool):** As defined in [ADR-002](adr/002-agent-tool-vs-sub-agents.md) (and preserved in ADR-003), specialists like `kafka_health_agent` and `k8s_health_agent` are exposed as tools on the `orrery_chat_agent`. The LLM decides when to invoke them based on their descriptions.
 *   **Deterministic Workflows (Graph Edges):** For complex, repeatable tasks like incident triage, the system uses ADK 2.0 `Workflow` graph edges. The parallel health checkers ensure that all systems are checked simultaneously before the `health_join` node synchronizes execution and proceeds to the summary.

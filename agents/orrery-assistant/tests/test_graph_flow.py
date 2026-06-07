@@ -18,7 +18,7 @@ from google.adk.workflow import JoinNode
 from google.genai import types
 
 # Real routing logic under test.
-from orrery_assistant.agent import final_report, intent_router, triage_route
+from orrery_assistant.agent import final_report, triage_route
 from orrery_assistant.remediation import MAX_REMEDIATION_ITERATIONS, verify_route
 
 # ── Deterministic stand-ins for the LLM agent nodes ──────────────────
@@ -66,19 +66,14 @@ def _summarizer(ctx: Context) -> str:
     return "summarized"
 
 
-def _chat(ctx: Context) -> str:
-    ctx.state["chat_ran"] = True
-    return "chatted"
-
-
 def _build_workflow() -> Workflow:
+    """Mirror of the deterministic ``orrery_triage_workflow`` topology, with the
+    LLM agent nodes replaced by deterministic stubs but the real routing nodes."""
     join = JoinNode(name="health_join")
     return Workflow(
         name="flow_test_root",
         edges=[
-            # Real intent_router dispatches between the triage pipeline and chat.
-            ("START", intent_router),
-            (intent_router, {"triage": (_check_a, _check_b), "chat": _chat}),
+            ("START", (_check_a, _check_b)),
             ((_check_a, _check_b), join),
             (join, _triage, _journal, triage_route),
             (triage_route, {"remediate": _actor, "resolved": final_report}),
@@ -89,13 +84,13 @@ def _build_workflow() -> Workflow:
     )
 
 
-async def _run(scenario: str, message: str = "run a full triage", **seed) -> dict:
+async def _run(scenario: str, **seed) -> dict:
     """Run the graph for a scenario and return the final session state."""
     app = App(name="flow", root_agent=_build_workflow(), plugins=[])
     runner = InMemoryRunner(app=app)
     state = {"_scenario": scenario, **seed}
     session = await runner.session_service.create_session(app_name="flow", user_id="u", state=state)
-    msg = types.Content(role="user", parts=[types.Part(text=message)])
+    msg = types.Content(role="user", parts=[types.Part(text="run a full triage")])
     async for _ in runner.run_async(user_id="u", session_id=session.id, new_message=msg):
         pass
     final = await runner.session_service.get_session(
@@ -106,19 +101,8 @@ async def _run(scenario: str, message: str = "run a full triage", **seed) -> dic
 
 
 @pytest.mark.asyncio
-async def test_conversational_request_routes_to_chat():
-    """A non-triage message dispatches to the chat branch, skipping the
-    deterministic pipeline entirely."""
-    state = await _run("healthy", message="is the kafka cluster healthy?")
-    assert state.get("chat_ran") is True
-    assert "incident_severity" not in state
-    assert "remediation_iteration" not in state
-
-
-@pytest.mark.asyncio
 async def test_healthy_path_skips_remediation():
     state = await _run("healthy")
-    assert state.get("chat_ran") is None  # took the triage branch
     assert state["incident_severity"] == "healthy"
     # Remediation branch never ran.
     assert "remediation_iteration" not in state

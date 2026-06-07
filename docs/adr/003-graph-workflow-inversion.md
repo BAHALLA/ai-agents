@@ -1,4 +1,4 @@
-# ADR-003: Hybrid Graph-Based Workflow Root
+# ADR-003: Graph-Based Workflow and Conversational Root
 
 **Status:** Accepted
 **Date:** 2026-06-07
@@ -17,78 +17,40 @@ The previous root (ADR-002) was an **LLM orchestrator** (`orrery_assistant`, an
 - exposed six specialist agents as `AgentTool`s and let the LLM route by intent, and
 - kept a deterministic `incident_triage_agent` (`SequentialAgent`) as a sub-agent.
 
-The `Workflow` class is **not** a `BaseAgent`, so it cannot be nested as a sub-agent
-or wrapped in `AgentTool`. The graph engine is designed to sit at the **top** of the
-tree with agents as nodes. We therefore had a fork: keep the LLM root and wrap a few
-pipelines in Workflows, or invert fully — make a `Workflow` the root.
+The `Workflow` class provides deterministic routing and parallel execution without deprecation warnings. However, ADK 2.0 enforces a strict constraint: a conversational `LlmAgent` (multi-turn, `mode='task'|'chat'`) cannot be embedded as a routed static node inside a `Workflow` graph, because the graph scheduler overwrites `node_input` on resume, destroying conversational context.
 
-**Decision driver:** we want *both* a deterministic, auditable incident-response
-pipeline (triage → remediate → report) **and** the open-ended conversational routing
-to specialists that the LLM root provided. Since an `LlmAgent` **is** a valid graph
-node, we make a `Workflow` the root and keep the conversational orchestrator as a node
-on it — a **hybrid**. (An earlier revision of this ADR removed the LLM root entirely;
-that "full inversion" was reverted to preserve free-form specialist routing.)
+**Decision driver:** We need *both* a conversational orchestrator for free-form user interaction *and* a deterministic, auditable incident-response pipeline (triage → remediate → report) built on the new `Workflow` graph.
 
 ## Validated API facts (ADK 2.2.0)
 
 - `LlmAgent` **is** a `BaseNode`, so existing `create_agent()` results are valid nodes.
-- `App(root_agent=...)` accepts a `Workflow` (`BaseAgent | Any | None`), so
-  `create_persistent_runner` / `create_app` need **no change**.
+- A `Workflow` cannot be passed to `AgentTool` or used as a `sub_agent` inside an `LlmAgent` because it does not subclass `BaseAgent`.
+- Conversational agents (`LlmAgent` with `mode='chat'|'task'`) lose their memory/context when placed as static nodes inside a `Workflow` because the graph runner overwrites their inputs upon resuming.
 - Edge forms: sequential chain `("START", a, b, c)`; parallel fan-out
   `("START", (a, b, c))`; conditional/loop via `RoutingMap` `(node, {"k": x, ...})`.
-- A node sets `ctx.route = <bool|int|str>` to pick a `RoutingMap` branch, and
-  `ctx.state[...]` for shared data (LLM agents still use `output_key`).
 - `JoinNode` (`_requires_all_predecessors = True`) is the fan-in **barrier**: it waits
   for all parallel predecessors before firing the successor.
 
-These were confirmed with two runnable spikes (bounded loop; parallel + JoinNode).
-
 ## Decision
 
-Make a top-level `Workflow` (`orrery_workflow`) the root. An `intent_router`
-`FunctionNode` dispatches each turn between the conversational orchestrator and the
-deterministic triage pipeline:
+We maintain two separate entry points that reuse the same underlying node agents:
 
-```
-START
-  ▼
-intent_router (FunctionNode: reads ctx.user_content)
-  ├─("chat", default)─▶ orrery_chat_agent (LlmAgent + 6 specialist AgentTools + memory)
-  │                       └▶ free-form LLM routing to a specialist (terminal)
-  └─("triage")─▶ kafka_health_checker ─┐
-                 k8s_health_checker    │
-                 docker_health_checker ├─▶ health_join (JoinNode, waits for all 5)
-                 observability_…       │        │
-                 elasticsearch_…       ┘        ▼
-                                   triage_summarizer (LLM; record_triage_verdict →
-                                                      incident_severity + triage_report)
-                                          │
-                                          ▼
-                                   journal_writer (LLM, saves report + logs)
-                                          │
-                                          ▼
-                                   triage_route (FunctionNode: "remediate" | "resolved",
-                                                 with missing-verdict inference fallback)
-                     ┌────────────────────┴───────────────────┐
-             "remediate"                                   "resolved"
-                     ▼                                          ▼
-            remediation_actor                            final_report (END)
-                     │
-                     ▼
-            remediation_verifier (LLM; mark_remediation_resolved tool)
-                     │
-                     ▼
-            verify_route (FunctionNode: bumps remediation_iteration;
-                          "retry" if unresolved and < MAX_ITER else "done")
-             ┌───────┴────────┐
-         "retry"           "done"
-             ▼                 ▼
-      remediation_actor   remediation_summarizer ─▶ final_report (END)
-```
+1. **The Interactive Root (`orrery_chat_agent`)**: An `LlmAgent` acting as the conversational orchestrator. It uses `AgentTool`s to route requests to specialists, and exposes a single-turn `incident_triage_agent` for broad health sweeps.
+2. **The Deterministic Graph (`orrery_triage_workflow`)**: A standalone ADK 2.0 `Workflow` graph used for batch or scheduled incident responses (via `make run-triage`).
 
-Misclassification is safe: only explicit health-sweep phrases divert to the pipeline;
-everything else (including targeted "is kafka healthy?") falls through to the chat
-agent, which can answer anything by routing to a specialist.
+```text
+    orrery_chat_agent (chat-mode LlmAgent, ROOT)
+      ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
+      ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
+      └─ PreloadMemoryTool
+
+    orrery_triage_workflow (Workflow, separate entrypoint)
+      START ─▶ [parallel] 5 health checkers ─▶ health_join (JoinNode)
+            ─▶ triage_summarizer ─▶ journal_writer ─▶ triage_route
+                  ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
+                  │                    └▶ verify_route ─("done")▶ summarizer ─▶ final_report
+                  └─("resolved")▶ final_report
+```
 
 ### Mapping from the deprecated agents
 
@@ -99,12 +61,11 @@ agent, which can answer anything by routing to a specialist.
 | `remediation_loop` (`LoopAgent`, max=3) | `actor → verifier → verify_route` with `RoutingMap {"retry": actor, "done": summarizer}`, bounded by `remediation_iteration` counter in state |
 | `remediation_pipeline` (`SequentialAgent`) | the remediation subgraph above |
 | `exit_loop` tool (`actions.escalate`) | `mark_remediation_resolved` tool + `verify_route` reading state |
-| Root `LlmAgent` + 6 `AgentTool`s | **preserved** as `orrery_chat_agent` — a graph node on the `"chat"` branch, reached via `intent_router` |
+| Root `LlmAgent` + 6 `AgentTool`s | **preserved** as `orrery_chat_agent` — the interactive root. |
 
 ### Routing decisions are deterministic FunctionNodes
 
-`triage_summarizer` emits a structured `incident_severity` (`healthy | degraded |
-critical`) into state alongside its prose `triage_report`. `triage_route` and
+In the `orrery_triage_workflow`, `triage_summarizer` emits a structured `incident_severity` (`healthy | degraded | critical`) into state alongside its prose `triage_report`. `triage_route` and
 `verify_route` are pure Python `FunctionNode`s — unit-testable without an LLM. The
 `MAX_REMEDIATION_ITERATIONS = 3` cap is enforced by a state counter, replacing
 `LoopAgent.max_iterations`.
@@ -112,47 +73,26 @@ critical`) into state alongside its prose `triage_report`. `triage_route` and
 ## Consequences
 
 ### Positive
-- **Conversational routing preserved** — `orrery_chat_agent` keeps free-form LLM
-  delegation to the six specialist `AgentTool`s, so users can still ask arbitrary
-  targeted questions of the root.
-- **No deprecation warnings** — the deprecated workflow agents are gone from the root.
-- **Deterministic & auditable** — the triage/remediation path is a fixed graph; routing
-  logic lives in testable functions, not LLM discretion. The `triage_route` fallback
-  means a missing LLM verdict never silently skips a degraded system (fail-safe, flagged).
-- **Same building blocks** — health-checker / summarizer / actor / verifier / specialist
-  `LlmAgent`s are reused unchanged as nodes; only the wiring changed.
-- **Plugins/RBAC/metrics unchanged** — they attach at the `App`/`Runner` level. The Slack
-  and Google Chat confirmation walkers were extended to traverse `graph.nodes` so guarded
-  destructive tools still fire interactive approvals.
+- **Conversational routing preserved natively** — `orrery_chat_agent` retains full chat memory and free-form LLM delegation.
+- **No deprecation warnings** — the deprecated workflow agents are gone from the codebase.
+- **Deterministic & auditable automation** — the triage/remediation path is a fixed graph (`orrery_triage_workflow`); routing logic lives in testable functions, not LLM discretion.
+- **Same building blocks** — health-checkers, summarizer, actor, verifier, and specialist `LlmAgent`s are reused across both the interactive root and the batch workflow.
+- **Plugins/RBAC/metrics unchanged** — they attach at the `App`/`Runner` level. The Slack and Google Chat confirmation walkers traverse `graph.nodes` so guarded destructive tools still fire interactive approvals when the graph is run.
 
 ### Negative / breaking
-- **`planner_routing` eval removed** — it asserted LLM→AgentTool routing against the old
-  `LlmAgent` root module. The chat routing now lives behind `intent_router`; the graph is
-  covered by deterministic unit + end-to-end flow tests instead. (Re-adding a chat-branch
-  eval is a good follow-up.)
-- **Intent routing is keyword-based** — explicit health-sweep phrases trigger the
-  pipeline; everything else defaults to chat. A missed triage phrase degrades to the
-  conversational path (which can still answer), never to a blocked request.
-- **ADR-002 superseded** — the AgentTool-vs-sub-agent decision no longer governs the root
-  shape (kept for historical context; the AgentTool guidance still applies inside
-  `orrery_chat_agent`).
+- **Split Entry Points** — Conversational interactions and full deterministic DAG executions now start from different orchestrators.
+- **`planner_routing` eval removed** — it asserted LLM→AgentTool routing against the old root module.
+- **ADR-002 superseded** — the AgentTool-vs-sub-agent decision no longer solely governs the system shape (kept for historical context).
 
 ### Neutral
 - Specialist agents still build with planners; planner wiring is unaffected.
-- `runner.py` / `server.py` accept a `Workflow` root (`Agent | Workflow`); no behavioral
-  change beyond the widened type.
+- `runner.py` / `server.py` accept an `Agent | Workflow` root, allowing integration tests against either.
 
 ## Implementation
 
-- `agents/orrery-assistant/orrery_assistant/agent.py` — define node agents,
-  `orrery_chat_agent` (conversational LLM + 6 AgentTools + memory), `intent_router`, and
-  `orrery_workflow` (`Workflow`); export it as `root_agent`.
-- `agents/orrery-assistant/orrery_assistant/remediation.py` — expose actor/verifier/
-  summarizer nodes + `verify_route` + `mark_remediation_resolved`; drop `LoopAgent`/
-  `SequentialAgent`.
-- `agents/{slack-bot,google-chat-bot}` — confirmation walkers traverse `graph.nodes`.
-- `core/orrery_core` — removed the deprecated `create_sequential/parallel/loop_agent`
-  factories; `run_persistent`/`create_app` accept `Agent | Workflow`.
-- Tests: `test_graph_flow.py` (end-to-end execution incl. dispatch + loop cap),
-  `test_planner_wiring.py` (graph structure, intent router, routing). `planner_routing`
-  eval removed.
+- `agents/orrery-assistant/orrery_assistant/agent.py` — define node agents, `orrery_chat_agent` (conversational LLM + AgentTools + memory), and `orrery_triage_workflow` (`Workflow`); export `orrery_chat_agent` as `root_agent`.
+- `agents/orrery-assistant/run_triage.py` — standalone script to execute the deterministic triage graph.
+- `agents/orrery-assistant/orrery_assistant/remediation.py` — expose actor/verifier/summarizer nodes + `verify_route` + `mark_remediation_resolved`; drop `LoopAgent`/`SequentialAgent`.
+- `agents/{slack-bot,google-chat-bot}` — confirmation walkers traverse `graph.nodes` (for integration with workflow executions).
+- `core/orrery_core` — removed the deprecated `create_sequential/parallel/loop_agent` factories; `run_persistent`/`create_app` accept `Agent | Workflow`.
+- Tests: `test_graph_flow.py` (end-to-end execution of routing nodes), `test_planner_wiring.py` (graph vs conversational root structure).

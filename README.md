@@ -32,7 +32,7 @@ graph LR
         GCHAT[Google Chat]
     end
 
-    ROOT[Orrery Assistant<br/>Coordinator]
+    ROOT[Orrery Chat<br/>LLM Orchestrator]
 
     subgraph Specialists
         KAFKA[Kafka]
@@ -41,7 +41,7 @@ graph LR
         ES[Elasticsearch]
         DOCKER[Docker]
         JOURNAL[Ops Journal]
-        REM[Remediation Loop]
+        TRIAGE[Incident Triage]
     end
 
     subgraph Plugins
@@ -59,7 +59,7 @@ graph LR
     ROOT --> ES
     ROOT --> DOCKER
     ROOT --> JOURNAL
-    ROOT --> REM
+    ROOT --> TRIAGE
     ROOT -.-> P1
     ROOT -.-> P2
     ROOT -.-> P3

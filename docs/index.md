@@ -58,9 +58,7 @@ graph LR
     end
 
     subgraph Orchestrator
-        ROOT[Orrery Workflow]
-        ROUTER{Intent Router}
-        CHAT[Orrery Chat]
+        ROOT[Orrery Chat]
     end
 
     subgraph Specialists
@@ -71,6 +69,7 @@ graph LR
         ES[Elasticsearch]
         DOCKER[Docker Agent]
         JOURNAL[Ops Journal]
+        TRIAGE[Incident Triage]
     end
 
     subgraph Plugins
@@ -83,10 +82,14 @@ graph LR
     WEB --> ROOT
     SLACK --> ROOT
     GCHAT --> ROOT
-    ROOT --> ROUTER
-    ROUTER -- "chat" --> CHAT
-    ROUTER -- "triage" --> KAFKA & K8S & OBS & ES & DOCKER
-    CHAT --> KAFKA & K8S & OBS & ES & DOCKER & JOURNAL
+
+    ROOT --> KAFKA
+    ROOT --> K8S
+    ROOT --> OBS
+    ROOT --> ES
+    ROOT --> DOCKER
+    ROOT --> JOURNAL
+    ROOT --> TRIAGE
 
     ROOT -.-> P1
     ROOT -.-> P2

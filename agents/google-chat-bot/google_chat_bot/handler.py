@@ -968,9 +968,9 @@ class GoogleChatHandler:
     # ── Run Remediation click ────────────────────────────────────────
 
     _REMEDIATION_PROMPT = (
-        "Run the remediation_pipeline on the current incident. "
-        "Use the triage report in session state to decide which action "
-        "to take (restart, scale, or rollback). Report the outcome."
+        "Remediate the current incident. Use the triage report in session state "
+        "to decide which action to take using k8s_health_agent (restart, scale, or rollback). "
+        "Report the outcome."
     )
 
     def _click_user_email(self, event: dict[str, Any]) -> str:

@@ -105,21 +105,24 @@ def test_real_orrery_assistant_tree():
     This is the test that would have caught the original regression
     (sub-agent tools falling back to CLI-style text confirmation).
     """
-    from orrery_assistant.agent import root_agent
+    from orrery_assistant.agent import orrery_triage_workflow, root_agent
 
     store = ConfirmationStore()
-    wired = apply_chat_confirmation(root_agent, store)
-
-    # The graph root (ADR-003) exposes its tool-calling LlmAgents as graph
-    # nodes: 5 triage health checkers + triage_summarizer + journal_writer
-    # + remediation actor/verifier/summarizer = 10. Assert a lower bound so
-    # the count can drift as nodes land.
-    assert wired >= 10, f"expected ≥10 LlmAgents wired, got {wired}"
+    
+    # 1. The interactive root (orrery_chat_agent) has 6 specialist AgentTools + incident_triage_agent.
+    wired_chat = apply_chat_confirmation(root_agent, store)
+    assert wired_chat >= 7, f"expected ≥7 LlmAgents wired, got {wired_chat}"
+    
+    # 2. The deterministic graph (orrery_triage_workflow) exposes its tool-calling LlmAgents
+    # as graph nodes.
+    wired_graph = apply_chat_confirmation(orrery_triage_workflow, store)
+    assert wired_graph >= 8, f"expected ≥8 LlmAgents wired in graph, got {wired_graph}"
 
     # Spot-check a known graph node with destructive tools: the remediation
     # actor must carry the Chat callback so restart/scale/rollback fire an
     # interactive Card instead of plain-text confirmation.
-    nodes = root_agent.graph.nodes if root_agent.graph is not None else ()
+    graph = orrery_triage_workflow.graph
+    nodes = graph.nodes if graph is not None else ()
     actor = next((n for n in nodes if getattr(n, "name", "") == "remediation_actor"), None)
     assert actor is not None, "remediation_actor node not found in graph"
     assert callable(getattr(actor, "before_tool_callback", None))
