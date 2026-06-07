@@ -7,6 +7,7 @@
        run-observability run-observability-cli \
        run-elasticsearch run-elasticsearch-cli \
        run-assistant run-assistant-api run-assistant-cli run-assistant-persistent \
+       run-devops run-devops-cli run-devops-persistent \
        _ensure-dev-jwt-secret dev-token dev-token-viewer dev-token-operator dev-token-admin \
        rotate-dev-jwt-secret print-dev-jwt-config \
        run-journal run-journal-cli run-journal-persistent \
@@ -187,6 +188,12 @@ run-assistant-cli: ## Run orrery-assistant in terminal
 
 run-assistant-persistent: ## Run orrery-assistant with SQLite persistence
 	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run python run_persistent.py
+
+# Legacy aliases — docs and CLAUDE.md historically use `run-devops*` (pre-orrery
+# rebrand). Kept so the documented commands keep working.
+run-devops: run-assistant ## Alias for run-assistant (ADK Dev UI)
+run-devops-cli: run-assistant-cli ## Alias for run-assistant-cli (terminal)
+run-devops-persistent: run-assistant-persistent ## Alias for run-assistant-persistent (SQLite)
 
 # ── ops-journal ────────────────────────────────────────
 

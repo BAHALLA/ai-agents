@@ -68,6 +68,7 @@ graph LR
         KAFKA[Kafka Agent]
         K8S[K8s Agent]
         OBS[Observability]
+        ES[Elasticsearch]
         DOCKER[Docker Agent]
         JOURNAL[Ops Journal]
     end
@@ -84,8 +85,8 @@ graph LR
     GCHAT --> ROOT
     ROOT --> ROUTER
     ROUTER -- "chat" --> CHAT
-    ROUTER -- "triage" --> KAFKA & K8S & OBS & DOCKER
-    CHAT --> KAFKA & K8S & OBS & DOCKER & JOURNAL
+    ROUTER -- "triage" --> KAFKA & K8S & OBS & ES & DOCKER
+    CHAT --> KAFKA & K8S & OBS & ES & DOCKER & JOURNAL
 
     ROOT -.-> P1
     ROOT -.-> P2

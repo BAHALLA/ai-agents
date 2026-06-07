@@ -222,5 +222,5 @@ If you're writing a new workflow and need to decide which specialist(s) to call:
 | *"Is the ECK `Elasticsearch` / `Kibana` CR reconciled? What's the operator doing?"* | `elasticsearch` (via `list_eck_clusters`, `get_eck_operator_events`) |
 | *"What containers are up? Restart the web service."* | `docker-agent` |
 | *"Remember this incident / recall last week's postmortem."* | `ops-journal` + [memory](memory.md) |
-| *"Run a full triage and file the report."* | `orrery-assistant` (uses `incident_triage_agent`) |
-| *"The pod is still unhealthy — try to fix it."* | `orrery-assistant` → `remediation_pipeline` |
+| *"Run a full triage and file the report."* | `orrery-assistant` (`intent_router` → triage pipeline) |
+| *"The pod is still unhealthy — try to fix it."* | `orrery-assistant` → remediation subgraph (`remediation_actor` / `verify_route`) |

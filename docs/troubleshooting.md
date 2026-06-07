@@ -69,7 +69,7 @@ export GOOGLE_GENAI_USE_VERTEXAI=TRUE
 If you're using AI Studio instead, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and `GOOGLE_API_KEY=…`.
 
 ### `429 Resource exhausted` / quota errors
-Hot loop in a `LoopAgent`? Check `max_iterations` on `remediation_pipeline` (defaults to 3). For Gemini, enable context caching ([`CONTEXT_CACHE_MIN_TOKENS`](config/general.md#context-caching)) — it reduces input tokens per call dramatically for tool-heavy agents.
+Hot loop in the remediation subgraph? Check `MAX_REMEDIATION_ITERATIONS` (defaults to 3), enforced by `verify_route` in `agents/orrery-assistant/orrery_assistant/remediation.py`. For Gemini, enable context caching ([`CONTEXT_CACHE_MIN_TOKENS`](config/general.md#context-caching)) — it reduces input tokens per call dramatically for tool-heavy agents.
 
 ### LLM costs spike unexpectedly
 Check the `orrery_llm_tokens_total` Prometheus counter and the cache hit rate. Common cause: caching is disabled (Gemini-only feature) or `CONTEXT_CACHE_MIN_TOKENS` is set too high to ever trigger. See [Deployment → LLM costs](deployment.md#llm-costs-spike-unexpectedly).

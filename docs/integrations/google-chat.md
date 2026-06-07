@@ -62,19 +62,19 @@ For long-running investigations (incident triage, remediation loops), the bot st
 -   **Tool breadcrumb** — the most recent tool call (`list_consumer_groups`, `get_pods`, …) so operators can see what the agent is doing right now.
 -   **Subsystem chips** — one row per health-check subsystem that has reported in, with a severity icon inferred from the status text:
     -   ✅ `ok` · ⚠️ `warn` (yellow/degraded/lag) · ❌ `fail` (red/critical/crashloop) · ⏳ `pending`
--   **Remediation panel** (when `remediation_pipeline` is running) — shows `remediation_action` → `verification_result` → `remediation_summary` as the `LoopAgent` iterates.
+-   **Remediation panel** (when the remediation subgraph is running) — shows `remediation_action` → `verification_result` → `remediation_summary` as the act → verify → retry loop iterates.
 -   **Elapsed seconds** — visible forward-progress signal.
 
 Card updates are **debounced at 800ms** and **force-flushed** on each subsystem status write to balance liveness against Chat's update quota.
 
 **Final result card (triage runs):**
 
-When the run writes `kafka_status` / `k8s_status` / `docker_status` / `observability_status` / `elasticsearch_status` / `triage_report` into session state (i.e. `incident_triage_agent` ran), the progress card is replaced with a structured **Triage Report** card:
+When the run writes `kafka_status` / `k8s_status` / `docker_status` / `observability_status` / `elasticsearch_status` / `triage_report` into session state (i.e. the triage pipeline ran), the progress card is replaced with a structured **Triage Report** card:
 
 -   **Header** — overall severity badge: 🟢 *All systems healthy* / 🟡 *Degraded* / 🔴 *Critical*.
 -   **Subsystem sections** — one section per subsystem with an icon and short summary.
 -   **Summary** — the `triage_summarizer` output.
--   **"Remediate" Quick Command instruction** — when overall severity is `warn` or `fail` **and** the viewer is an `operator` or `admin`, the card invites the user to send the **Remediate** Quick Command, which fires the `remediation_pipeline` in the same session and reuses the triage report already in state. RBAC is still enforced server-side at tool time — the prompt is just a UI hint.
+-   **"Remediate" Quick Command instruction** — when overall severity is `warn` or `fail` **and** the viewer is an `operator` or `admin`, the card invites the user to send the **Remediate** Quick Command, which fires the remediation subgraph in the same session and reuses the triage report already in state. RBAC is still enforced server-side at tool time — the prompt is just a UI hint.
 
 For non-triage queries (e.g. *"what's the Kafka lag?"*), no subsystem chips land, so the progress card falls back to a plain text/markdown final reply and the remediation hint is not shown.
 

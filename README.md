@@ -70,7 +70,7 @@ graph LR
 ### 🧩 Intelligence & Orchestration
 - **Multi-agent coordination** — A root orchestrator delegates to specialists (Kafka, K8s, etc.) via dynamic routing or deterministic pipelines.
 - **Opt-in planning** — Set `ORRERY_PLANNER=plan_react` (provider-agnostic) or `builtin` (Gemini thinking tokens) to attach an ADK planner to the root orchestrator, triage summarizer, and remediation actor — explicit reasoning before destructive ops.
-- **Self-healing (LoopAgent)** — Closed-loop remediation: **Act** (restart/scale) → **Verify** → **Retry** (up to 3 times).
+- **Self-healing (graph workflow)** — Closed-loop remediation as a bounded graph cycle: **Act** (restart/scale) → **Verify** → **Retry** (up to 3 times), capped by `verify_route`.
 - **Cross-session memory** — Agents recall past incidents, investigations, and team preferences across sessions.
 
 ### 🛡️ Safety & Governance
@@ -144,11 +144,6 @@ open http://localhost:8000
 - ⚙️ **[Configuration](https://bahalla.github.io/orrery/config/general/)** — LLM providers, env vars, and infrastructure.
 - 🛠️ **[Developer Guide](https://bahalla.github.io/orrery/adding-an-agent/)** — How to build and test your own specialist agents.
 - 🏗️ **[Architecture](https://bahalla.github.io/orrery/agent-design-patterns/)** — Design patterns, RBAC, and ADRs.
-
-## ⚖️ License
-
-This project is licensed under the [MIT License](LICENSE).
--design-patterns/)** — Design patterns, RBAC, and ADRs.
 
 ## ⚖️ License
 

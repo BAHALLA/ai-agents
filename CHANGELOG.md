@@ -8,8 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Graph-Based Workflow Root (ADR-003)**: The orchestrator root is now a deterministic ADK 2.0 `Workflow` graph. An `intent_router` dynamically dispatches turns to either a conversational LLM orchestrator (`orrery_chat_agent`) or a deterministic incident triage pipeline.
-- **Remediation Subgraph**: The self-healing loop is now expressed via explicit graph edges (`remediation_actor` → `remediation_verifier` → `verify_route`), strictly bounded by a state counter instead of the legacy `LoopAgent`.
+- **Graph-Based Workflow Root (ADR-003)**: The orchestrator root is now a hybrid ADK 2.0 `Workflow` graph. An `intent_router` `FunctionNode` dispatches each turn to either the conversational LLM orchestrator (`orrery_chat_agent`, which keeps free-form specialist routing via the six `AgentTool`s + memory) or a deterministic incident-triage pipeline (parallel health checks → `health_join` → triage → conditional remediation).
+- **Remediation Subgraph**: The self-healing loop is now expressed via explicit graph edges (`remediation_actor` → `remediation_verifier` → `verify_route`), strictly bounded by the `MAX_REMEDIATION_ITERATIONS` state counter instead of the legacy `LoopAgent`. The verifier signals success via the `mark_remediation_resolved` tool (replacing `exit_loop` / `actions.escalate`).
+- **Fail-safe triage routing**: `triage_route` infers severity from the per-system status reports and flags `triage_verdict_missing` when the LLM skips `record_triage_verdict`, so a degraded system is never silently routed to "resolved".
+- **End-to-end graph flow tests**: `agents/orrery-assistant/tests/test_graph_flow.py` drives the real routing nodes through `InMemoryRunner` (parallel fan-out/join, intent dispatch, bounded remediation loop, missing-verdict fallback) with no LLM credentials required.
+- **Confirmation walkers traverse graph nodes**: the Slack and Google Chat confirmation wiring now walks `Workflow.graph.nodes`, so guarded destructive tools on graph-node agents still fire interactive approvals.
 
 ### Removed
 - **Deprecated Agent Factories**: Removed `create_sequential_agent`, `create_parallel_agent`, and `create_loop_agent` from `orrery_core.base` as they are deprecated in ADK 2.0 in favor of the `Workflow` API.
@@ -22,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hardcoded `/tmp` removed from the test suite** (`core/tests/test_secrets.py:117`): `test_filebackend_satisfies_protocol` now takes pytest's `tmp_path` fixture instead of passing `"/tmp"` to `FileBackend`, resolving the Bandit B108 (`hardcoded_tmp_directory`) Medium finding that was breaking the `bandit -ll` gate.
 
 ### Changed
+- **ADK 1.x → 2.0 upgrade**: Bumped `google-adk` to `>=2.2.0` and added the `[db]` extra (ADK 2.0 moved `sqlalchemy`/`DatabaseSessionService` out of the base package). `run_persistent()` / `create_app()` now accept an `Agent | Workflow` root. `litellm` is re-pinned to `>=1.83.14,<1.86.0` (ADK 2.2.0 transitively caps it below 1.86 via `google-cloud-aiplatform[evaluation]`; resolves to 1.85.4, retaining the CVE fixes in this release).
 - **Workspace pinned to Linux + macOS resolution environments** (`pyproject.toml` — new `[tool.uv]` block with `environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]`): The project depends on Docker daemon, Kubernetes client, and confluent-kafka — none of which are supported on Windows in the form we consume them. Restricting the lock-file environments lets uv resolve a coherent dependency graph instead of failing on phantom Windows-only conflicts (the litellm bump above surfaced one). No runtime change; this only affects what platform combinations uv considers when locking.
 - **Relaxed two version floors to satisfy litellm's strict transitive pins**: `pydantic>=2.13.3 → pydantic>=2.12.5` (litellm 1.83.14 hard-pins `pydantic==2.12.5`) and `aiohttp>=3.13.5 → aiohttp>=3.13.3` on `agents/slack-bot` (litellm 1.83.10–13 pin `aiohttp==3.13.3`, 1.83.14 pins `==3.13.4`). Resolver picks the highest version that satisfies every constraint; in practice the lock holds at the litellm-mandated floors. Tests at 693/693 after the changes — if you adopt pydantic 2.13-specific behavior later, this floor should be raised back.
 

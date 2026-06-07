@@ -89,5 +89,5 @@ if result.status == "error":
 ## Why use ToolResult?
 
 1.  **Consistency**: All agents speak the same "language" for success and failure.
-2.  **Remediation**: The `remediation_hints` field is directly consumed by the `LoopAgent` in `orrery-assistant` to decide the next step when a tool fails.
+2.  **Remediation**: The `remediation_hints` field is directly consumed by the remediation subgraph (`remediation_actor` → `remediation_verifier` → `verify_route`) in `orrery-assistant` to decide the next step when a tool fails.
 3.  **Type Safety**: Prevents common bugs like missing status fields or inconsistent key naming for errors.
