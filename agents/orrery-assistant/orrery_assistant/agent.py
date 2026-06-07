@@ -275,6 +275,7 @@ orrery_chat_agent = create_agent(
     name="orrery_chat_agent",
     description="Conversational DevOps orchestrator that routes queries to specialist agents.",
     planner=_planner,
+    mode="chat",
     instruction=(
         "You are a DevOps assistant that coordinates specialist agents. Delegate based "
         "on the user's intent:\n"

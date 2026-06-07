@@ -158,6 +158,7 @@ def create_agent(
     on_tool_error_callback: Callable | list[Callable] | None = None,
     on_model_error_callback: Callable | list[Callable] | None = None,
     output_key: str | None = None,
+    mode: str | None = None,
 ) -> Agent:
     """Create an ADK Agent with sensible defaults.
 
@@ -187,6 +188,7 @@ def create_agent(
             Use error_handlers.graceful_model_error().
         output_key: Session state key to store this agent's output.
             Useful for passing results between agents in a SequentialAgent.
+        mode: The mode of the agent ('chat', 'task', 'single_turn').
     """
     resolved_model = model if model is not None else resolve_model()
 
@@ -198,6 +200,8 @@ def create_agent(
         "tools": list(tools),
     }
 
+    if mode is not None:
+        kwargs["mode"] = mode
     if planner is not None:
         kwargs["planner"] = planner
     if sub_agents:

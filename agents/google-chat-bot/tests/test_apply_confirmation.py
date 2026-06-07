@@ -108,11 +108,11 @@ def test_real_orrery_assistant_tree():
     from orrery_assistant.agent import orrery_triage_workflow, root_agent
 
     store = ConfirmationStore()
-    
+
     # 1. The interactive root (orrery_chat_agent) has 6 specialist AgentTools + incident_triage_agent.
     wired_chat = apply_chat_confirmation(root_agent, store)
     assert wired_chat >= 7, f"expected ≥7 LlmAgents wired, got {wired_chat}"
-    
+
     # 2. The deterministic graph (orrery_triage_workflow) exposes its tool-calling LlmAgents
     # as graph nodes.
     wired_graph = apply_chat_confirmation(orrery_triage_workflow, store)
