@@ -6,9 +6,9 @@ from typing import Any
 
 from orrery_core import LEVEL_DESTRUCTIVE
 
-# Subsystem keys written to session state by the health_check_agent
-# sub-agents. Order here drives the rendering order in progress and
-# result cards.
+# Subsystem keys written to session state by the parallel health-checker
+# nodes in the triage Workflow. Order here drives the rendering order in
+# progress and result cards.
 SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("kafka_status", "Kafka"),
     ("k8s_status", "Kubernetes"),
@@ -17,7 +17,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("elasticsearch_status", "Elasticsearch"),
 )
 
-# Remediation keys written by the remediation_pipeline LoopAgent.
+# Remediation keys written by the remediation subgraph (actor → verifier → summarizer).
 REMEDIATION_KEYS: tuple[str, ...] = (
     "remediation_action",
     "verification_result",

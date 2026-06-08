@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from google.adk.agents import Agent
@@ -158,7 +158,7 @@ def create_agent(
     on_tool_error_callback: Callable | list[Callable] | None = None,
     on_model_error_callback: Callable | list[Callable] | None = None,
     output_key: str | None = None,
-    mode: str | None = None,
+    mode: Literal["chat", "task", "single_turn"] | None = None,
 ) -> Agent:
     """Create an ADK Agent with sensible defaults.
 
@@ -187,8 +187,12 @@ def create_agent(
             Return an LlmResponse to use instead, or None to propagate.
             Use error_handlers.graceful_model_error().
         output_key: Session state key to store this agent's output.
-            Useful for passing results between agents in a SequentialAgent.
-        mode: The mode of the agent ('chat', 'task', 'single_turn').
+            Useful for passing results between nodes in a graph Workflow
+            (downstream nodes read it from session state).
+        mode: ADK 2.0 delegation mode — 'chat' (conversational, keeps history),
+            'task', or 'single_turn'. When None, ADK infers it: 'chat' as a
+            sub-agent, 'single_turn' as a graph node. Set 'chat' explicitly on
+            a Workflow/App root coordinator so it retains conversation history.
     """
     resolved_model = model if model is not None else resolve_model()
 

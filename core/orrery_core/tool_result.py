@@ -6,7 +6,7 @@ Existing tools return flat dicts (``{"status": "success", "topics": [...], "coun
 - A typed ``status`` field (``success`` | ``error`` | ``partial``).
 - Optional ``error_type`` for programmatic error handling.
 - Optional ``remediation_hints`` — short, actionable strings a downstream agent
-  (e.g., the remediation LoopAgent) can use to decide a next step.
+  (e.g., the remediation subgraph's actor) can use to decide a next step.
 
 New tools may return ``ToolResult`` directly; calling ``.to_dict()`` produces
 the flat shape existing callers and tests expect, so adoption can be gradual.

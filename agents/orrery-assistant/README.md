@@ -1,87 +1,101 @@
 # orrery-assistant
 
-A multi-agent orchestrator that routes user requests to specialist agents. Uses two delegation patterns (see [ADR-002](../../docs/adr/002-agent-tool-vs-sub-agents.md)):
-- **AgentTool** for LLM-routed specialists (the LLM decides which agent to call)
-- **Sub-agents** for deterministic workflows (fixed execution order)
+A multi-agent orchestrator that routes user requests to specialist agents. The
+root is a **conversational chat-mode `LlmAgent`** (`orrery_chat_agent`) that holds
+real conversation history and delegates to specialists via `AgentTool`. A separate
+**graph `Workflow`** (`orrery_triage_workflow`) provides a deterministic, parallel,
+bounded-loop incident-response pipeline for batch / scheduled runs.
 
-## Agent Graph
+This inverts the original design (LLM-routing root + deterministic `SequentialAgent`
+sub-pipeline). See [ADR-003](../../docs/adr/003-graph-workflow-inversion.md), which
+supersedes [ADR-002](../../docs/adr/002-agent-tool-vs-sub-agents.md): the deprecated
+`SequentialAgent` / `ParallelAgent` / `LoopAgent` wrappers were replaced by a native
+ADK 2.0 graph.
+
+## Architecture
 
 ```text
-orrery_assistant (orchestrator)
-├── [sub-agent] incident_triage_agent (SequentialAgent)
-│   ├── health_check_agent (ParallelAgent)
-│   │   ├── kafka_health_checker      — Kafka cluster health + lag
-│   │   ├── k8s_health_checker        — K8s nodes, events, pods
-│   │   ├── docker_health_checker     — Container status + stats
-│   │   └── observability_health_checker — Prometheus targets + alerts
-│   ├── triage_summarizer             — Synthesizes parallel results
-│   └── journal_writer                — Saves report to journal
-├── [AgentTool] kafka_health_agent    — Ad-hoc Kafka queries
-├── [AgentTool] k8s_health_agent      — Ad-hoc Kubernetes queries
-├── [AgentTool] observability_agent   — Ad-hoc Prometheus/Loki/Alertmanager queries
-├── [AgentTool] docker_agent          — Ad-hoc Docker queries
-└── [AgentTool] ops_journal_agent     — Notes, preferences, session tracking
+orrery_chat_agent (chat-mode LlmAgent, ROOT — interactive: web / CLI / Slack / Chat)
+├── [AgentTool] kafka_health_agent       — Kafka cluster health, topics, lag
+├── [AgentTool] k8s_health_agent         — K8s nodes, pods, deploys, scale/restart/rollback
+├── [AgentTool] observability_agent      — Prometheus/Loki/Alertmanager
+├── [AgentTool] elasticsearch_agent      — ES health, indices, shards, ILM, ECK CRs
+├── [AgentTool] docker_agent             — Containers, stats, logs, compose
+├── [AgentTool] ops_journal_agent        — Notes, preferences, session tracking
+├── [AgentTool] incident_triage_agent    — Single-turn full health sweep across ALL systems
+└── PreloadMemoryTool                    — Cross-session memory recall
+
+orrery_triage_workflow (graph Workflow, ROOT — batch: `make run-triage`)
+  START ─▶ [parallel] kafka / k8s / docker / observability / elasticsearch checkers
+        ─▶ health_join (JoinNode, waits for all 5)
+        ─▶ triage_summarizer (record_triage_verdict → incident_severity)
+        ─▶ journal_writer ─▶ triage_route
+              ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
+              │                    └▶ verify_route ─("retry")▶ actor
+              │                                    └("done")▶ remediation_summarizer ─▶ final_report
+              └─("resolved")────────────────────────────────────────────────────────▶ final_report
 ```
+
+A `Workflow` is not a `BaseAgent`, so it cannot be a sub-agent or `AgentTool` of the
+chat coordinator, and a chat-mode agent cannot be a routed node inside a graph — hence
+the two roots are separate entrypoints that reuse the same node agents. For
+interactive "run a triage" requests, the coordinator delegates to the single-turn
+`incident_triage_agent` `AgentTool` instead.
 
 ![DevOps Assistant — agent graph and container inspection](assets/orrery-assistant-graph.png)
 
-*The ADK Dev UI showing the agent graph: `orrery_assistant` delegates to specialist agents via AgentTool and deterministic sub-agent workflows.*
-
 ## Specialist Agents (AgentTool)
 
-### kafka_health_agent
+Each specialist is the standalone agent reused as an `AgentTool`:
 
-Reused from the standalone [kafka-health-agent](../kafka-health/). Handles all Kafka cluster operations.
+| AgentTool | Source | Handles |
+|-----------|--------|---------|
+| `kafka_health_agent` | [kafka-health](../kafka-health/) | Cluster health, topics, consumer groups, lag, Strimzi CRs |
+| `k8s_health_agent` | [k8s-health](../k8s-health/) | Nodes, pods, deployments, logs, events, scale/restart/rollback (guarded) |
+| `observability_agent` | [observability](../observability/) | Prometheus metrics/alerts, Loki logs, Alertmanager |
+| `elasticsearch_agent` | [elasticsearch](../elasticsearch/) | Cluster/index/shard health, ILM, snapshots, ECK CRs |
+| `docker_agent` | [docker-agent](../docker-agent/) | Containers, stats, logs, compose status |
+| `ops_journal_agent` | [ops-journal](../ops-journal/) | Notes, preferences, session tracking, bookmarks |
 
-### k8s_health_agent
-
-Reused from the standalone [k8s-health-agent](../k8s-health/). Handles Kubernetes cluster health, nodes, pods, deployments, logs, events, scaling, and restarts. Includes guardrails for destructive operations (scale, restart).
-
-### docker_agent
-
-| Tool | Description |
-|------|-------------|
-| `list_containers` | List running (or all) Docker containers |
-| `inspect_container` | Get detailed info: state, ports, env vars, health |
-| `get_container_logs` | Tail recent logs with optional `--since` filter |
-| `get_container_stats` | CPU, memory, network, and block I/O stats |
-| `docker_compose_status` | Status of services in a Compose project |
-
-### ops_journal_agent
-
-Reused from the standalone [ops-journal](../ops-journal/). Handles notes, preferences, session tracking, and team bookmarks. See that doc for details on state scopes (`session`, `user:`, `app:`, `temp:`).
-
-After a significant investigation, the orchestrator will proactively suggest saving findings as a note via this agent.
+After a significant investigation, the coordinator proactively suggests saving
+findings via `ops_journal_agent`, and relevant context from past sessions is loaded
+automatically via `PreloadMemoryTool`.
 
 ## How Delegation Works
 
-The orchestrator supports two modes of delegation:
+### Conversational routing (interactive root)
 
-### Structured workflows
-
-For broad operations, the orchestrator uses deterministic pipelines built with `SequentialAgent` and `ParallelAgent`:
-
-- *"is everything healthy?"* / *"run a triage"* / *"check all systems"* → `incident_triage_agent`
-
-The incident triage pipeline:
-1. **Parallel**: checks Kafka, K8s, and Docker concurrently (each writes to session state via `output_key`)
-2. **Sequential**: summarizer reads the parallel results and produces a triage report
-3. **Sequential**: journal writer saves the report as a note tagged `incident-triage`
-
-### Ad-hoc delegation
-
-For targeted queries, the LLM invokes the appropriate AgentTool based on the user's intent:
+`orrery_chat_agent` is the LLM coordinator. It keeps conversation history (`mode="chat"`)
+and picks the right `AgentTool` based on intent:
 
 - *"what's the consumer lag?"* → `kafka_health_agent`
 - *"list all pods in staging"* → `k8s_health_agent`
-- *"show me kafka container logs"* → `docker_agent`
+- *"is the cluster green?"* → `elasticsearch_agent`
+- *"is everything healthy?"* / *"run a triage"* → `incident_triage_agent` (full sweep)
 - *"save a note about this incident"* → `ops_journal_agent`
+
+### Deterministic triage Workflow (batch root)
+
+`orrery_triage_workflow` is the graph-native pipeline for scheduled / batch runs:
+
+1. **Parallel**: five health checkers (Kafka, K8s, Docker, Observability, Elasticsearch)
+   run concurrently, each writing its status to session state via `output_key`.
+2. **Join + summarize**: `health_join` waits for all five, then `triage_summarizer`
+   synthesizes a report and calls `record_triage_verdict` (sets `incident_severity`).
+3. **Journal**: `journal_writer` saves the report as a note tagged `incident-triage`.
+4. **Route**: `triage_route` reads the verdict — degraded/critical → remediation,
+   healthy → finish. If the LLM emitted no structured verdict it infers severity from
+   the per-system reports and flags `triage_verdict_missing` (fail-safe — never
+   silently "resolved").
+5. **Closed-loop remediation**: `remediation_actor → remediation_verifier → verify_route`
+   retries act→verify up to `MAX_REMEDIATION_ITERATIONS` (3), bounded by a state
+   counter. The verifier calls `mark_remediation_resolved` to stop early.
 
 ## Running
 
 ```bash
 cd agents/orrery-assistant
-uv run adk web                    # ADK Dev UI
+uv run adk web                    # ADK Dev UI (interactive chat root)
 uv run adk run orrery_assistant   # Terminal mode
 ```
 
@@ -91,14 +105,20 @@ Or from the repo root:
 make run-assistant              # ADK Dev UI (in-memory state)
 make run-assistant-cli          # Terminal mode (in-memory state)
 make run-assistant-persistent   # Terminal with SQLite persistence
+make run-assistant-api          # FastAPI front door with JWT auth (dev secret)
+make run-triage                 # Run the deterministic triage Workflow once (batch)
 ```
+
+`make run-devops*` are aliases for the `run-assistant*` targets.
 
 ### Persistent Mode
 
-By default (`adk web`), state resets on restart. Use persistent mode to keep `user:*` and `app:*` state across sessions:
+By default (`adk web`), state resets on restart. Use persistent mode to keep `user:*`
+and `app:*` state across sessions:
 
 ```bash
-make run-devops-persistent
+make run-assistant-persistent
 ```
 
-This uses `DatabaseSessionService` with a local SQLite file, so notes and preferences survive restarts. Type `new` to start a fresh session while keeping long-term state.
+This uses `DatabaseSessionService` with a local SQLite file, so notes and preferences
+survive restarts. Type `new` to start a fresh session while keeping long-term state.

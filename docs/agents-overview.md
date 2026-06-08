@@ -2,7 +2,7 @@
 
 A quick tour of every agent shipped with the platform — what it does, the tools it exposes, and the role required to invoke the mutating ones.
 
-For how agents are composed inside `orrery-assistant`, see [ADR-002: Agent Composition](adr/002-agent-tool-vs-sub-agents.md). For how to build your own, see [Adding a new agent](adding-an-agent.md).
+For how agents are composed inside `orrery-assistant`, see [ADR-003: Graph Workflow Inversion](adr/003-graph-workflow-inversion.md) (which supersedes [ADR-002](adr/002-agent-tool-vs-sub-agents.md)). For how to build your own, see [Adding a new agent](adding-an-agent.md).
 
 ## At a glance
 
@@ -23,19 +23,20 @@ For how agents are composed inside `orrery-assistant`, see [ADR-002: Agent Compo
 
 ## orrery-assistant
 
-The root orchestrator. Uses an ADK 2.0 **Workflow** graph and an `intent_router` to dispatch user intent to either a conversational LLM (`orrery_chat_agent`) or a deterministic incident triage pipeline.
+The root orchestrator. The interactive root is `orrery_chat_agent` — a chat-mode ADK 2.0 `LlmAgent` that keeps conversation history and routes each query to the right specialist via `AgentTool`. A separate graph `Workflow` (`orrery_triage_workflow`) provides the deterministic, parallel, bounded-loop incident-response pipeline for batch / scheduled runs (`make run-triage`). Both reuse the same node agents; see [ADR-003](adr/003-graph-workflow-inversion.md).
 
 **Run it:**
 ```bash
-make run-devops              # ADK Dev UI on :8000
-make run-devops-cli          # Terminal REPL
-make run-devops-persistent   # SQLite-backed sessions + memory
+make run-assistant           # ADK Dev UI on :8000 (aliased as make run-devops)
+make run-assistant-cli       # Terminal REPL
+make run-assistant-persistent # SQLite-backed sessions + memory
+make run-triage              # Deterministic triage Workflow, one batch run
 ```
 
 **Exposed capabilities:**
-- `orrery_chat_agent` — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal`
-- `health_join` — parallel health check barrier across 5 subsystems
-- `remediation_actor` / `remediation_verifier` — closed-loop remediation graph that acts → verifies → retries up to 3 times via state counters
+- `orrery_chat_agent` (interactive root) — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal` via `AgentTool`, plus `incident_triage_agent` for a single-turn full sweep and `PreloadMemoryTool` for cross-session recall
+- `orrery_triage_workflow` (batch root) — `health_join` barriers the 5 parallel subsystem checkers, then `triage_summarizer` → `journal_writer` → `triage_route`
+- `remediation_actor` / `remediation_verifier` — closed-loop remediation subgraph that acts → verifies → retries up to 3 times via a `verify_route` state counter
 
 ---
 
@@ -222,5 +223,5 @@ If you're writing a new workflow and need to decide which specialist(s) to call:
 | *"Is the ECK `Elasticsearch` / `Kibana` CR reconciled? What's the operator doing?"* | `elasticsearch` (via `list_eck_clusters`, `get_eck_operator_events`) |
 | *"What containers are up? Restart the web service."* | `docker-agent` |
 | *"Remember this incident / recall last week's postmortem."* | `ops-journal` + [memory](memory.md) |
-| *"Run a full triage and file the report."* | `orrery-assistant` (`intent_router` → triage pipeline) |
+| *"Run a full triage and file the report."* | `orrery-assistant` → `incident_triage_agent` (interactive) or `make run-triage` (batch `Workflow`) |
 | *"The pod is still unhealthy — try to fix it."* | `orrery-assistant` → remediation subgraph (`remediation_actor` / `verify_route`) |
