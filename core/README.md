@@ -134,7 +134,8 @@ root_agent = create_agent(
 | `model` | Override model — can be a string (Gemini) or `BaseLlm` instance (LiteLlm). When `None`, resolved from `MODEL_PROVIDER`/`MODEL_NAME` env vars via `resolve_model()` |
 | `planner` | Optional ADK planner attached to this agent. Use `resolve_planner()` to read the choice from env. Reserve for orchestration / reasoning agents — tool-leaf agents do not benefit |
 | `sub_agents` | List of child agents for orchestrators |
-| `output_key` | Session state key to store this agent's output |
+| `output_key` | Session state key to store this agent's output (read by downstream graph nodes) |
+| `mode` | ADK 2.0 delegation mode — `chat` / `task` / `single_turn`. Leave `None` and ADK infers it (`chat` as a sub-agent, `single_turn` as a graph node); set `chat` explicitly on a `Workflow`/`App` root coordinator so it keeps conversation history |
 
 Agent-level callback parameters (`before_tool_callback`, `after_tool_callback`, etc.) are still supported for agent-specific logic but are not needed for standard cross-cutting concerns.
 
@@ -171,29 +172,39 @@ Builtin-only knobs (consulted only when `ORRERY_PLANNER=builtin`):
 
 **Where it's wired in `orrery-assistant`:** the root orchestrator, the `triage_summarizer`, and the `remediation_actor`. All three are reasoning-heavy. Tool-leaf agents (per-system health checkers, the verifier, etc.) intentionally skip the planner — they would only add latency without improving output quality.
 
-### `create_sequential_agent()` / `create_parallel_agent()`
+### Deterministic multi-step flows — ADK 2.0 graph `Workflow`
 
-Factory functions for structured multi-agent workflows that don't rely on LLM delegation.
+The `create_sequential_agent()` / `create_parallel_agent()` / `create_loop_agent()`
+factories were **removed** in the ADK 2.0 upgrade — those `SequentialAgent` /
+`ParallelAgent` / `LoopAgent` wrappers are deprecated. Compose structured,
+non-LLM-delegated flows as a graph `Workflow` instead: `create_agent()` LlmAgents
+are graph **nodes** (an `LlmAgent` is a `BaseNode` in ADK 2.0), and routing is
+pure-Python `FunctionNode`s. Edges are chain-tuples (sequential), node-tuples
+(parallel), and `RoutingMap` dicts (conditional/loop); a `JoinNode` is the
+parallel fan-in barrier.
 
 ```python
-from orrery_core import create_agent, create_sequential_agent, create_parallel_agent
+from google.adk import Workflow
+from google.adk.workflow import JoinNode
 
-# Run health checks in parallel
-health_checks = create_parallel_agent(
-    name="health_checks",
-    description="Runs all health checks concurrently.",
-    sub_agents=[kafka_checker, k8s_checker, docker_checker],
-)
+health_join = JoinNode(name="health_join")
 
-# Sequential pipeline: check → summarize → save
-triage = create_sequential_agent(
+triage = Workflow(
     name="incident_triage",
     description="Full incident triage pipeline.",
-    sub_agents=[health_checks, summarizer, journal_writer],
+    edges=[
+        # Fan out to parallel checkers, join, then summarize → journal
+        ("START", (kafka_checker, k8s_checker, docker_checker)),
+        ((kafka_checker, k8s_checker, docker_checker), health_join),
+        (health_join, summarizer, journal_writer),
+    ],
 )
 ```
 
-Sub-agents pass data via `output_key`, which writes to session state for downstream agents to read.
+Nodes pass data via `output_key`, which writes to session state for downstream
+nodes to read. See [ADR-003](../docs/adr/003-graph-workflow-inversion.md) for the
+full rationale and the closed-loop remediation pattern (`actor → verifier →
+verify_route` bounded by a state counter, replacing `LoopAgent`).
 
 ### `load_agent_env(__file__)`
 

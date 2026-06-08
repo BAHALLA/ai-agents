@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 make install          # Install all workspace packages (uv sync)
-make test             # Run all 700 unit tests across all packages
+make test             # Run all 796 unit tests across all packages
 make eval             # Run 33 agent eval scenarios (requires LLM credentials)
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
@@ -68,35 +68,46 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 - **Closed-loop remediation**: the remediation subgraph in `agents/orrery-assistant/orrery_assistant/remediation.py` runs act → verify → retry as `remediation_actor → remediation_verifier → verify_route` wired by a `RoutingMap` (`{"retry": actor, "done": summarizer}`). The verifier calls `mark_remediation_resolved` to signal success; `verify_route` enforces the 3-iteration cap via a state counter (replaces the deprecated `LoopAgent` + `exit_loop`/`escalate`). See [ADR-003](docs/adr/003-graph-workflow-inversion.md).
 - **Pydantic-settings config**: Each agent subclasses `AgentConfig` for typed env var loading from `.env` files colocated with the agent module.
 - **All tests use mocks**: `@patch` on internal client getters (e.g., `_get_admin_client`). All tool tests are `async` with `@pytest.mark.asyncio`. No running Kafka/K8s/Docker required. Autouse fixtures reset cached clients between tests.
-- **Agent evals** (`make eval`): 33 scenarios across 5 specialist agents (kafka, k8s, elasticsearch, observability, docker) using ADK's `AgentEvaluator`. The orrery-assistant root no longer has a routing eval — its graph root is exercised by deterministic unit tests instead (see ADR-003). Each agent has `tests/evals/` with `.test.json` datasets and a `test_*_eval.py` runner. Evals use a real LLM (gated behind `@pytest.mark.eval`) with mocked external dependencies. Criteria: `tool_trajectory_avg_score >= 1.0` (exact tool call match). Eval test files must have unique names across agents to avoid pytest import collisions.
+- **Agent evals** (`make eval`): 33 scenarios across 5 specialist agents (kafka, k8s, elasticsearch, observability, docker) using ADK's `AgentEvaluator`. The orrery-assistant root no longer has a routing eval — its graph root is exercised by deterministic unit tests instead (see ADR-003). Each agent has `tests/evals/` with `.test.json` datasets and a `test_*_eval.py` runner. Evals use a real LLM (gated behind `@pytest.mark.eval`) with mocked external dependencies. Criteria: `tool_trajectory_avg_score >= 1.0` (exact tool call match). The whole workspace collects in one `pytest` run via `--import-mode=importlib` (configured in the root `pyproject.toml`), so duplicate test basenames across agents (e.g. `test_app.py`, `test_handler.py`) no longer collide.
 
-### orrery-assistant Hybrid Graph Root (ADK 2.0 Workflow)
+### orrery-assistant: chat root + deterministic triage Workflow (ADK 2.0)
 
-The root is a graph-based `Workflow` (`orrery_assistant.agent.orrery_workflow`). An
-`intent_router` `FunctionNode` dispatches each turn: explicit "run a full triage"
-requests take a deterministic incident-response pipeline; everything else falls through
-to `orrery_chat_agent` — the conversational LLM orchestrator that routes free-form
-queries to the six specialist `AgentTool`s (kafka/k8s/observability/elasticsearch/
-docker/ops-journal) plus memory. Existing `create_agent()` LlmAgents are graph **nodes**
-(an `LlmAgent` is a `BaseNode` in ADK 2.0); routing is pure-Python `FunctionNode`s. Edges
-are chain-tuples (sequential), node-tuples (parallel), and `RoutingMap` dicts
-(conditional/loop); a `JoinNode` is the parallel fan-in barrier. See
-[ADR-003](docs/adr/003-graph-workflow-inversion.md) (supersedes ADR-002). Routing
-functions set `ctx.route`; nodes share data via `ctx.state` / `output_key`. The graph is
-hosted by `App(root_agent=orrery_workflow)` — `runner.py`/`server.py` accept `Agent | Workflow`.
+There are **two roots** that reuse the same node agents (see
+[ADR-003](docs/adr/003-graph-workflow-inversion.md), supersedes ADR-002):
+
+1. **Interactive root** — `orrery_chat_agent`, a chat-mode `LlmAgent`
+   (`mode="chat"`, set via `create_agent(mode=...)`). It holds real conversation
+   history and routes free-form queries to the six specialist `AgentTool`s
+   (kafka/k8s/observability/elasticsearch/docker/ops-journal), plus an
+   `incident_triage_agent` `AgentTool` for single-turn full sweeps and a
+   `PreloadMemoryTool`. This is the root for `adk web` / CLI / Slack / Chat,
+   hosted by `App(root_agent=orrery_chat_agent)`. A chat-mode agent **must** be a
+   root — ADK 2.0 forbids it as a routed node inside a graph.
+2. **Batch root** — `orrery_triage_workflow`, a graph `Workflow` run by
+   `make run-triage` for scheduled/batch incident response. A `Workflow` is not a
+   `BaseAgent`, so it can't be an `AgentTool`/sub-agent of the chat root — hence the
+   two are separate entrypoints. `create_agent()` LlmAgents are graph **nodes** (an
+   `LlmAgent` is a `BaseNode` in ADK 2.0); routing is pure-Python `FunctionNode`s.
+   Edges are chain-tuples (sequential), node-tuples (parallel), and `RoutingMap`
+   dicts (conditional/loop); a `JoinNode` is the parallel fan-in barrier. Routing
+   functions set `ctx.route`; nodes share data via `ctx.state` / `output_key`.
+   `runner.py`/`server.py` accept `Agent | Workflow`.
 
 ```
-orrery_workflow (Workflow root)
-  START ─▶ intent_router
-       ├─("chat", default)─▶ orrery_chat_agent (LLM + 6 specialist AgentTools + memory)
-       └─("triage")─▶ [parallel] kafka/k8s/docker/observability/elasticsearch checkers
-                          ─▶ health_join (JoinNode, waits for all 5)
-                          ─▶ triage_summarizer (record_triage_verdict → incident_severity)
-                          ─▶ journal_writer ─▶ triage_route
-                                ├─("remediate")─▶ remediation_actor ⇄ remediation_verifier
-                                │                     └▶ verify_route ─("retry")▶ actor
-                                │                                     └("done")▶ summarizer ─▶ final_report
-                                └─("resolved")────────────────────────────────────▶ final_report
+orrery_chat_agent (chat-mode LlmAgent, interactive root)
+  ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
+  ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
+  └─ PreloadMemoryTool
+
+orrery_triage_workflow (Workflow, batch root — `make run-triage`)
+  START ─▶ [parallel] kafka/k8s/docker/observability/elasticsearch checkers
+        ─▶ health_join (JoinNode, waits for all 5)
+        ─▶ triage_summarizer (record_triage_verdict → incident_severity)
+        ─▶ journal_writer ─▶ triage_route
+              ├─("remediate")─▶ remediation_actor ⇄ remediation_verifier
+              │                     └▶ verify_route ─("retry")▶ actor
+              │                                     └("done")▶ summarizer ─▶ final_report
+              └─("resolved")────────────────────────────────────▶ final_report
 ```
 
 `triage_route` fails safe: if the LLM skips `record_triage_verdict`, it infers severity

@@ -242,8 +242,9 @@ following is true — not to feel more "distributed":
   flexibility, not speed.
 - **Before evals exist.** Without the eval harness (AEP-002) you cannot prove the split
   didn't regress behaviour.
-- **For one-off fan-out.** If you need parallel tool calls, `ParallelAgent` already gives
-  you that without a network hop.
+- **For one-off fan-out.** If you need parallel work, a graph `Workflow` node-tuple
+  edge (fan-out) plus a `JoinNode` barrier already gives you that in-process, without
+  a network hop.
 
 ### Scaling playbook
 
@@ -267,7 +268,8 @@ absorb the load or organisational constraint.
 *   [Gorilla: Large Language Model Connected with Massive APIs](https://gorilla.cs.berkeley.edu/)
 *   [τ-bench (ToolBench)](https://github.com/sierra-research/tau-bench)
 *   [ADR-001: RBAC via Guardrail Metadata](adr/001-rbac.md)
-*   [ADR-002: AgentTool vs Sub-Agents](adr/002-agent-tool-vs-sub-agents.md)
+*   [ADR-002: AgentTool vs Sub-Agents](adr/002-agent-tool-vs-sub-agents.md) (superseded by ADR-003)
+*   [ADR-003: Graph Workflow Inversion](adr/003-graph-workflow-inversion.md)
 *   [AEP-002: Agent Evaluation Framework](enhancements/aep-002-agent-evaluation.md)
 *   [AEP-004: LoopAgent for Self-Healing](enhancements/aep-004-loop-agent-remediation.md)
 *   [AEP-005: A2A Protocol Support](enhancements/aep-005-a2a-protocol.md)

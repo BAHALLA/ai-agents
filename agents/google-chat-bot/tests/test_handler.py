@@ -919,4 +919,9 @@ class TestProgressiveUpdates:
         progressive_runner.run_async.assert_called_once()
         call_kwargs = progressive_runner.run_async.call_args.kwargs
         assert call_kwargs["session_id"] == "gchat:threads/42"
-        assert "remediation_pipeline" in call_kwargs["new_message"].parts[0].text
+        # ADK 2.0: the old remediation_pipeline LoopAgent was removed; the click now
+        # dispatches the coordinator's remediation prompt, which delegates to
+        # k8s_health_agent (restart/scale/rollback).
+        dispatched = call_kwargs["new_message"].parts[0].text
+        assert "Remediate" in dispatched
+        assert "k8s_health_agent" in dispatched

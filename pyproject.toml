@@ -103,7 +103,10 @@ known-first-party = [
 markers = [
     "eval: agent evaluation tests that call a real LLM (deselected by default)",
 ]
-addopts = "-m 'not eval'"
+# importlib import-mode lets duplicate test basenames (e.g. test_app.py /
+# test_handler.py in both slack-bot and google-chat-bot) coexist without a
+# rootdir/sys.path collision, so the whole workspace collects in one run.
+addopts = "-m 'not eval' --import-mode=importlib"
 filterwarnings = [
     "ignore:\\[EXPERIMENTAL\\] feature.* is enabled:UserWarning:google.adk.features.*",
     "ignore:.*_UnionGenericAlias.*:DeprecationWarning:google.genai.types",
@@ -123,4 +126,5 @@ testpaths = [
     "agents/orrery-assistant/tests",
     "agents/ops-journal/tests",
     "agents/slack-bot/tests",
+    "agents/google-chat-bot/tests",
 ]
