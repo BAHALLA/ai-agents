@@ -17,6 +17,7 @@ from .config import AgentConfig as AgentConfig
 from .config import load_config as load_config
 from .error_handlers import graceful_model_error as graceful_model_error
 from .error_handlers import graceful_tool_error as graceful_tool_error
+from .events import extract_reply_text as extract_reply_text
 from .guardrails import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .guardrails import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
 from .guardrails import confirm as confirm

@@ -37,8 +37,24 @@ def _make_event(text_content: str):
     """Create a fake ADK event with text parts."""
     part = MagicMock()
     part.text = text_content
+    part.thought = None
     content = MagicMock()
     content.parts = [part]
+    event = MagicMock()
+    event.content = content
+    return event
+
+
+def _make_thought_event(thought_text: str, answer_text: str):
+    """Fake ADK event with a Gemini thought part plus the real answer."""
+    thought = MagicMock()
+    thought.text = thought_text
+    thought.thought = True
+    answer = MagicMock()
+    answer.text = answer_text
+    answer.thought = None
+    content = MagicMock()
+    content.parts = [thought, answer]
     event = MagicMock()
     event.content = content
     return event
@@ -107,6 +123,30 @@ class TestSlackAgentHandler:
         assert "Kafka is healthy" in call_kwargs.kwargs.get(
             "text", call_kwargs.args[0] if call_kwargs.args else ""
         )
+
+    @pytest.mark.asyncio
+    async def test_thinking_parts_excluded_from_reply(self, handler, mock_runner, say):
+        """Gemini planner thought parts must not leak into the Slack reply."""
+        event = _make_thought_event("Let me reason about the cluster...", "Kafka is healthy.")
+
+        async def fake_run_async(**kwargs):
+            yield event
+
+        mock_runner.run_async = fake_run_async
+
+        await handler.handle_message(
+            text="check kafka",
+            channel="C_CHAN",
+            thread_ts="111.000",
+            user_id="U_USER",
+            say=say,
+        )
+
+        say.assert_called()
+        call_kwargs = say.call_args
+        posted = call_kwargs.kwargs.get("text", call_kwargs.args[0] if call_kwargs.args else "")
+        assert "Kafka is healthy" in posted
+        assert "reason about" not in posted
 
     @pytest.mark.asyncio
     async def test_empty_response_not_posted(self, handler, mock_runner, say):

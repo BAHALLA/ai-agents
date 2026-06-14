@@ -58,6 +58,7 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
     ) from exc
 
 from .auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
+from .events import extract_reply_text
 from .log import mask_dsn
 
 logger = logging.getLogger("orrery.server")
@@ -245,10 +246,7 @@ def create_app(
         async for event in runner.run_async(
             user_id=user_id, session_id=session.id, new_message=message
         ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        response_text += part.text
+            response_text += extract_reply_text(event)
 
         return ChatResponse(session_id=session.id, response=response_text)
 

@@ -45,6 +45,7 @@ def patched_runner(mock_session):
         event = MagicMock()
         part = MagicMock()
         part.text = f"echo:{text}"
+        part.thought = None
         event.content.parts = [part]
         yield event
 
@@ -147,6 +148,40 @@ def test_chat_with_valid_token_dispatches_to_runner(app_with_auth, patched_runne
     seeded = call.kwargs["state"]
     assert seeded[AUTH_STATE_KEY]["subject"] == "alice"
     assert seeded[AUTH_STATE_KEY]["role"] == "operator"
+
+
+def test_chat_excludes_thinking_parts(mock_session):
+    """Gemini planner thought parts must not appear in the /chat response."""
+
+    async def fake_run_async(*, user_id, session_id, new_message):
+        event = MagicMock()
+        thought = MagicMock()
+        thought.text = "Let me reason about this..."
+        thought.thought = True
+        answer = MagicMock()
+        answer.text = "The cluster is healthy."
+        answer.thought = None
+        event.content.parts = [thought, answer]
+        yield event
+
+    runner = MagicMock()
+    runner.run_async = fake_run_async
+    session_service = MagicMock()
+    session_service.create_session = AsyncMock(return_value=mock_session)
+    session_service.get_session = AsyncMock(return_value=None)
+
+    with (
+        patch("orrery_core.server.Runner", return_value=runner),
+        patch("orrery_core.server.App", return_value=MagicMock()),
+        patch("orrery_core.server.InMemorySessionService", return_value=session_service),
+    ):
+        config = ServerConfig(auth_enabled=False, jwt=JWTConfig(algorithm="HS256", secret="x"))
+        app = create_app(root_agent=MagicMock(), app_name="test", plugins=[], config=config)
+        client = TestClient(app)
+        r = client.post("/chat", json={"message": "status?"})
+
+    assert r.status_code == 200
+    assert r.json()["response"] == "The cluster is healthy."
 
 
 def test_chat_reuses_existing_session_and_restamps_auth(app_with_auth, patched_runner):

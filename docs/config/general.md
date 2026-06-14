@@ -106,6 +106,7 @@ The reasoning-heavy agents in `orrery-assistant` (the root orchestrator, `triage
 
 - `plan_react` makes responses noticeably more verbose and adds an extra reasoning round-trip per turn — A/B-test before flipping it on for latency-sensitive surfaces.
 - Planners are intentionally **not** attached to per-system health checkers, the remediation verifier, or the journal writer. Those agents execute one short tool sequence per turn; planning would add latency without changing the output.
+- **Reasoning never leaks to users.** Whatever planner you choose, the model's reasoning (`builtin` thought tokens, `plan_react` `/*PLANNING*/`/`/*REASONING*/` phases, and provider reasoning surfaced through LiteLLM) is marked as a *thought* part by ADK. Every user-facing transport — Google Chat, Slack, the HTTP `/chat` API, and the CLI — funnels event text through `extract_reply_text()` (`orrery_core.events`), which drops thought parts and emits only the final answer. So `ORRERY_PLANNER_INCLUDE_THOUGHTS=true` makes thoughts available for tracing/progress without showing them in the reply.
 
 ---
 

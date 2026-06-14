@@ -10,7 +10,7 @@ from typing import Any
 from google.adk.runners import Runner
 from google.genai import types
 
-from orrery_core import set_user_role
+from orrery_core import extract_reply_text, set_user_role
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
 from .chat_client import ChatClient
@@ -311,10 +311,8 @@ class GoogleChatHandler:
             ):
                 if tracker is not None:
                     await tracker.consume(run_event)
-                elif run_event.content and run_event.content.parts:
-                    for part in run_event.content.parts:
-                        if part.text:
-                            response_text += part.text
+                else:
+                    response_text += extract_reply_text(run_event)
             if tracker is not None:
                 response_text = tracker.collected_text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))

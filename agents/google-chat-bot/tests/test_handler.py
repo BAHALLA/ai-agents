@@ -113,6 +113,30 @@ class TestHandleEvent:
         assert call_kwargs["state_delta"]["gchat_space"] == "spaces/abc"
 
     @pytest.mark.asyncio
+    async def test_thinking_parts_excluded_from_reply(self, handler, mock_runner):
+        """Gemini planner thought parts must not leak into the user reply."""
+
+        async def thinking_gen(*args, **kwargs):
+            event = MagicMock()
+            thought = types.Part.from_text(text="Let me reason about the cluster...")
+            thought.thought = True
+            answer = types.Part.from_text(text="The cluster is healthy.")
+            event.content = types.Content(role="model", parts=[thought, answer])
+            yield event
+
+        mock_runner.run_async.side_effect = thinking_gen
+        event = {
+            "type": "MESSAGE",
+            "message": {"argumentText": "status?"},
+            "user": {"email": "user@example.com"},
+            "space": {"name": "spaces/abc"},
+        }
+        response = await handler.handle_event(event)
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert message["text"] == "The cluster is healthy."
+        assert "reason about" not in message["text"]
+
+    @pytest.mark.asyncio
     async def test_admin_email_is_marked_server_trusted(self, handler, mock_runner):
         """Regression: admin role must survive ensure_default_role()."""
         event = {
@@ -645,6 +669,20 @@ def _make_event(*, author: str, text: str = "", state_delta: dict | None = None)
     return event
 
 
+def _make_thought_event(*, author: str, thought_text: str, answer_text: str) -> MagicMock:
+    """Fake event carrying a Gemini thought part alongside the real answer."""
+    event = MagicMock()
+    event.author = author
+    thought = types.Part.from_text(text=thought_text)
+    thought.thought = True
+    answer = types.Part.from_text(text=answer_text)
+    event.content = types.Content(role="model", parts=[thought, answer])
+    event.actions = MagicMock()
+    event.actions.state_delta = {}
+    event.get_function_calls = lambda: []
+    return event
+
+
 def _make_tool_call_event(author: str, tool_name: str) -> MagicMock:
     """Fake event that reports a function call breadcrumb."""
     event = MagicMock()
@@ -696,6 +734,23 @@ def async_handler(config, store, progressive_runner):
         store=store,
         chat_client=chat_client,
     )
+
+
+class TestProgressTrackerThoughts:
+    @pytest.mark.asyncio
+    async def test_thought_parts_excluded_from_collected_text(self):
+        from google_chat_bot.progress import ProgressTracker
+
+        tracker = ProgressTracker()
+        await tracker.consume(
+            _make_thought_event(
+                author="k8s_health_checker",
+                thought_text="I should query node statuses first...",
+                answer_text="All 9 nodes are Ready.",
+            )
+        )
+        assert tracker.collected_text == "All 9 nodes are Ready."
+        assert "query node statuses" not in tracker.collected_text
 
 
 class TestProgressiveUpdates:

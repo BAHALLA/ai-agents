@@ -17,6 +17,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from orrery_core import extract_reply_text
+
 from .cards import REMEDIATION_KEYS, SUBSYSTEMS, classify_status
 
 logger = logging.getLogger("google_chat_bot.progress")
@@ -68,11 +70,7 @@ class ProgressTracker:
             self.current_agent = author
             self._dirty = True
 
-        content = getattr(event, "content", None)
-        if content and getattr(content, "parts", None):
-            for part in content.parts:
-                if getattr(part, "text", None):
-                    self.collected_text += part.text
+        self.collected_text += extract_reply_text(event)
 
         for call in _safe_function_calls(event):
             self.current_tool = call.name

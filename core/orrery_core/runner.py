@@ -22,6 +22,7 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.adk.workflow import Workflow
 from google.genai import types
 
+from .events import extract_reply_text
 from .health import HealthServer
 from .log import mask_dsn
 from .rbac import set_user_role
@@ -187,10 +188,7 @@ async def run_persistent(
             session_id=session.id,
             new_message=message,
         ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        response_text += part.text
+            response_text += extract_reply_text(event)
 
         if response_text:
             print(f"\nAgent: {response_text}\n")

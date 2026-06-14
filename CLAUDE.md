@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 make install          # Install all workspace packages (uv sync)
-make test             # Run all 796 unit tests across all packages
+make test             # Run all 806 unit tests across all packages
 make eval             # Run 33 agent eval scenarios (requires LLM credentials)
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
@@ -62,6 +62,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 - **Structured JSON logging**: `setup_logging()` configures JSON output to stdout (called automatically by `load_agent_env()`). `AuditPlugin` emits tool-call audit entries via the logging system. `ActivityPlugin` records tool calls to session state for cross-agent visibility.
 - **Connection pooling**: Kafka `AdminClient`, K8s API clients, and HTTP sessions are cached as module-level singletons to avoid per-call connection overhead.
 - **Multi-provider LLM**: `resolve_model()` in `core/orrery_core/base.py` reads `MODEL_PROVIDER` + `MODEL_NAME` env vars. For Gemini returns a string; for others returns `LiteLlm(model=...)`. All agents use this via `create_agent()` — no per-agent changes needed.
+- **Reply-text extraction**: All user-facing transports (Google Chat, Slack, HTTP `/chat`, CLI) build the response by funneling runner events through `extract_reply_text()` in `core/orrery_core/events.py`. It concatenates part text but skips ADK "thought" parts (`part.thought is True`) — Gemini native thinking, `PlanReActPlanner` planning phases, and LiteLLM-surfaced provider reasoning are all normalized onto that flag — so planner/thinking output never leaks into a user reply regardless of provider. Add a new transport? Call this helper rather than iterating `content.parts` yourself.
 - **Prometheus metrics**: `MetricsPlugin` in `core/orrery_core/plugins.py` wraps `MetricsCollector` to track tool call counts, latency histograms, error rates, circuit breaker state, and LLM tokens globally. `start_server(port=9100)` exposes `/metrics` for Prometheus scraping.
 - **Resilience**: `ResiliencePlugin` in `core/orrery_core/plugins.py` wraps `CircuitBreaker` for per-tool circuit breaking globally. `@with_retry` decorator adds exponential backoff with jitter to async tool functions.
 - **Context caching**: `create_context_cache_config()` in `core/orrery_core/runner.py` creates an ADK `ContextCacheConfig` with env-var defaults (`CONTEXT_CACHE_MIN_TOKENS`, `CONTEXT_CACHE_TTL_SECONDS`, `CONTEXT_CACHE_INTERVALS`). Only effective with Gemini models. Enabled in orrery-assistant via the `App` object.

@@ -9,7 +9,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.base_session_service import BaseSessionService
 from google.genai import types
 
-from orrery_core import set_user_role
+from orrery_core import extract_reply_text, set_user_role
 
 from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
@@ -87,10 +87,7 @@ class SlackAgentHandler:
                 session_id=session_id,
                 new_message=message,
             ):
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if part.text:
-                            response_text += part.text
+                response_text += extract_reply_text(event)
         except Exception:
             logger.exception("Agent runner error")
             await say(
