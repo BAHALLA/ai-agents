@@ -102,6 +102,7 @@ nav:
     - ADRs:
       - "ADR-001: RBAC": adr/001-rbac.md
       - "ADR-002: Agent Composition": adr/002-agent-tool-vs-sub-agents.md
+      - "ADR-003: Graph Workflow & Conversational Root": adr/003-graph-workflow-inversion.md
   - Platform Features:
     - Agents Overview: agents-overview.md
     - Guardrails & RBAC: guardrails.md

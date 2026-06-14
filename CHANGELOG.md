@@ -7,21 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-06-14
+
 ### Added
-- **Graph-Based Workflow Root (ADR-003)**: The orchestrator root is now a hybrid ADK 2.0 `Workflow` graph. An `intent_router` `FunctionNode` dispatches each turn to either the conversational LLM orchestrator (`orrery_chat_agent`, which keeps free-form specialist routing via the six `AgentTool`s + memory) or a deterministic incident-triage pipeline (parallel health checks → `health_join` → triage → conditional remediation).
+- **Two-root ADK 2.0 architecture (ADR-003)**: The orchestrator is split into two entrypoints that reuse the same node agents. The interactive root is `orrery_chat_agent`, a chat-mode `LlmAgent` that keeps conversation history and routes free-form queries to the six specialist `AgentTool`s + memory, plus an `incident_triage_agent` `AgentTool` for single-turn full sweeps. The batch root is `orrery_triage_workflow`, a deterministic graph `Workflow` (`make run-triage`) — parallel health checks → `health_join` → triage → conditional remediation. A chat-mode agent must be a root (ADK forbids it as a routed graph node) and a `Workflow` can't be an `AgentTool`, so the two are separate by design.
 - **Remediation Subgraph**: The self-healing loop is now expressed via explicit graph edges (`remediation_actor` → `remediation_verifier` → `verify_route`), strictly bounded by the `MAX_REMEDIATION_ITERATIONS` state counter instead of the legacy `LoopAgent`. The verifier signals success via the `mark_remediation_resolved` tool (replacing `exit_loop` / `actions.escalate`).
 - **Fail-safe triage routing**: `triage_route` infers severity from the per-system status reports and flags `triage_verdict_missing` when the LLM skips `record_triage_verdict`, so a degraded system is never silently routed to "resolved".
 - **End-to-end graph flow tests**: `agents/orrery-assistant/tests/test_graph_flow.py` drives the real routing nodes through `InMemoryRunner` (parallel fan-out/join, intent dispatch, bounded remediation loop, missing-verdict fallback) with no LLM credentials required.
 - **Confirmation walkers traverse graph nodes**: the Slack and Google Chat confirmation wiring now walks `Workflow.graph.nodes`, so guarded destructive tools on graph-node agents still fire interactive approvals.
+- **Shared reply-text extraction helper**: New `extract_reply_text()` in `core/orrery_core/events.py` (exported from `orrery_core`) builds user-facing text from a runner event while skipping ADK thought parts. All four transports (Google Chat, Slack, HTTP, CLI) now funnel through it instead of each iterating `content.parts` — one place to maintain the thought-filtering rule, so a new transport inherits it for free.
 - **`create_agent(mode=...)` passthrough**: `create_agent` now accepts ADK 2.0's `mode` (`chat` / `task` / `single_turn`). The interactive root `orrery_chat_agent` sets `mode="chat"` explicitly so it retains conversation history across turns — previously it reverted to greeting-style replies on follow-up questions because the root's delegation mode was inferred rather than pinned.
 
 ### Fixed
+- **Planner reasoning leaked into user replies**: With a planner active (Gemini `builtin` thinking, `plan_react`, or a reasoning model via LiteLLM), the model's thought/reasoning parts were concatenated into the answer shown to users — so Google Chat, Slack, the HTTP `/chat` API, and the CLI all rendered the chain-of-thought ("Checking Kubernetes Status…") above the actual response. ADK normalizes every form of reasoning onto `part.thought = True` (native thinking, `PlanReActPlanner` `/*PLANNING*/` phases via `_mark_as_thought`, and LiteLLM Anthropic/OpenAI reasoning via `_convert_reasoning_value_to_parts`); all four transports now skip thought parts, so reasoning never reaches the user regardless of provider.
 - **Stale ADK 1.x references in docs**: `core/README.md` documented the removed `create_sequential_agent()` / `create_parallel_agent()` factories — replaced with the graph `Workflow` composition pattern. `agents/orrery-assistant/README.md` was rewritten for the ADR-003 chat-root + triage-`Workflow` architecture (was still showing the old `SequentialAgent`/`ParallelAgent` sub-agent tree and missing the Elasticsearch checker and remediation loop). `docs/agent-design-patterns.md` and a few internal docstrings updated likewise.
-- **Whole-workspace test collection**: switched pytest to `--import-mode=importlib` and added `agents/google-chat-bot/tests` to `testpaths`. The Google Chat bot's 93 tests were previously excluded from the suite (its `test_auth.py` / `test_app.py` / `test_handler.py` basenames collided with other packages under the legacy `prepend` import mode), so they never ran in CI. The full suite is now **796 tests** collected in a single run.
+- **Whole-workspace test collection**: switched pytest to `--import-mode=importlib` and added `agents/google-chat-bot/tests` to `testpaths`. The Google Chat bot's 93 tests were previously excluded from the suite (its `test_auth.py` / `test_app.py` / `test_handler.py` basenames collided with other packages under the legacy `prepend` import mode), so they never ran in CI. The full suite is now **806 tests** collected in a single run.
 
 ### Removed
 - **Deprecated Agent Factories**: Removed `create_sequential_agent`, `create_parallel_agent`, and `create_loop_agent` from `orrery_core.base` as they are deprecated in ADK 2.0 in favor of the `Workflow` API.
-- **Legacy Routing Evals**: Removed `planner_routing` eval which asserted the old `AgentTool` LLM routing that is now handled by the graph's `intent_router`.
+- **Legacy Routing Evals**: Removed the `planner_routing` eval that asserted the old root-level LLM routing. The `orrery-assistant` root no longer has a routing eval — the chat root's specialist dispatch and the triage `Workflow`'s deterministic `FunctionNode` routing are exercised by unit tests instead.
 
 ### Security
 - **CVE remediation across the dependency graph**: Bumped `litellm` `1.82.6 → 1.83.14` to address 7 advisories — 2 CRITICAL (CVE-2026-35030 OIDC auth bypass / privilege escalation, CVE-2026-42208 SQL injection) and 5 HIGH (CVE-2026-35029 RCE via unrestricted proxy config, CVE-2026-40217 arbitrary code execution via bytecode rewriting, CVE-2026-42203 SSTI in `/prompts/test`, CVE-2026-42271 authenticated command execution via MCP stdio test endpoints, GHSA-69x8-hrgq-fjj8 password hash exposure / pass-the-hash bypass). Five transitive HIGH-severity bumps came along for free: `mako 1.3.10 → 1.3.12` (CVE-2026-44307 Windows path traversal via backslash URI), `pyasn1 0.6.2 → 0.6.3` (CVE-2026-30922 unbounded-recursion DoS), `pyopenssl 25.3.0 → 26.2.0` (CVE-2026-27459 DTLS cookie callback buffer overflow), `python-multipart 0.0.22 → 0.0.28` (CVE-2026-42561 unbounded multipart-header DoS), and `urllib3 2.6.3 → 2.7.0` (CVE-2026-44431 cross-origin sensitive-header forwarding, CVE-2026-44432 decompression-bomb safeguard bypass).
@@ -260,7 +264,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/BAHALLA/orrery/compare/v0.1.9...v0.1.10
 
 
 [0.1.9]: https://github.com/BAHALLA/orrery/compare/v0.1.8...v0.1.9

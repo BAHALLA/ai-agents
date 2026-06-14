@@ -386,7 +386,7 @@ wheels = [
 
 [[package]]
 name = "docker-agent"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/docker-agent" }
 dependencies = [
     { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -415,7 +415,7 @@ wheels = [
 
 [[package]]
 name = "elasticsearch-agent"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/elasticsearch" }
 dependencies = [
     { name = "kubernetes", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -655,7 +655,7 @@ requests = [
 
 [[package]]
 name = "google-chat-bot"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/google-chat-bot" }
 dependencies = [
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1242,7 +1242,7 @@ wheels = [
 
 [[package]]
 name = "k8s-health-agent"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/k8s-health" }
 dependencies = [
     { name = "kubernetes", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1257,7 +1257,7 @@ requires-dist = [
 
 [[package]]
 name = "kafka-health-agent"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/kafka-health" }
 dependencies = [
     { name = "confluent-kafka", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1690,7 +1690,7 @@ wheels = [
 
 [[package]]
 name = "observability-agent"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/observability" }
 dependencies = [
     { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1779,7 +1779,7 @@ wheels = [
 
 [[package]]
 name = "ops-journal"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/ops-journal" }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1794,7 +1794,7 @@ requires-dist = [
 
 [[package]]
 name = "orrery"
-version = "0.1.9"
+version = "0.1.10"
 source = { virtual = "." }
 dependencies = [
     { name = "docker-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1874,7 +1874,7 @@ dev = [
 
 [[package]]
 name = "orrery-assistant"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/orrery-assistant" }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1901,7 +1901,7 @@ requires-dist = [
 
 [[package]]
 name = "orrery-core"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "core" }
 dependencies = [
     { name = "google-adk", extra = ["db", "eval"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -2596,7 +2596,7 @@ wheels = [
 
 [[package]]
 name = "slack-bot"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "agents/slack-bot" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
