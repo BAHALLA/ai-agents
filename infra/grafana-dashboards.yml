@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning. Loads any dashboard JSON dropped into
+# /etc/grafana/dashboards so the orrery observability board is available on
+# first boot of the tracing stack.
+apiVersion: 1
+
+providers:
+  - name: orrery
+    orgId: 1
+    folder: Orrery
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

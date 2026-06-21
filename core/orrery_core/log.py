@@ -11,8 +11,16 @@ import json
 import logging
 import re
 import sys
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
+
+# Request correlation ID for the in-flight user message. Set by
+# ``TracingPlugin.on_user_message_callback`` (see :mod:`orrery_core.tracing`)
+# and read here so every log line emitted while handling a request carries the
+# same ``request_id``. A plain ContextVar keeps this dependency-free — logging
+# never imports OpenTelemetry just to stamp the id.
+request_id_var: ContextVar[str | None] = ContextVar("orrery_request_id", default=None)
 
 # Matches the password segment in SQLAlchemy-style DSNs:
 #   postgresql+asyncpg://user:password@host:5432/db
@@ -34,6 +42,33 @@ def mask_dsn(url: str) -> str:
     'sqlite:///local.db'
     """
     return _DSN_PASSWORD_RE.sub(r"\1[REDACTED]\2", url)
+
+
+def _trace_correlation() -> dict[str, str]:
+    """Return trace/span/request identifiers for the active context, if any.
+
+    ``trace_id`` / ``span_id`` are read from the active OpenTelemetry span so a
+    log line can be pivoted to the matching trace in Tempo/Jaeger. OpenTelemetry
+    is an optional dependency (``orrery-core[otel]``); when it is not installed
+    or no span is active, those keys are simply omitted. ``request_id`` comes
+    from a plain ContextVar and needs no OTel.
+    """
+    fields: dict[str, str] = {}
+
+    if (request_id := request_id_var.get()) is not None:
+        fields["request_id"] = request_id
+
+    try:
+        from opentelemetry import trace
+    except ImportError:
+        return fields
+
+    span_context = trace.get_current_span().get_span_context()
+    if span_context.is_valid:
+        fields["trace_id"] = format(span_context.trace_id, "032x")
+        fields["span_id"] = format(span_context.span_id, "016x")
+
+    return fields
 
 
 class JSONFormatter(logging.Formatter):
@@ -65,6 +100,10 @@ class JSONFormatter(logging.Formatter):
             value = getattr(record, key, None)
             if value is not None:
                 entry[key] = value
+
+        # Correlate logs with traces (request_id always; trace_id/span_id when
+        # an OpenTelemetry span is active).
+        entry.update(_trace_correlation())
 
         if record.exc_info and record.exc_info[1] is not None:
             entry["exception"] = self.formatException(record.exc_info)

@@ -87,6 +87,66 @@ Cache hit/miss events are exposed as the `orrery_context_cache_events_total` Pro
 
 ---
 
+## Distributed Tracing
+
+OpenTelemetry tracing complements the Prometheus metrics by following a single request *through* the system — `chat agent → specialist AgentTool → tool → LLM → external system` — so you can attribute latency and localize failures across the agent hierarchy. ADK 2.0 already emits spans for agent, tool, and LLM calls; the platform's job is to export them and enrich them with orrery context.
+
+![Trace waterfall in Grafana Tempo showing an orrery invocation routing through the chat agent, an LLM call, the k8s_health_agent AgentTool, and its nested tool calls](../images/tracing-trace-waterfall.png)
+
+*A real `orrery` turn in Grafana Tempo: the 27s invocation fans out through `orrery_chat_agent` → `call_llm` → the `k8s_health_agent` AgentTool → its own `call_llm` and `execute_tool` spans (`get_cluster_info`, `get_nodes`, `get_events`). The span widths make the latency hotspot obvious at a glance.*
+
+Tracing requires the `otel` extra and is **off by default** — when `OTEL_TRACING_ENABLED` is unset or `false`, no provider is installed and `TracingPlugin` is skipped, so there is zero overhead.
+
+```bash
+uv sync --extra otel
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OTEL_TRACING_ENABLED` | `false` | Master switch. Must be `true` for any tracing to occur. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC collector endpoint (e.g. `http://localhost:4317`). When empty, spans print to the console — useful for local debugging. |
+| `OTEL_SERVICE_NAME` | `orrery` | `service.name` resource attribute attached to every span. |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Head-sampling ratio `0.0`–`1.0`. Uses a `ParentBased` sampler, so a trace already sampled upstream is always kept. |
+
+Tracing is **env-driven**: `default_plugins()` reads `OTEL_TRACING_ENABLED` automatically, so every transport (Google Chat, Slack, the HTTP server, the persistent runner) picks it up from that single flag — no per-agent code change needed. When enabled, `default_plugins()` calls `configure_tracing()` and prepends `TracingPlugin` first in the chain so it wraps every downstream agent, tool, and LLM call.
+
+```python
+from orrery_core import default_plugins
+
+# enable_tracing defaults to None -> resolved from OTEL_TRACING_ENABLED.
+plugins = default_plugins()
+
+# Pass an explicit bool only to force it regardless of the env var:
+plugins = default_plugins(enable_tracing=True)
+```
+
+If `OTEL_TRACING_ENABLED=true` but the `otel` extra isn't installed, tracing is skipped with a warning rather than crashing.
+
+`TracingPlugin` does **not** create its own spans — that would duplicate ADK's. Instead it annotates the active span with `orrery.request_id`, `orrery.user_role`, `orrery.tool.status`/`result_size`, and `gen_ai.usage.*` token counts (kept consistent with the `orrery_llm_tokens_total` metric), and records exceptions on tool/model errors.
+
+### Log ↔ trace correlation
+
+Every log line emitted while handling a request carries a `request_id`, and — when a span is active — the `trace_id` and `span_id`, so you can pivot from a JSON log line straight to the matching trace in Tempo/Jaeger. The `request_id` works even without the `otel` extra installed.
+
+### Local tracing stack
+
+`make tracing-up` starts Tempo (OTLP ingest + storage) and Grafana (visualization, pre-wired to Tempo and Prometheus) under the `tracing` compose profile:
+
+```bash
+make tracing-up                                      # Tempo :4317/:3200, Grafana :3001
+OTEL_TRACING_ENABLED=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+make run-assistant                                   # spans flow to Tempo
+make tracing-down
+```
+
+Open Grafana at [http://localhost:3001](http://localhost:3001) (anonymous admin). It ships with two provisioned artifacts:
+
+- **Datasources** — Tempo (traces) and Prometheus (metrics), with Tempo's trace→metrics link pre-wired so you can pivot from a span to the `orrery_*` metrics for its service.
+- **Dashboard** — *Orrery — Agent Observability* (in the **Orrery** folder): tool call rate, p95 tool latency, error rate by type, LLM tokens/s, circuit-breaker state, and a live table of recent `service.name = orrery` traces. Click any Trace ID to open the full span tree — slow turns are usually dominated by a single large `call_llm` span, which is the cue to trim what a tool feeds back to the model.
+
+---
+
 ## Planning
 
 The reasoning-heavy agents in `orrery-assistant` (the root orchestrator, `triage_summarizer`, and `remediation_actor`) accept an optional [ADK planner](https://adk.dev/agents/llm-agents/) that injects an explicit reasoning step before tool calls. Planning is **opt-in** and **off by default** — setting `ORRERY_PLANNER` is the only knob you need.
@@ -123,6 +183,8 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 | Prometheus | `9090` | Metrics collection and alerting rules |
 | Loki | `3100` | Log aggregation |
 | Alertmanager | `9093` | Alert routing and silence management |
+| Tempo | `4317` / `3200` | OTLP span ingest + Tempo query API (`tracing` profile) |
+| Grafana | `3001` | Trace/metric visualization (`tracing` profile) |
 | Elasticsearch | `9200` | Elasticsearch REST endpoint |
 | Kibana | `5601` | Kibana web UI |
 
@@ -132,6 +194,8 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 make infra-up     # start all services
 make infra-down   # stop all services
 make infra-reset  # stop and wipe volumes
+make tracing-up   # start the tracing stack (Tempo + Grafana)
+make tracing-down # stop the tracing stack
 ```
 
 ### Docker Compose profiles
@@ -141,4 +205,5 @@ make infra-reset  # stop and wipe volumes
 | `docker compose up -d` | Infrastructure only |
 | `docker compose --profile demo up -d` | Infrastructure + orrery-assistant web UI on `:8000` |
 | `docker compose --profile slack up -d` | Infrastructure + Slack bot on `:3000` |
+| `docker compose --profile tracing up -d` | Tempo (OTLP `:4317`) + Grafana (`:3001`) |
 | `docker compose --profile elastic up -d` | Elasticsearch + Kibana |

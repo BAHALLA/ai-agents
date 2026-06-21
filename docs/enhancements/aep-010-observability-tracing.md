@@ -2,11 +2,24 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
+| **Status** | **completed** *(2026-06-21)* |
 | **Priority** | P2 |
 | **Effort** | Medium (3-4 days) |
 | **Impact** | High |
 | **Dependencies** | None |
+
+> **Implementation note (2026-06-21).** Landed as `core/orrery_core/tracing.py`
+> (`configure_tracing()` + `TracingPlugin`), wired into `default_plugins()` via the
+> `OTEL_TRACING_ENABLED` env flag, with log↔trace correlation in `log.py`, the
+> `orrery-core[otel]` extra, and a local Tempo + Grafana stack (`make tracing-up`)
+> including a provisioned *Orrery — Agent Observability* dashboard. The final design
+> differs from the original sketch below in two deliberate ways: (1) `TracingPlugin`
+> **enriches ADK's native spans** instead of creating its own, avoiding duplicate
+> agent/tool/LLM spans; (2) spans are never stored in ADK session `state` (which is
+> persisted and non-serializable) — correlation uses a ContextVar and OTel's own
+> context. Trace-ID **exemplars on Prometheus histograms** were deferred (they need
+> OpenMetrics exposition and add coupling for marginal benefit); trace↔metric
+> navigation is provided through Grafana's Tempo→Prometheus datasource link instead.
 
 ## Gap Analysis
 
@@ -166,14 +179,14 @@ tool_duration.observe(
 
 ## Acceptance Criteria
 
-- [ ] Every user request gets a unique trace ID
-- [ ] Agent -> tool -> LLM calls create nested spans
-- [ ] Traces exported to Tempo (or configurable OTLP endpoint)
-- [ ] Grafana dashboard shows agent execution traces
-- [ ] Trace IDs appear in structured JSON logs
-- [ ] Prometheus metrics include trace ID exemplars
-- [ ] Latency attribution visible (LLM vs tool vs network)
-- [ ] TracingPlugin can be disabled via environment variable
+- [x] Every user request gets a unique trace/request ID (`orrery.request_id`)
+- [x] Agent -> tool -> LLM calls create nested spans (ADK native, enriched)
+- [x] Traces exported to Tempo (or any configurable OTLP endpoint)
+- [x] Grafana dashboard shows agent execution traces (*Orrery — Agent Observability*)
+- [x] Trace IDs appear in structured JSON logs (`trace_id`/`span_id`/`request_id`)
+- [ ] ~~Prometheus metrics include trace ID exemplars~~ — **deferred**; trace↔metric link provided via Grafana datasource wiring instead
+- [x] Latency attribution visible (LLM vs tool vs network) — confirmed on a live 64s trace
+- [x] TracingPlugin can be disabled via environment variable (`OTEL_TRACING_ENABLED`)
 
 ## Notes
 

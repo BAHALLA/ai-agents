@@ -17,7 +17,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | P0 | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | proposed | Medium | High |
 | P1 | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | **completed** | Medium | High |
 | P1 | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | **completed** | Low | High |
-| P1 | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | proposed | Medium | High |
+| P1 | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | **completed** | Medium | High |
 | P1 | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | proposed | Medium | High |
 | P1 | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | proposed | Low | High |
 | P2 | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | proposed | High | High |
@@ -60,7 +60,7 @@ make agents truly autonomous and operable in production:
 
 - **AEP-004 ✅**: LoopAgent for detect → remediate → verify → repeat workflows
 - **AEP-007 ✅**: Context caching to reduce LLM costs (low effort, high impact)
-- **AEP-010**: OpenTelemetry distributed tracing across agent calls
+- **AEP-010 ✅**: OpenTelemetry distributed tracing across agent calls *(completed 2026-06-21)*
 - **AEP-015**: Per-tenant LLM cost tracking and budget alerts
 - **AEP-017**: Runbooks for common incidents (circuit breaker open, loop storm, session DB full)
 

@@ -17,6 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.2.0",
+    "litellm>=1.85.4",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,10 @@ auth = [
 server = [
     "orrery-core[server]",
 ]
+# Install with: uv sync --extra otel
+otel = [
+    "orrery-core[otel]",
+]
 
 [tool.uv.sources]
 orrery-core = { workspace = true }
@@ -48,11 +53,11 @@ google-chat-bot = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.0",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "hypothesis>=6.155.2",
-    "ruff>=0.15.16",
-    "ty>=0.0.49",
+    "hypothesis>=6.155.7",
+    "ruff>=0.15.18",
+    "ty>=0.0.51",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
     "mkdocstrings[python]>=1.0.4",
@@ -67,6 +72,13 @@ members = ["core", "agents/*"]
 
 [tool.uv]
 environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
+# google-adk[eval] -> google-cloud-aiplatform[evaluation] hard-caps
+# litellm at <1.86.0, which is incompatible with our litellm>=1.89.3 floor
+# (no version pair satisfies both). aiplatform's cap is conservative — its
+# evaluation path is only exercised by `make eval`. Override it so the
+# workspace resolves; re-run `make eval` after litellm bumps to confirm the
+# AgentEvaluator path still works.
+override-dependencies = ["litellm>=1.89.3"]
 
 [tool.ruff]
 target-version = "py314"

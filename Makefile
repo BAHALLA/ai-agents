@@ -1,4 +1,5 @@
 .PHONY: help install test eval lint type-check ty fmt infra-up infra-down infra-reset \
+       tracing-up tracing-down \
        docker-build docker-demo docker-down \
        docs-serve docs-build docs-deploy \
        run-docker run-docker-cli \
@@ -71,6 +72,12 @@ infra-down: ## Stop shared infrastructure
 
 infra-reset: ## Stop infrastructure and wipe volumes
 	docker compose down -v
+
+tracing-up: ## Start the tracing stack (Tempo + Grafana on :3001)
+	docker compose --profile tracing up -d tempo grafana
+
+tracing-down: ## Stop the tracing stack
+	docker compose --profile tracing down
 
 # ── Documentation ──────────────────────────────────────
 

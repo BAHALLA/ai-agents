@@ -83,6 +83,12 @@ from orrery_core import track_llm_tokens
 track_llm_tokens("my_agent", input_tokens=150, output_tokens=300)
 ```
 
+When [distributed tracing](config/general.md#distributed-tracing) is enabled, `TracingPlugin` records the same token counts on each LLM span (`gen_ai.usage.*`) and forwards them to `track_llm_tokens()`, so the Prometheus counter and the trace attributes stay in agreement.
+
+## Distributed Tracing
+
+Metrics answer *how much* and *how often*; traces answer *where* within a single request. OpenTelemetry tracing exports ADK's native agent/tool/LLM spans and adds `request_id`, `user_role`, tool status, and token attributes — and stamps `trace_id`/`request_id` into the JSON logs for log↔trace correlation. It is an opt-in extra (`uv sync --extra otel`) and gated by `OTEL_TRACING_ENABLED`. `make tracing-up` brings up Tempo + Grafana with a provisioned *Orrery — Agent Observability* dashboard that combines these `orrery_*` metrics with a live trace table. See [Distributed Tracing](config/general.md#distributed-tracing) for the full configuration.
+
 ## Configuration
 
 | Environment Variable | Default | Description |

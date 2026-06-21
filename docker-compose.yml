@@ -134,6 +134,52 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Tracing stack (use: docker compose --profile tracing up) ───────
+  # Tempo stores OTLP spans; Grafana visualises them and links traces to
+  # the Prometheus metrics already scraped above. Point an agent at the
+  # collector with OTEL_TRACING_ENABLED=true and
+  # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317.
+
+  tempo:
+    image: grafana/tempo:2.7.1
+    container_name: tempo
+    profiles: [tracing]
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    ports:
+      - "3200:3200"   # Tempo query API
+      - "4317:4317"   # OTLP gRPC ingest
+    volumes:
+      - ./infra/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: grafana
+    profiles: [tracing]
+    restart: unless-stopped
+    depends_on:
+      - tempo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3001:3000"   # http://localhost:3001 (avoids clashing with other 3000s)
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+    volumes:
+      - ./infra/grafana-datasources.yml:/etc/grafana/provisioning/datasources/ds.yml:ro
+      - ./infra/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/orrery.yml:ro
+      - ./infra/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
   # ── Elasticsearch stack (use: docker compose --profile elastic up) ─
 
   elasticsearch:
@@ -285,6 +331,8 @@ volumes:
   postgres-data:
   prometheus-data:
   loki-data:
+  tempo-data:
+  grafana-data:
   elasticsearch-data:
   assistant-data:
   slack-data:

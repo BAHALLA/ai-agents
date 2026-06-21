@@ -1,0 +1,36 @@
+# Grafana datasource provisioning for the local tracing stack.
+# Wires Tempo (traces) together with Prometheus (metrics) so you can pivot
+# from a trace's service/duration to the matching orrery_* metrics.
+
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    access: proxy
+    uid: tempo
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      # Trace → metrics: jump from a span to Prometheus using the service name.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - { key: service.name, value: service }
+        queries:
+          - name: "Tool call rate"
+            query: 'sum(rate(orrery_tool_calls_total[5m]))'
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    uid: prometheus
+    # The Prometheus container scrapes agents on the host; reach it by name
+    # since both share the default compose network.
+    url: http://prometheus:9090
+    jsonData:
+      httpMethod: POST

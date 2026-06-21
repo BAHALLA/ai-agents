@@ -29,6 +29,7 @@ correct sequence:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -387,19 +388,21 @@ def default_plugins(
     memory_min_events: int = 4,
     enable_auth: bool = False,
     require_auth: bool = True,
+    enable_tracing: bool | None = None,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
     Returns plugins in the correct registration order:
 
-    1. AuthPlugin         — applies verified JWT role (optional, must run first)
-    2. GuardrailsPlugin   — RBAC + confirmation
-    3. ResiliencePlugin   — circuit breaker
-    4. MetricsPlugin      — Prometheus metrics (wired to circuit breaker)
-    5. AuditPlugin        — structured audit logs
-    6. ActivityPlugin     — session activity tracking (optional)
-    7. MemoryPlugin       — cross-session memory persistence (optional)
-    8. ErrorHandlerPlugin — graceful error recovery
+    1. TracingPlugin      — OpenTelemetry span enrichment (optional, must run first)
+    2. AuthPlugin         — applies verified JWT role (optional)
+    3. GuardrailsPlugin   — RBAC + confirmation
+    4. ResiliencePlugin   — circuit breaker
+    5. MetricsPlugin      — Prometheus metrics (wired to circuit breaker)
+    6. AuditPlugin        — structured audit logs
+    7. ActivityPlugin     — session activity tracking (optional)
+    8. MemoryPlugin       — cross-session memory persistence (optional)
+    9. ErrorHandlerPlugin — graceful error recovery
 
     Args:
         role_policy: Custom ``RolePolicy`` for RBAC overrides.
@@ -416,13 +419,41 @@ def default_plugins(
         require_auth: When ``enable_auth=True``, force ``viewer`` if no
             ``_auth`` payload is present. Set ``False`` only for migration
             windows where some transports have not been wired yet.
+        enable_tracing: Whether to configure OpenTelemetry and prepend
+            ``TracingPlugin``. Defaults to ``None``, which resolves from the
+            ``OTEL_TRACING_ENABLED`` env var — so every transport picks up
+            tracing from a single env flag with no per-agent wiring. Requires
+            the ``orrery-core[otel]`` extra; if the flag is on but the extra
+            is missing, tracing is skipped with a warning rather than crashing.
     """
+    if enable_tracing is None:
+        enable_tracing = os.getenv("OTEL_TRACING_ENABLED", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     resilience = ResiliencePlugin(
         failure_threshold=circuit_breaker_threshold,
         recovery_timeout=circuit_breaker_timeout,
     )
 
     plugins: list[BasePlugin] = []
+
+    if enable_tracing:
+        # Imported lazily: tracing.py imports OpenTelemetry at module load, so
+        # only touch it when opted in (mirrors the [otel] extra). A missing
+        # extra is a skip-with-warning, not a crash.
+        try:
+            from .tracing import TracingPlugin, configure_tracing
+        except ImportError:
+            logger.warning(
+                "OTEL_TRACING_ENABLED is set but the [otel] extra is not installed; "
+                "skipping tracing. Install with: uv sync --extra otel"
+            )
+        else:
+            if configure_tracing():
+                plugins.append(TracingPlugin())
 
     if enable_auth:
         plugins.append(AuthPlugin(require_auth=require_auth))

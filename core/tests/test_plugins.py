@@ -305,7 +305,10 @@ async def test_memory_plugin_skips_no_memory_service(root_agent):
 
 def test_default_plugins_composition():
     """Verify default_plugins returns the expected list and order."""
-    plugins = default_plugins()
+    # Pin tracing off: it defaults to the OTEL_TRACING_ENABLED env var, which a
+    # developer's .env (loaded via load_dotenv) may set true. This test asserts
+    # the canonical default set, independent of the ambient environment.
+    plugins = default_plugins(enable_tracing=False)
 
     expected_names = ["guardrails", "resilience", "metrics", "audit", "activity", "error_handler"]
 
@@ -319,7 +322,7 @@ def test_default_plugins_composition():
 
 def test_default_plugins_with_memory():
     """Verify enable_memory adds MemoryPlugin before ErrorHandlerPlugin."""
-    plugins = default_plugins(enable_memory=True)
+    plugins = default_plugins(enable_memory=True, enable_tracing=False)
 
     expected_names = [
         "guardrails",
