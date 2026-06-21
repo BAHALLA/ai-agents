@@ -50,7 +50,7 @@ google-chat-bot = { workspace = true }
 dev = [
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
-    "hypothesis>=6.155.2",
+    "hypothesis>=6.155.6",
     "ruff>=0.15.16",
     "ty>=0.0.49",
     "mkdocs>=1.6.1",
