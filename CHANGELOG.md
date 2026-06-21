@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-06-21
+
 ### Added
 - **Distributed tracing with OpenTelemetry (AEP-010)** (`core/orrery_core/tracing.py`): New `configure_tracing()` installs a process-global `TracerProvider` exporting to an OTLP collector (Tempo, Jaeger, Cloud Trace, …) with a console fallback for local dev — idempotent and gated by `OTEL_TRACING_ENABLED`. ADK 2.0 already emits native spans for agent / tool / LLM calls under the `gcp.vertex.agent` tracer, so the new `TracingPlugin` **enriches the current span** (`orrery.request_id`, `orrery.user_role`, `orrery.tool.status` / `result_size`, exception recording) rather than creating duplicate spans; `after_model` only bridges token counts into `track_llm_tokens()` since ADK already records `gen_ai.usage.*`. `default_plugins(enable_tracing=None)` resolves the flag from `OTEL_TRACING_ENABLED` and prepends the plugin first, so a single env var turns tracing on across every transport (Google Chat, Slack, HTTP server, persistent runner) with no per-agent wiring — a missing `[otel]` extra is a skip-with-warning, not a crash.
 - **Log ↔ trace correlation** (`core/orrery_core/log.py`): `JSONFormatter` now stamps `request_id` (a dependency-free `ContextVar`) plus `trace_id` / `span_id` (lazy OpenTelemetry lookup, omitted when the extra isn't installed or no span is active) onto every log record, so a log line can be pivoted straight to its trace.
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Pinned GitHub Actions bumped** alongside the dependency upgrades: `astral-sh/setup-uv` `v5 → v8.2.0` (ci, docs, release), `docker/build-push-action` `v6 → v7`, `sigstore/cosign-installer` `v3 → v4.1.2`. setup-uv and cosign-installer are pinned to full versions because they don't publish moving major tags for v8 / v4.
+- **Docker image now installs the `otel` extra** (`Dockerfile`): the runtime image is built with `--extra postgres --extra server --extra otel`, so `OTEL_TRACING_ENABLED=true` actually emits traces from the shipped container — previously OpenTelemetry was absent from the image and tracing silently no-op'd in deployment.
+- **Release pipeline hardening** (`.github/workflows/release.yml`): the GitHub Release body is now built into a file and passed via `body_path`, fixing a long-standing bug where the inline `$(cat docker_info.md)` was never shell-evaluated and the Docker-images section rendered literally. The Helm `kubeconform` step now actually validates the rendered manifests (it previously only installed `kubectl` and validated nothing). Trivy renders the Helm chart against `TRIVY_KUBE_VERSION=1.28.0` so it's no longer skipped for misconfiguration scanning.
 
 ### Security
 - **Three transitive HIGH advisories cleared from the lock** (caught by the Trivy CI gate): `cryptography 46.0.5 → 49.0.0` (GHSA-537c-gmf6-5ccf — vulnerable OpenSSL bundled in the wheels, fixed in 48.0.1), `python-multipart 0.0.28 → 0.0.32` (CVE-2026-53539 — quadratic-time querystring parsing with semicolon separators causing CPU DoS, fixed in 0.0.30), and `starlette 1.2.1 → 1.3.1` (CVE-2026-54283 — `request.form()` size limits silently ignored for `application/x-www-form-urlencoded`, enabling DoS). `pyopenssl 26.2.0 → 26.3.0` came along transitively. Lock-only change; 817 tests still pass.
@@ -284,7 +288,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/BAHALLA/orrery/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/BAHALLA/orrery/compare/v0.1.9...v0.1.10
 
 
