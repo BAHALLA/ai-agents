@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Pinned GitHub Actions bumped** alongside the dependency upgrades: `astral-sh/setup-uv` `v5 → v8.2.0` (ci, docs, release), `docker/build-push-action` `v6 → v7`, `sigstore/cosign-installer` `v3 → v4.1.2`. setup-uv and cosign-installer are pinned to full versions because they don't publish moving major tags for v8 / v4.
 
+### Security
+- **Three transitive HIGH advisories cleared from the lock** (caught by the Trivy CI gate): `cryptography 46.0.5 → 49.0.0` (GHSA-537c-gmf6-5ccf — vulnerable OpenSSL bundled in the wheels, fixed in 48.0.1), `python-multipart 0.0.28 → 0.0.32` (CVE-2026-53539 — quadratic-time querystring parsing with semicolon separators causing CPU DoS, fixed in 0.0.30), and `starlette 1.2.1 → 1.3.1` (CVE-2026-54283 — `request.form()` size limits silently ignored for `application/x-www-form-urlencoded`, enabling DoS). `pyopenssl 26.2.0 → 26.3.0` came along transitively. Lock-only change; 817 tests still pass.
+
 ### Documentation
 - **`docs/config/general.md` — Distributed Tracing** section added (env-var reference, the env-driven `default_plugins()` flow, log↔trace correlation, and the `make tracing-up` local-stack walkthrough with a Grafana Tempo trace-waterfall screenshot). `docs/metrics.md` cross-links metrics↔traces, the `CLAUDE.md` architecture section gains a tracing bullet, and **AEP-010 is marked completed** (with an implementation note on how the final design diverged from the original proposal and why exemplars were deferred).
 
