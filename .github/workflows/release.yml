@@ -140,12 +140,14 @@ jobs:
         run: helm lint deploy/helm/orrery-assistant
 
       - name: Template chart (smoke test)
-        run: helm template test deploy/helm/orrery-assistant --debug > /tmp/rendered.yaml
+        run: helm template test deploy/helm/orrery-assistant > /tmp/rendered.yaml
 
       - name: Validate rendered manifests (kubeconform)
-        uses: azure/setup-kubectl@v5
-        with:
-          version: latest
+        run: |
+          curl -sL "https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -summary -strict -ignore-missing-schemas \
+            -kubernetes-version 1.28.0 /tmp/rendered.yaml
 
   release:
     name: GitHub Release
@@ -159,44 +161,38 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Extract changelog for this version
-        id: changelog
+      - name: Build release notes
+        env:
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
+          TAG: ${{ github.ref_name }}
         run: |
           version="${{ steps.version.outputs.version }}"
-          changelog=$(awk -v ver="$version" '
+          IMAGE_URL="ghcr.io/${{ github.repository }}"
+
+          # Extract this version's section from the changelog.
+          awk -v ver="$version" '
             /^## \[/ {
               if (found) exit
               if (index($0, "[" ver "]")) { found=1; next }
             }
             found { print }
-          ' CHANGELOG.md)
+          ' CHANGELOG.md > release_notes.md
 
+          # Append Docker image info (body_path so it actually renders — the
+          # previous inline "$(cat ...)" was never shell-evaluated by the action).
           {
-            echo "body<<CHANGELOG_EOF"
-            echo "$changelog"
-            echo "CHANGELOG_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Generate Docker Image Links
-        id: docker_links
-        env:
-          DIGEST: ${{ needs.build-and-push.outputs.digest }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          IMAGE_URL="ghcr.io/${{ github.repository }}"
-          
-          {
+            echo ""
             echo "## 🐳 Docker Images"
             echo ""
-            echo "Images are available on GitHub Container Registry:"
+            echo "Available on GitHub Container Registry:"
             echo "- \`${IMAGE_URL}:${TAG}\`"
             echo "- \`${IMAGE_URL}:latest\`"
             echo ""
             echo "### Multi-arch digest"
             echo "\`${DIGEST}\`"
-          } > docker_info.md
-          
-          # Also create a simple text file for assets
+          } >> release_notes.md
+
+          # Asset file with the pinned digests.
           echo "${IMAGE_URL}:${TAG}@${DIGEST}" > docker-images.txt
           echo "${IMAGE_URL}:latest@${DIGEST}" >> docker-images.txt
 
@@ -204,10 +200,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: v${{ steps.version.outputs.version }}
-          body: |
-            ${{ steps.changelog.outputs.body }}
-            
-            $(cat docker_info.md)
+          body_path: release_notes.md
           files: |
             docker-images.txt
           draft: false

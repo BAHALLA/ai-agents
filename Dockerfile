@@ -39,8 +39,9 @@ RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
 # Cache mount keeps repeated builds fast without bloating the final image.
 # `--extra postgres` pulls in the Postgres driver used by the session store.
 # `--extra server` pulls in FastAPI, Uvicorn, and PyJWT for the authenticated HTTP front door.
+# `--extra otel` pulls in OpenTelemetry so OTEL_TRACING_ENABLED works in the image.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres --extra server
+    uv sync --no-dev --frozen --extra postgres --extra server --extra otel
 
 # Copy actual source code
 COPY core/ core/
@@ -48,7 +49,7 @@ COPY agents/ agents/
 
 # Reinstall workspace packages with real source
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres --extra server
+    uv sync --no-dev --frozen --extra postgres --extra server --extra otel
 
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.14-slim-bookworm
