@@ -61,6 +61,11 @@ jobs:
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Render the Helm chart against a K8s version that satisfies its
+          # kubeVersion (>=1.25.0); the Trivy default of 1.20.0 skips the
+          # chart, leaving it unscanned for misconfigurations.
+          TRIVY_KUBE_VERSION: "1.28.0"
         with:
           scan-type: fs
           scan-ref: .
