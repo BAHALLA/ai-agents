@@ -130,7 +130,7 @@ graph LR
 
     ---
 
-    Prometheus metrics, circuit breaker state, and LLM token accounting.
+    Prometheus metrics, OpenTelemetry traces, and log↔trace correlation — with a one-command Grafana stack.
 
 -   :material-lifebuoy:{ .lg .middle } __[Troubleshooting](troubleshooting.md)__
 
@@ -147,7 +147,7 @@ graph LR
 1.  **Safety First:** No destructive tool executes without verified human confirmation.
 2.  **Autonomous Investigation:** Agents run diagnostics in parallel, mimicking an SRE's thought process.
 3.  **Closed-Loop Remediation:** Actions are always followed by verification and retry loops.
-4.  **Observable by Design:** Every interaction is instrumented with Prometheus metrics and audit logs.
+4.  **Observable by Design:** Every interaction is instrumented with Prometheus metrics, OpenTelemetry traces, and audit logs.
 
 ---
 

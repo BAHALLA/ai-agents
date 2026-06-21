@@ -30,13 +30,17 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
-    - navigation.expand
     - navigation.path
     - navigation.top
     - navigation.tracking
     - navigation.indexes
+    - navigation.footer
+    - navigation.instant
+    - navigation.instant.prefetch
+    - toc.follow
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
     - content.tooltips
     - content.tabs.link
@@ -109,7 +113,7 @@ nav:
     - Structured Tool Results: tool-results.md
     - Testing RBAC: rbac-testing.md
     - Cross-Session Memory: memory.md
-    - Observability & Metrics: metrics.md
+    - Observability (Metrics & Tracing): metrics.md
   - Operations:
     - Production Deployment: deployment.md
     - Troubleshooting: troubleshooting.md

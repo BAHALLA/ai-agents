@@ -1,8 +1,22 @@
-# Prometheus Metrics
+# Observability
 
-The platform exposes Prometheus metrics for every tool call across all agents. This provides real-time visibility into tool latency, error rates, agent usage, and circuit breaker state.
+Orrery ships three correlated signals, all wired globally through `default_plugins()` — no per-agent setup:
 
-## Quick Start
+| Signal | What it answers | Backend |
+|--------|-----------------|---------|
+| **Metrics** | *How much? How often?* — call rates, latency, errors, tokens | Prometheus (`/metrics`) |
+| **Traces** | *Where* did a single request spend its time? | OpenTelemetry → Tempo / Jaeger |
+| **Logs** | *What happened*, line by line, correlated to a trace | Structured JSON → Loki / Cloud Logging |
+
+Metrics are on by default; tracing is an opt-in extra. The two share a Grafana stack you can bring up with `make tracing-up`.
+
+---
+
+## Metrics
+
+The platform exposes Prometheus metrics for every tool call across all agents — real-time visibility into tool latency, error rates, agent usage, and circuit-breaker state.
+
+### Quick start
 
 Metrics are enabled automatically via `default_plugins()` — no per-agent wiring needed:
 
@@ -27,7 +41,7 @@ metrics_plugin.start_server()
 !!! note "`default_plugins()` does not auto-start the metrics server"
     The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started when a host calls `start_server()` explicitly. This is intentional — the ADK CLI and tests don't want a port binding. The Slack bot (`agents/slack-bot/slack_bot/app.py`) and Google Chat bot start it in their FastAPI `lifespan`; the persistent runner starts it when `ENABLE_METRICS_SERVER=true`.
 
-## Available Metrics
+### Available metrics
 
 All metrics use the `orrery_` namespace prefix following [Prometheus naming conventions](https://prometheus.io/docs/practices/naming/).
 
@@ -39,126 +53,97 @@ All metrics use the `orrery_` namespace prefix following [Prometheus naming conv
 | `orrery_circuit_breaker_state` | Gauge | `tool` | Circuit breaker state: 0=closed, 1=open, 2=half_open |
 | `orrery_llm_tokens_total` | Counter | `agent`, `direction` | LLM token consumption (input/output) |
 
-### Bounded Status Labels
+The `status` label on `orrery_tool_calls_total` is restricted to a fixed set — `ok`, `success`, `error`, `confirmation_required` — to prevent [cardinality explosion](https://prometheus.io/docs/practices/naming/#labels); any other value is normalised to `ok`.
 
-The `status` label on `orrery_tool_calls_total` is restricted to a fixed set of values to prevent [cardinality explosion](https://prometheus.io/docs/practices/naming/#labels):
+### How it works
 
-- `ok` — successful execution (default)
-- `success` — explicit success from tool response
-- `error` — tool returned an error or raised an exception
-- `confirmation_required` — tool blocked by guardrail
-
-Any other status value from a tool response is normalised to `ok`.
-
-## How It Works
-
-`MetricsPlugin` wraps `MetricsCollector` and registers as a global plugin on the `Runner`. It implements three plugin callbacks:
+`MetricsPlugin` wraps `MetricsCollector` and registers as a global plugin on the `Runner`, implementing three callbacks:
 
 - **`before_tool_callback`** — generates a unique invocation ID and starts a timer
 - **`after_tool_callback`** — records duration and success/error status
 - **`on_tool_error_callback`** — records error type, duration, and increments error counters
 
-Since plugins apply globally, metrics are automatically collected for every tool across every agent — no per-agent callback wiring needed.
+Since plugins apply globally, metrics are collected for every tool across every agent automatically. `default_plugins()` also wires the `ResiliencePlugin`'s circuit breaker into `MetricsPlugin`, so `orrery_circuit_breaker_state` tracks state changes per tool. For LLM tokens, call `track_llm_tokens("my_agent", input_tokens=150, output_tokens=300)` from a model callback — when tracing is enabled, `TracingPlugin` does this for you (see [below](#distributed-tracing)).
 
-## Circuit Breaker Integration
-
-`default_plugins()` automatically wires the `ResiliencePlugin`'s circuit breaker into `MetricsPlugin`, so the `orrery_circuit_breaker_state` gauge reflects state changes (closed/open/half_open) for each tool.
-
-For custom configurations:
-
-```python
-from orrery_core import ResiliencePlugin, MetricsPlugin
-
-resilience = ResiliencePlugin(failure_threshold=3)
-metrics = MetricsPlugin(circuit_breaker=resilience.circuit_breaker)
-```
-
-## LLM Token Tracking
-
-Use `track_llm_tokens()` to record token consumption from custom LLM wrappers or model callbacks:
-
-```python
-from orrery_core import track_llm_tokens
-
-track_llm_tokens("my_agent", input_tokens=150, output_tokens=300)
-```
-
-When [distributed tracing](config/general.md#distributed-tracing) is enabled, `TracingPlugin` records the same token counts on each LLM span (`gen_ai.usage.*`) and forwards them to `track_llm_tokens()`, so the Prometheus counter and the trace attributes stay in agreement.
-
-## Distributed Tracing
-
-Metrics answer *how much* and *how often*; traces answer *where* within a single request. OpenTelemetry tracing exports ADK's native agent/tool/LLM spans and adds `request_id`, `user_role`, tool status, and token attributes — and stamps `trace_id`/`request_id` into the JSON logs for log↔trace correlation. It is an opt-in extra (`uv sync --extra otel`) and gated by `OTEL_TRACING_ENABLED`. `make tracing-up` brings up Tempo + Grafana with a provisioned *Orrery — Agent Observability* dashboard that combines these `orrery_*` metrics with a live trace table. See [Distributed Tracing](config/general.md#distributed-tracing) for the full configuration.
-
-## Configuration
+### Configuration & scraping
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `METRICS_PORT` | `9100` | TCP port for the `/metrics` HTTP server |
 
-The port can also be passed explicitly: `metrics_plugin.start_server(port=9200)`.
+`infra/prometheus.yml` includes a pre-configured scrape job. For **local development** (agent on host, Prometheus in Docker) it targets `host.docker.internal:9100`; for an in-cluster **Docker deployment**, point it at the service names (`orrery-assistant:9100`, `slack-bot:9100`). The compose Prometheus service sets `extra_hosts: ["host.docker.internal:host-gateway"]` so the local config works on Linux.
 
-`start_server()` is safe to call from multiple instances — only the first call in the process starts the HTTP server.
+### Example PromQL
 
-## Prometheus Scraping
-
-The `infra/prometheus.yml` includes a pre-configured scrape job. For **local development** (agent on host, Prometheus in Docker):
-
-```yaml
-- job_name: "agents"
-  static_configs:
-    - targets: ["host.docker.internal:9100"]
-      labels:
-        service: "orrery-assistant"
-```
-
-For **Docker deployment** (agent and Prometheus both in containers):
-
-```yaml
-- job_name: "agents"
-  static_configs:
-    - targets: ["orrery-assistant:9100"]
-      labels:
-        service: "orrery-assistant"
-    - targets: ["slack-bot:9100"]
-      labels:
-        service: "slack-bot"
-```
-
-The `docker-compose.yml` Prometheus service includes `extra_hosts: ["host.docker.internal:host-gateway"]` so the local development config works on Linux.
-
-## Example PromQL Queries
-
-**Tool error rate (5m window):**
 ```promql
-rate(orrery_tool_errors_total[5m])
+rate(orrery_tool_errors_total[5m])                                   # tool error rate (5m)
+histogram_quantile(0.95, rate(orrery_tool_duration_seconds_bucket[5m]))  # p95 latency
+rate(orrery_tool_calls_total[1m]) * 60                               # calls/min by tool
+orrery_circuit_breaker_state == 1                                    # breakers currently open
+increase(orrery_llm_tokens_total[1h])                                # tokens/agent, last hour
 ```
 
-**p95 tool latency by agent:**
-```promql
-histogram_quantile(0.95, rate(orrery_tool_duration_seconds_bucket[5m]))
+---
+
+## Distributed Tracing
+
+Metrics tell you *how much* and *how often*; traces tell you *where* a single request spent its time. ADK 2.0 already emits native spans for every agent, tool, and LLM call — orrery configures the exporter and **enriches** those spans rather than creating duplicates.
+
+![Trace waterfall in Grafana Tempo showing an orrery invocation routing through the chat agent, an LLM call, the k8s_health_agent AgentTool, and its nested tool calls](images/tracing-trace-waterfall.png)
+
+*A real `orrery` turn in Grafana Tempo: the 27s invocation fans out through `orrery_chat_agent` → `call_llm` → the `k8s_health_agent` AgentTool → its own `call_llm` and `execute_tool` spans (`get_cluster_info`, `get_nodes`, `get_events`). The span widths make the latency hotspot obvious at a glance.*
+
+### Enable it
+
+Install the extra and flip one env var:
+
+```bash
+uv sync --extra otel
+export OTEL_TRACING_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317   # omit to print spans to the console
 ```
 
-**Tool calls per minute by tool:**
-```promql
-rate(orrery_tool_calls_total[1m]) * 60
+`default_plugins()` reads `OTEL_TRACING_ENABLED` and prepends `TracingPlugin` automatically, so every transport (Google Chat, Slack, the HTTP server, the persistent runner) picks it up — no per-agent wiring. A missing `[otel]` extra is a skip-with-warning, not a crash. The full env-var table lives in [Configuration → Distributed Tracing](config/general.md#distributed-tracing).
+
+### What the spans carry
+
+`TracingPlugin` annotates the active span (never a duplicate) with:
+
+- `orrery.request_id`, `orrery.user_role`
+- `orrery.tool.name`, `orrery.tool.status`, `orrery.tool.result_size`
+- exceptions recorded with `ERROR` status on tool/model failures
+
+LLM token counts ride on ADK's native `gen_ai.usage.*` attributes; `TracingPlugin` bridges them into the `orrery_llm_tokens_total` metric so traces and metrics always agree.
+
+### Log ↔ trace correlation
+
+Every JSON log line emitted while handling a request carries `request_id`, plus `trace_id` / `span_id` when a span is active — so you can pivot from a log line straight to the matching trace in Tempo/Jaeger. `request_id` works even without the `otel` extra installed.
+
+### Local stack: Tempo + Grafana
+
+`make tracing-up` starts Tempo (OTLP ingest + storage) and Grafana under the `tracing` compose profile:
+
+```bash
+make tracing-up                                      # Tempo :4317/:3200, Grafana :3001
+OTEL_TRACING_ENABLED=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+make run-assistant                                   # spans flow to Tempo
+make tracing-down
 ```
 
-**Circuit breaker state (1 = open):**
-```promql
-orrery_circuit_breaker_state == 1
-```
+Open Grafana at [http://localhost:3001](http://localhost:3001) (anonymous admin). It ships with two provisioned artifacts:
 
-**LLM tokens consumed per agent (last hour):**
-```promql
-increase(orrery_llm_tokens_total[1h])
-```
+- **Datasources** — Tempo (traces) and Prometheus (metrics), with the trace→metrics link pre-wired so you can pivot from a span to the `orrery_*` metrics for its service.
+- **Dashboard** — *Orrery — Agent Observability* (in the **Orrery** folder): tool call rate, p95 latency, error rate by type, LLM tokens/s, circuit-breaker state, and a live table of recent `service.name = orrery` traces. Click any Trace ID to open the full span tree — slow turns are usually dominated by a single large `call_llm` span, which is the cue to trim what a tool feeds back to the model.
 
-## Agents with Metrics Enabled
+---
 
-All agents get metrics automatically through `default_plugins()` registered on the `Runner`. The `MetricsPlugin` applies globally — no per-agent setup needed.
+## Where it runs
 
-| Deployment | Metrics Server |
-|------------|----------------|
-| CLI / persistent runner | Started via `metrics_plugin.start_server()` |
-| Slack bot | Started in FastAPI lifespan on port 9100 |
-| Docker demo | Exposed on port 9100, scraped by Prometheus |
+All agents get metrics (and tracing, when enabled) automatically through `default_plugins()` on the `Runner` — no per-agent setup.
+
+| Deployment | Metrics server | Tracing |
+|------------|----------------|---------|
+| CLI / persistent runner | `metrics_plugin.start_server()` | `OTEL_TRACING_ENABLED=true` |
+| Slack / Google Chat bot | Started in FastAPI lifespan on `:9100` | env-driven, per transport |
+| Docker demo | Exposed on `:9100`, scraped by Prometheus | point OTLP at Tempo |
