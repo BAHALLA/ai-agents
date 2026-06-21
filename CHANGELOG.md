@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Distributed tracing with OpenTelemetry (AEP-010)** (`core/orrery_core/tracing.py`): New `configure_tracing()` installs a process-global `TracerProvider` exporting to an OTLP collector (Tempo, Jaeger, Cloud Trace, …) with a console fallback for local dev — idempotent and gated by `OTEL_TRACING_ENABLED`. ADK 2.0 already emits native spans for agent / tool / LLM calls under the `gcp.vertex.agent` tracer, so the new `TracingPlugin` **enriches the current span** (`orrery.request_id`, `orrery.user_role`, `orrery.tool.status` / `result_size`, exception recording) rather than creating duplicate spans; `after_model` only bridges token counts into `track_llm_tokens()` since ADK already records `gen_ai.usage.*`. `default_plugins(enable_tracing=None)` resolves the flag from `OTEL_TRACING_ENABLED` and prepends the plugin first, so a single env var turns tracing on across every transport (Google Chat, Slack, HTTP server, persistent runner) with no per-agent wiring — a missing `[otel]` extra is a skip-with-warning, not a crash.
+- **Log ↔ trace correlation** (`core/orrery_core/log.py`): `JSONFormatter` now stamps `request_id` (a dependency-free `ContextVar`) plus `trace_id` / `span_id` (lazy OpenTelemetry lookup, omitted when the extra isn't installed or no span is active) onto every log record, so a log line can be pivoted straight to its trace.
+- **Local tracing stack** (`docker-compose.yml`, `infra/tempo.yml`, `infra/grafana-datasources.yml`, `infra/grafana-dashboards.yml`, `infra/dashboards/orrery-observability.json`): `make tracing-up` brings up Tempo (OTLP ingest + storage) and Grafana under the `tracing` compose profile, with provisioned datasources (Tempo + Prometheus, trace→metric linked) and an *Orrery — Agent Observability* dashboard (tool call rate, p95 latency, error rate, LLM tokens/s, circuit-breaker state, and a live trace table). New `tracing-down` target.
+- **`[otel]` extra** on `orrery-core` (OpenTelemetry SDK + OTLP gRPC exporter), surfaced at the workspace root as `orrery[otel]`. Imported lazily — the rest of the package never requires it.
+- **Tests**: 11 new cases in `core/tests/test_tracing.py` (configure idempotency + disabled path, span enrichment via an in-memory exporter, token→metrics bridge, log/trace correlation), with a hermetic autouse fixture that resets the global provider and the ambient `OTEL_TRACING_ENABLED` so the suite stays deterministic.
+
+### Fixed
+- **`make install` resolution failure**: `google-adk[eval]` transitively caps `litellm < 1.86.0` (via `google-cloud-aiplatform[evaluation]`), which is unsatisfiable against the `litellm >= 1.89.3` floor — no version pair satisfies both. Added a uv `override-dependencies = ["litellm>=1.89.3"]` entry so the workspace resolves; the cap only guards aiplatform's evaluation path (exercised by `make eval`), and `AgentEvaluator` imports cleanly on litellm 1.89.3.
+
+### Changed
+- **Pinned GitHub Actions bumped** alongside the dependency upgrades: `astral-sh/setup-uv` `v5 → v8.2.0` (ci, docs, release), `docker/build-push-action` `v6 → v7`, `sigstore/cosign-installer` `v3 → v4.1.2`. setup-uv and cosign-installer are pinned to full versions because they don't publish moving major tags for v8 / v4.
+
+### Documentation
+- **`docs/config/general.md` — Distributed Tracing** section added (env-var reference, the env-driven `default_plugins()` flow, log↔trace correlation, and the `make tracing-up` local-stack walkthrough with a Grafana Tempo trace-waterfall screenshot). `docs/metrics.md` cross-links metrics↔traces, the `CLAUDE.md` architecture section gains a tracing bullet, and **AEP-010 is marked completed** (with an implementation note on how the final design diverged from the original proposal and why exemplars were deferred).
+
 ## [0.1.10] - 2026-06-14
 
 ### Added
