@@ -223,6 +223,27 @@ pubsubWorker:
     - python
     - -m
     - google_chat_bot.pubsub_worker
+  ## Idempotency guard. Pub/Sub is at-least-once, so a redelivered event would
+  ## double-run @destructive tools. The worker claims each event id before
+  ## dispatching and drops duplicates.
+  ##   backend "memory"   — process-local; correct ONLY for a single replica.
+  ##   backend "postgres" — shared across replicas via the platform DATABASE_URL;
+  ##                        REQUIRED whenever replicaCount > 1 or autoscaling is on.
+  ## The chart refuses to render a multi-replica worker on the memory backend.
+  idempotency:
+    backend: memory
+    ttlSeconds: 3600
+  ## Backlog-based autoscaling. CPU/memory HPAs are useless here (the worker is
+  ## I/O-bound on LLM calls); the meaningful signal is the subscription's
+  ## num_undelivered_messages. Requires the GKE custom-metrics (Stackdriver)
+  ## adapter. Set idempotency.backend=postgres before enabling.
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    # Target undelivered messages per pod; HPA scales out when the backlog
+    # per replica exceeds this.
+    targetBacklogPerPod: 10
   serviceAccount:
     create: true
     # On GKE, paste the `gsa_email` output from deploy/terraform/google-chat-bot

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Pub/Sub worker idempotency (AEP-018)** (`agents/google-chat-bot/google_chat_bot/idempotency.py`): Google Chat's Pub/Sub transport is *at-least-once*, so a redelivered event (lost ack, pod OOM, handler-timeout nack after side effects) would double-run `@destructive` tools — restart/scale/rollback a deployment, increase Kafka partitions, silence Alertmanager. The worker now **claims each event id before dispatching** and drops duplicates (ack without re-executing); a failed handler **releases** the claim so a legitimate redelivery still retries (at-most-once side effects without losing failed work). New `IdempotencyStore` protocol with two backends: `InMemoryIdempotencyStore` (bounded + TTL, single-replica) and `PostgresIdempotencyStore` (`INSERT … ON CONFLICT DO NOTHING`, shared across replicas via the existing `DATABASE_URL` — no new infrastructure). Dedup key is the Chat `eventId`, falling back to a stable content hash. 33 unit tests including concurrent-claim races on both backends.
+- **Backlog-based autoscaling for the Pub/Sub worker (AEP-018)** (`deploy/helm/orrery-assistant/templates/pubsub-worker-hpa.yaml`): an HPAv2 scaling on the subscription's `num_undelivered_messages` External metric (CPU/memory are useless for an LLM-I/O-bound worker), behind `pubsubWorker.autoscaling.enabled`. The chart **fails to render** a multi-replica worker (`replicaCount > 1` or autoscaling on) while `idempotency.backend == memory`, making the split-brain misconfiguration impossible to ship.
+
+### Changed
+- **Google Chat bot config**: three worker settings — `google_chat_pubsub_idempotency_backend` (`memory` | `postgres`) and `..._ttl_seconds` — plus Helm `pubsubWorker.idempotency.*` / `pubsubWorker.autoscaling.*` values. Documented in [Google Chat: Pub/Sub Setup](docs/integrations/google-chat-pubsub.md#idempotency-why-a-redelivery-wont-double-act).
+
 ## [0.1.11] - 2026-06-21
 
 ### Added

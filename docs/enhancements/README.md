@@ -26,7 +26,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | P2 | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | proposed | High | Medium |
 | P2 | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | proposed | Medium | Medium |
 | P3 | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | proposed | Medium | Medium |
-| P0 | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | proposed | Medium | High |
+| P0 | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | **completed** | Medium | High |
 
 ## How to Read These Proposals
 

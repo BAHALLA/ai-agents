@@ -1,0 +1,47 @@
+{{- if and .Values.pubsubWorker.enabled .Values.pubsubWorker.autoscaling.enabled -}}
+{{- /*
+  Backlog-based HPA for the Pub/Sub worker. CPU/memory are poor signals here
+  (the worker is I/O-bound on LLM calls); the meaningful signal is the number of
+  undelivered messages on the subscription. Requires the GKE custom-metrics
+  (Stackdriver) adapter so the External metric is available to the HPA. See
+  docs/integrations/google-chat-pubsub.md.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "orrery-assistant.pubsubWorker.fullname" . }}
+  labels:
+    {{- include "orrery-assistant.pubsubWorker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "orrery-assistant.pubsubWorker.fullname" . }}
+  minReplicas: {{ .Values.pubsubWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.pubsubWorker.autoscaling.maxReplicas }}
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: pubsub.googleapis.com|subscription|num_undelivered_messages
+          selector:
+            matchLabels:
+              resource.labels.subscription_id: {{ required "config.GOOGLE_CHAT_PUBSUB_SUBSCRIPTION is required for the Pub/Sub worker HPA" (index .Values.config "GOOGLE_CHAT_PUBSUB_SUBSCRIPTION") | quote }}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.pubsubWorker.autoscaling.targetBacklogPerPod | quote }}
+  behavior:
+    scaleUp:
+      # The custom-metrics adapter polls ~every 60s, so scaling is not instant.
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+{{- end }}

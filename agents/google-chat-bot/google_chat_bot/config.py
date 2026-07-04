@@ -70,6 +70,17 @@ class GoogleChatBotConfig(AgentConfig):
     # short enough that a stuck run is reclaimed in reasonable time.
     google_chat_pubsub_handler_timeout_seconds: int = 600
 
+    # Idempotency guard. Pub/Sub is at-least-once, so a redelivered event
+    # would double-run @destructive tools. The worker claims each event id
+    # before dispatching and drops duplicates. ``memory`` is process-local
+    # (single replica only); ``postgres`` shares the claim across replicas
+    # via the platform's DATABASE_URL and is required for replicaCount > 1.
+    google_chat_pubsub_idempotency_backend: str = "memory"
+
+    # Claim TTL (seconds). Match the subscription's message_retention_duration
+    # so a redelivery anywhere in the retention window is still short-circuited.
+    google_chat_pubsub_idempotency_ttl_seconds: int = 3600
+
     @property
     def valid_identities(self) -> frozenset[str]:
         return frozenset(

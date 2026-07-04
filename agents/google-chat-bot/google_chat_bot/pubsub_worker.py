@@ -43,6 +43,12 @@ from orrery_core.serving.health import HealthServer
 
 from .app import build_handler, config
 from .handler import GoogleChatHandler
+from .idempotency import (
+    IdempotencyStore,
+    InMemoryIdempotencyStore,
+    create_idempotency_store,
+    extract_event_id,
+)
 
 logger = logging.getLogger("google_chat_bot.pubsub_worker")
 
@@ -84,27 +90,41 @@ def make_callback(
     loop: asyncio.AbstractEventLoop,
     *,
     timeout_seconds: float,
+    store: IdempotencyStore | None = None,
+    idempotency_ttl_seconds: int = 3600,
 ) -> CallbackType:
     """Build a Pub/Sub message callback bound to *handler* and *loop*.
 
     The returned callable runs in the SubscriberClient's worker thread
     pool. It dispatches the decoded event into *loop* and waits for the
     coroutine to finish so it can ``ack`` or ``nack`` correctly.
+
+    Before dispatching, it **claims** the event id in *store*. Pub/Sub is
+    at-least-once, so a redelivered event whose claim is still live is acked and
+    dropped without re-invoking the handler — this is what prevents a redelivery
+    from double-running ``@destructive`` tools. If the handler then fails, the
+    claim is **released** so redelivery can legitimately retry the work.
     """
 
+    # Default to a process-local store so direct callers get single-replica
+    # dedup for free; run() always passes an explicit (possibly Postgres) store.
+    if store is None:
+        store = InMemoryIdempotencyStore()
+
+    def _run(coro: Any) -> Any:
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
     def callback(message: Any) -> None:
+        msg_id = getattr(message, "message_id", "?")
         # 0. Log receipt for debugging.
-        logger.info("Received Pub/Sub message_id=%s", getattr(message, "message_id", "?"))
+        logger.info("Received Pub/Sub message_id=%s", msg_id)
 
         # 1. Decode payload. Malformed messages are unrecoverable —
         #    redelivery would just re-raise — so we ack and drop.
         try:
             event = json.loads(message.data.decode("utf-8"))
         except UnicodeDecodeError, json.JSONDecodeError:
-            logger.exception(
-                "Dropping malformed Pub/Sub payload (message_id=%s)",
-                getattr(message, "message_id", "?"),
-            )
+            logger.exception("Dropping malformed Pub/Sub payload (message_id=%s)", msg_id)
             message.ack()
             return
 
@@ -116,35 +136,73 @@ def make_callback(
             message.ack()
             return
 
-        # 2. Run the async handler on the main event loop and wait. The
+        # 2. Idempotency guard. Claim the event id before doing any work; a
+        #    duplicate (already processed, or in flight elsewhere) is acked and
+        #    dropped so it cannot re-run destructive tools.
+        event_id = extract_event_id(event)
+        try:
+            claimed = _run(store.claim(event_id, ttl_seconds=idempotency_ttl_seconds))
+        except Exception:
+            # A store outage must not silently disable dedup on a destructive
+            # path — nack so the message is retried once the store recovers.
+            logger.exception(
+                "Idempotency store error claiming event_id=%s; nacking message_id=%s",
+                event_id,
+                msg_id,
+            )
+            message.nack()
+            return
+        if not claimed:
+            logger.info(
+                "Duplicate event_id=%s (message_id=%s); acking without re-executing",
+                event_id,
+                msg_id,
+            )
+            message.ack()
+            return
+
+        # 3. Run the async handler on the main event loop and wait. The
         #    callback thread blocks here, which is what keeps Pub/Sub
         #    flow control honest: at most ``max_messages`` callbacks
-        #    are in flight at once.
+        #    are in flight at once. On failure, release the claim so the
+        #    redelivered message can be retried instead of dropped.
         future = asyncio.run_coroutine_threadsafe(handler.handle_event(event), loop)
         try:
             future.result(timeout=timeout_seconds)
         except TimeoutError:
-            # The handler is still running; cancel it so resources are
-            # freed, and let Pub/Sub redeliver to a fresh worker.
             future.cancel()
+            _release_quietly(store, event_id, loop)
             logger.warning(
                 "Handler exceeded %.1fs; nacking message_id=%s for redelivery",
                 timeout_seconds,
-                getattr(message, "message_id", "?"),
+                msg_id,
             )
             message.nack()
             return
         except Exception:
-            logger.exception(
-                "Handler raised; nacking message_id=%s for redelivery",
-                getattr(message, "message_id", "?"),
-            )
+            _release_quietly(store, event_id, loop)
+            logger.exception("Handler raised; nacking message_id=%s for redelivery", msg_id)
             message.nack()
             return
 
         message.ack()
 
     return callback
+
+
+def _release_quietly(
+    store: IdempotencyStore, event_id: str, loop: asyncio.AbstractEventLoop
+) -> None:
+    """Best-effort claim release on the handler failure path.
+
+    If the release itself fails, the claim simply lingers until its TTL expires —
+    at worst that drops one legitimate redelivery, which is the safe direction
+    for a destructive-tool guard.
+    """
+    try:
+        asyncio.run_coroutine_threadsafe(store.release(event_id), loop).result()
+    except Exception:
+        logger.exception("Failed to release idempotency claim for event_id=%s", event_id)
 
 
 def _build_health_server(streaming_pull_future_ref: dict[str, Any]) -> HealthServer:
@@ -184,6 +242,18 @@ async def run() -> None:
     health_server.start(port=health_port)
     logger.info("Pub/Sub worker health server listening on :%d", health_port)
 
+    # Build the idempotency store up front so a misconfiguration (e.g. the
+    # postgres backend with no DATABASE_URL) fails fast at startup, not on the
+    # first destructive event.
+    store = create_idempotency_store(
+        backend=config.google_chat_pubsub_idempotency_backend,
+    )
+    logger.info(
+        "Idempotency guard: backend=%s ttl=%ds",
+        config.google_chat_pubsub_idempotency_backend,
+        config.google_chat_pubsub_idempotency_ttl_seconds,
+    )
+
     flow_control = pubsub_v1.types.FlowControl(
         max_messages=config.google_chat_pubsub_max_messages,
     )
@@ -191,6 +261,8 @@ async def run() -> None:
         handler,
         loop,
         timeout_seconds=config.google_chat_pubsub_handler_timeout_seconds,
+        store=store,
+        idempotency_ttl_seconds=config.google_chat_pubsub_idempotency_ttl_seconds,
     )
 
     streaming_pull_future = subscriber.subscribe(

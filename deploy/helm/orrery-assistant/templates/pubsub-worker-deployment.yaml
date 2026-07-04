@@ -1,4 +1,15 @@
 {{- if .Values.pubsubWorker.enabled -}}
+{{- /*
+  Safety guard: the in-memory idempotency backend is process-local, so it cannot
+  deduplicate Pub/Sub redeliveries across replicas — a redelivered event on a
+  second pod would double-run @destructive tools. Refuse to render a multi-replica
+  worker (explicit replicaCount > 1, or autoscaling enabled) on backend "memory".
+*/}}
+{{- if eq .Values.pubsubWorker.idempotency.backend "memory" }}
+{{- if or (gt (int .Values.pubsubWorker.replicaCount) 1) .Values.pubsubWorker.autoscaling.enabled }}
+{{- fail "pubsubWorker.idempotency.backend=memory cannot run with more than one replica (replicaCount > 1 or autoscaling.enabled). Set idempotency.backend=postgres for multi-replica dedup." }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -48,6 +59,13 @@ spec:
                 name: {{ include "orrery-assistant.fullname" . }}
             - secretRef:
                 name: {{ include "orrery-assistant.secretName" . }}
+          env:
+            # Idempotency guard (AEP-018). The postgres backend reuses DATABASE_URL
+            # from the secret above; memory is single-replica only (guarded above).
+            - name: GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_BACKEND
+              value: {{ .Values.pubsubWorker.idempotency.backend | quote }}
+            - name: GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_TTL_SECONDS
+              value: {{ .Values.pubsubWorker.idempotency.ttlSeconds | quote }}
           ports:
             - name: health
               containerPort: {{ .Values.pubsubWorker.healthPort }}

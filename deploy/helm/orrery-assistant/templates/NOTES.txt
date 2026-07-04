@@ -26,3 +26,15 @@ WARNING: DATABASE_URL appears to be SQLite. SQLite does not support
 concurrent writers — you MUST use PostgreSQL for multi-replica deployments.
 {{- end }}
 {{- end }}
+
+{{- if .Values.pubsubWorker.enabled }}
+
+Pub/Sub worker: idempotency backend = {{ .Values.pubsubWorker.idempotency.backend }}
+{{- if eq .Values.pubsubWorker.idempotency.backend "memory" }}
+  (single-replica only — redeliveries are deduped per-process. Switch to
+  `postgres` before scaling the worker; the chart will otherwise refuse to
+  render more than one replica.)
+{{- else }}
+  (shared via DATABASE_URL — safe for multiple replicas / backlog autoscaling.)
+{{- end }}
+{{- end }}

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from google_chat_bot import pubsub_worker
+from google_chat_bot.idempotency import InMemoryIdempotencyStore
 
 
 class FakeMessage:
@@ -92,6 +93,89 @@ async def test_callback_nacks_when_handler_raises():
 
     assert msg.nacked is True
     assert msg.acked is False
+
+
+# ── Idempotency (AEP-018) ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_duplicate_event_acked_without_reinvoking_handler(handler):
+    """A redelivered event (same eventId) is acked and dropped, not re-run."""
+    loop = asyncio.get_running_loop()
+    store = InMemoryIdempotencyStore()
+    callback = pubsub_worker.make_callback(handler, loop, timeout_seconds=5, store=store)
+
+    event = {"eventId": "evt-dup", "type": "MESSAGE", "message": {"argumentText": "restart api"}}
+    data = json.dumps(event).encode("utf-8")
+
+    first = FakeMessage(data, message_id="m1")
+    second = FakeMessage(data, message_id="m2")  # same logical event, redelivered
+    await asyncio.to_thread(callback, first)
+    await asyncio.to_thread(callback, second)
+
+    # Handler ran exactly once; both deliveries were acked (neither nacked).
+    handler.handle_event.assert_awaited_once_with(event)
+    assert first.acked is True and first.nacked is False
+    assert second.acked is True and second.nacked is False
+
+
+@pytest.mark.asyncio
+async def test_distinct_events_both_processed(handler):
+    """Different events are not confused for duplicates."""
+    loop = asyncio.get_running_loop()
+    store = InMemoryIdempotencyStore()
+    callback = pubsub_worker.make_callback(handler, loop, timeout_seconds=5, store=store)
+
+    a = FakeMessage(json.dumps({"eventId": "a"}).encode("utf-8"), message_id="ma")
+    b = FakeMessage(json.dumps({"eventId": "b"}).encode("utf-8"), message_id="mb")
+    await asyncio.to_thread(callback, a)
+    await asyncio.to_thread(callback, b)
+
+    assert handler.handle_event.await_count == 2
+    assert a.acked and b.acked
+
+
+@pytest.mark.asyncio
+async def test_failed_handler_releases_claim_so_redelivery_retries():
+    """A handler failure releases the claim; the redelivered event is retried."""
+    handler = MagicMock()
+    # First delivery raises; the redelivery succeeds.
+    handler.handle_event = AsyncMock(side_effect=[RuntimeError("boom"), {"text": "ok"}])
+
+    loop = asyncio.get_running_loop()
+    store = InMemoryIdempotencyStore()
+    callback = pubsub_worker.make_callback(handler, loop, timeout_seconds=5, store=store)
+
+    data = json.dumps({"eventId": "evt-retry", "type": "MESSAGE"}).encode("utf-8")
+    first = FakeMessage(data, message_id="m1")
+    redelivery = FakeMessage(data, message_id="m2")
+
+    await asyncio.to_thread(callback, first)
+    assert first.nacked is True and first.acked is False  # released + nacked
+
+    await asyncio.to_thread(callback, redelivery)
+    assert redelivery.acked is True  # claim was released, so it re-ran and succeeded
+    assert handler.handle_event.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_store_claim_error_nacks(handler):
+    """If the idempotency store errors, nack rather than risk a double-run."""
+    loop = asyncio.get_running_loop()
+
+    class BrokenStore:
+        async def claim(self, event_id, *, ttl_seconds):
+            raise RuntimeError("store down")
+
+        async def release(self, event_id):
+            pass
+
+    callback = pubsub_worker.make_callback(handler, loop, timeout_seconds=5, store=BrokenStore())
+    msg = FakeMessage(json.dumps({"eventId": "x"}).encode("utf-8"))
+    await asyncio.to_thread(callback, msg)
+
+    assert msg.nacked is True
+    handler.handle_event.assert_not_awaited()
 
 
 @pytest.mark.asyncio

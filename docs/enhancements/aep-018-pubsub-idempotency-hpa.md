@@ -2,11 +2,20 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
+| **Status** | completed |
 | **Priority** | P0 |
 | **Effort** | Medium (3-5 days) |
 | **Impact** | High |
 | **Dependencies** | AEP-011 (deployment hardening, completed) |
+
+> **Implementation note (completed).** Shipped with a **PostgreSQL** backend
+> instead of Redis — the platform already runs Postgres for sessions/memory, so
+> reusing it avoids standing up a second datastore (the AEP flagged this as the
+> "trivial follow-up"; it became the primary backend). The claim path adds a
+> `release()` step so a *failed* handler retries on redelivery instead of being
+> dropped. The emulator-backed integration test (Step 5) is deferred in favour of
+> unit tests that exercise concurrent claims directly against both backends; the
+> Helm render-guard is a hard `fail` rather than a NOTES-only warning.
 
 ## Gap Analysis
 
