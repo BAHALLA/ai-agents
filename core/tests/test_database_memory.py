@@ -15,7 +15,8 @@ from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.sessions.session import Session
 from google.genai import types
 
-from orrery_core.memory import (
+from orrery_core.persistence.db import DatabaseUnavailableError
+from orrery_core.persistence.memory import (
     DatabaseMemoryService,
     SecureMemoryService,
     _to_sync_url,
@@ -185,16 +186,23 @@ def test_create_memory_service_falls_back_to_in_memory(monkeypatch):
     assert isinstance(svc._inner, InMemoryMemoryService)
 
 
-def test_create_memory_service_rejects_non_postgres(caplog):
-    """A non-PostgreSQL URL (e.g. SQLite) is rejected in favour of in-memory."""
-    with caplog.at_level("WARNING", logger="orrery.memory"):
-        svc = create_memory_service(db_url="sqlite:///whatever.db")
-    assert isinstance(svc._inner, InMemoryMemoryService)
-    assert any("only PostgreSQL is supported" in r.message for r in caplog.records)
+def test_create_memory_service_rejects_non_postgres(monkeypatch):
+    """A non-PostgreSQL URL (e.g. SQLite) fails fast by default."""
+    monkeypatch.delenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", raising=False)
+    with pytest.raises(DatabaseUnavailableError, match="only PostgreSQL is supported"):
+        create_memory_service(db_url="sqlite:///whatever.db")
 
 
-def test_create_memory_service_falls_back_when_db_unreachable(caplog):
-    """An unreachable PostgreSQL degrades to in-memory, not a crash."""
+def test_create_memory_service_raises_when_db_unreachable(monkeypatch):
+    """An unreachable PostgreSQL fails fast, mirroring the session store."""
+    monkeypatch.delenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", raising=False)
+    with pytest.raises(DatabaseUnavailableError, match="PostgreSQL memory store unavailable"):
+        create_memory_service(db_url=_UNREACHABLE_PG)
+
+
+def test_create_memory_service_falls_back_when_fallback_env_set(monkeypatch, caplog):
+    """ORRERY_DB_ALLOW_INMEMORY_FALLBACK opts into the in-memory fallback."""
+    monkeypatch.setenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", "1")
     with caplog.at_level("WARNING", logger="orrery.memory"):
         svc = create_memory_service(db_url=_UNREACHABLE_PG)
     assert isinstance(svc, SecureMemoryService)
@@ -203,8 +211,9 @@ def test_create_memory_service_falls_back_when_db_unreachable(caplog):
 
 
 @pytest.mark.asyncio
-async def test_service_usable_after_fallback():
-    """After falling back, the service still stores and recalls (in-memory)."""
+async def test_service_usable_after_fallback(monkeypatch):
+    """After falling back (opt-in), the service still stores and recalls."""
+    monkeypatch.setenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", "1")
     svc = create_memory_service(db_url=_UNREACHABLE_PG)
     await svc.add_session_to_memory(_make_session([_make_event("still works", "e1")], "app_x"))
     result = await svc.search_memory(app_name="app_x", user_id="test_user", query="works")

@@ -13,7 +13,7 @@ from google.adk.models.base_llm import BaseLlm
 from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 
-from .log import setup_logging
+from ..observability.log import setup_logging
 
 logger = logging.getLogger("orrery.base")
 

@@ -8,7 +8,7 @@ from typing import Any
 import requests
 
 from orrery_core import AgentConfig, confirm, destructive
-from orrery_core.validation import (
+from orrery_core.security.validation import (
     MAX_LOG_LINES,
     MAX_QUERY_LENGTH,
     validate_list,

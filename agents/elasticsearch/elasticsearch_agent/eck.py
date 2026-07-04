@@ -21,7 +21,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, ToolResult, default_registry
-from orrery_core.validation import K8S_NAME_PATTERN, validate_string
+from orrery_core.security.validation import K8S_NAME_PATTERN, validate_string
 
 logger = logging.getLogger(__name__)
 

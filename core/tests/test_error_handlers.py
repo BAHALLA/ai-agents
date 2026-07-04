@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from orrery_core.error_handlers import graceful_model_error, graceful_tool_error
+from orrery_core.reliability.error_handlers import graceful_model_error, graceful_tool_error
 
 # ── graceful_tool_error ───────────────────────────────────────────────
 

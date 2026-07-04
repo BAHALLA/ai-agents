@@ -1,4 +1,4 @@
-"""Tests for orrery_core.guardrails."""
+"""Tests for orrery_core.security.guardrails."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 from hypothesis import given
 from hypothesis import strategies as st
 
-from orrery_core.guardrails import (
+from orrery_core.security.guardrails import (
     _CONFIRMATION_TTL,
     _hash_args,
     confirm,

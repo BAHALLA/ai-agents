@@ -1,4 +1,4 @@
-"""Tests for orrery_core.events.extract_reply_text."""
+"""Tests for orrery_core.serving.events.extract_reply_text."""
 
 from __future__ import annotations
 

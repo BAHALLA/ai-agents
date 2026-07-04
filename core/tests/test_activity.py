@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from orrery_core.activity import activity_tracker
+from orrery_core.observability.activity import activity_tracker
 
 
 def _make_tool_context(state=None):

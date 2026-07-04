@@ -19,7 +19,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from orrery_core import ToolResult, default_registry
-from orrery_core.validation import (
+from orrery_core.security.validation import (
     K8S_NAME_PATTERN,
     validate_positive_int,
     validate_string,

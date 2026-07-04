@@ -40,9 +40,13 @@ from google.adk.sessions.session import Session
 from google.genai import types
 from sqlalchemy.exc import SQLAlchemyError
 
-from .db import is_postgres_url
+from ..observability.log import mask_dsn
+from .db import (
+    DatabaseUnavailableError,
+    _inmemory_fallback_allowed,
+    is_postgres_url,
+)
 from .db import to_sync_url as _to_sync_url
-from .log import mask_dsn
 
 logger = logging.getLogger("orrery.memory")
 
@@ -341,6 +345,17 @@ class DatabaseMemoryService(BaseMemoryService):
                 .where(
                     _memory_events.c.app_name == app_name,
                     _memory_events.c.user_id == user_id,
+                    # Prefilter in SQL to avoid pulling a user's entire history
+                    # into Python. ``search_text`` is space-joined word tokens,
+                    # so an ILIKE substring match is a superset of the exact
+                    # word match below (bound params — no injection risk); the
+                    # Python check then drops any substring false-positives.
+                    sa.or_(
+                        *(
+                            _memory_events.c.search_text.ilike(f"%{word}%")
+                            for word in words_in_query
+                        )
+                    ),
                 )
                 .order_by(_memory_events.c.ts, _memory_events.c.id)
             )
@@ -409,10 +424,13 @@ def create_memory_service(
     2. ``DATABASE_URL`` environment variable (the same store used for sessions).
     3. Fallback to a process-local :class:`InMemoryMemoryService` (non-durable).
 
-    Only PostgreSQL is supported for persistence; a non-PostgreSQL URL is
-    rejected in favour of in-memory. If PostgreSQL is configured but
-    **unreachable** (e.g. not running yet), this logs a warning and falls back
-    to the in-memory store rather than crashing startup.
+    Only PostgreSQL is supported for persistence. When a database URL is
+    configured but cannot be honored (non-PostgreSQL, or PostgreSQL that is
+    unreachable), this **fails fast** by raising
+    :class:`~orrery_core.db.DatabaseUnavailableError` — mirroring the session
+    store, so a pod does not come up "healthy" while hoarding recall in local
+    memory. Set ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1`` to opt into the
+    in-memory fallback for local development.
 
     The result is always wrapped in a :class:`SecureMemoryService` so secret
     redaction and per-save trimming apply regardless of the backend.
@@ -424,27 +442,39 @@ def create_memory_service(
     """
     resolved = db_url or os.getenv("DATABASE_URL")
     inner: BaseMemoryService
-    if resolved and not is_postgres_url(resolved):
-        logger.warning(
-            "Unsupported database URL %s — only PostgreSQL is supported. Using in-memory recall.",
-            mask_dsn(resolved),
-        )
-        inner = InMemoryMemoryService()
-    elif resolved:
-        try:
-            inner = DatabaseMemoryService(db_url=resolved)
-        except SQLAlchemyError as exc:
-            logger.warning(
-                "PostgreSQL memory store unavailable (%s: %s) — falling back to "
-                "in-memory recall, which is lost on restart and not shared across "
-                "replicas. Start PostgreSQL (e.g. `make infra-up`) to persist memory.",
-                type(exc).__name__,
-                exc,
-            )
-            inner = InMemoryMemoryService()
-    else:
+    if not resolved:
         logger.info("Using in-memory memory store — recall will be lost on restart")
         inner = InMemoryMemoryService()
+    else:
+        allow_fallback = _inmemory_fallback_allowed()
+        if not is_postgres_url(resolved):
+            reason = f"unsupported database URL {mask_dsn(resolved)} — only PostgreSQL is supported"
+            if not allow_fallback:
+                raise DatabaseUnavailableError(
+                    f"PostgreSQL memory store unavailable ({reason}). Set "
+                    "ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1 to allow in-memory recall (local dev)."
+                )
+            logger.warning("%s — falling back to in-memory recall.", reason)
+            inner = InMemoryMemoryService()
+        else:
+            try:
+                inner = DatabaseMemoryService(db_url=resolved)
+            except SQLAlchemyError as exc:
+                if not allow_fallback:
+                    raise DatabaseUnavailableError(
+                        f"PostgreSQL memory store unavailable ({type(exc).__name__}: {exc}). "
+                        "Refusing to start on non-durable in-memory recall while DATABASE_URL "
+                        "is set. Fix the database connection, or set "
+                        "ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1 to allow the fallback (local dev)."
+                    ) from exc
+                logger.warning(
+                    "PostgreSQL memory store unavailable (%s: %s) — falling back to "
+                    "in-memory recall, which is lost on restart and not shared across "
+                    "replicas. Verify DATABASE_URL points at a reachable PostgreSQL instance.",
+                    type(exc).__name__,
+                    exc,
+                )
+                inner = InMemoryMemoryService()
     return SecureMemoryService(
         inner=inner,
         max_entries_per_user=max_entries_per_user,

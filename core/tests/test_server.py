@@ -1,4 +1,4 @@
-"""Tests for orrery_core.server (FastAPI HTTP front door)."""
+"""Tests for orrery_core.serving.server (FastAPI HTTP front door)."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from orrery_core.auth import AUTH_STATE_KEY, JWTConfig  # noqa: E402
-from orrery_core.server import ServerConfig, create_app  # noqa: E402
+from orrery_core.security.auth import AUTH_STATE_KEY, JWTConfig  # noqa: E402
+from orrery_core.serving.server import ServerConfig, create_app  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -60,9 +60,9 @@ def patched_runner(mock_session):
     session_service.last_state_delta = None
 
     with (
-        patch("orrery_core.gateway.Runner", return_value=runner),
-        patch("orrery_core.gateway.App", return_value=MagicMock()),
-        patch("orrery_core.server.create_session_service", return_value=session_service),
+        patch("orrery_core.serving.gateway.Runner", return_value=runner),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service", return_value=session_service),
     ):
         yield session_service
 
@@ -174,9 +174,9 @@ def test_chat_excludes_thinking_parts(mock_session):
     session_service.get_session = AsyncMock(return_value=None)
 
     with (
-        patch("orrery_core.gateway.Runner", return_value=runner),
-        patch("orrery_core.gateway.App", return_value=MagicMock()),
-        patch("orrery_core.server.create_session_service", return_value=session_service),
+        patch("orrery_core.serving.gateway.Runner", return_value=runner),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service", return_value=session_service),
     ):
         config = ServerConfig(auth_enabled=False, jwt=JWTConfig(algorithm="HS256", secret="x"))
         app = create_app(root_agent=MagicMock(), app_name="test", plugins=[], config=config)
@@ -253,7 +253,7 @@ def test_server_config_from_env(monkeypatch):
 
 def test_auth_enabled_with_missing_secret_fails_fast(patched_runner):
     """create_app must fail at startup when auth_enabled=True but JWT is misconfigured."""
-    from orrery_core.auth import AuthError
+    from orrery_core.security.auth import AuthError
 
     config = ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=None))
     with pytest.raises(AuthError, match="JWT_SECRET"):

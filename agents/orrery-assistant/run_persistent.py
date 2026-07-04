@@ -14,7 +14,7 @@ import asyncio
 
 from orrery_assistant.agent import root_agent
 from orrery_core import default_plugins, run_persistent
-from orrery_core.runner import create_context_cache_config
+from orrery_core.serving.runner import create_context_cache_config
 
 if __name__ == "__main__":
     asyncio.run(

@@ -20,9 +20,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from orrery_core import tracing
-from orrery_core.log import JSONFormatter, request_id_var
-from orrery_core.tracing import REQUEST_ID_STATE_KEY, TracingPlugin, configure_tracing
+from orrery_core.observability import tracing
+from orrery_core.observability.log import JSONFormatter, request_id_var
+from orrery_core.observability.tracing import REQUEST_ID_STATE_KEY, TracingPlugin, configure_tracing
 
 from .conftest import FakeState, FakeTool
 

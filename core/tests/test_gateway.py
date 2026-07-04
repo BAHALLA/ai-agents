@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orrery_core.gateway import (
+from orrery_core.serving.gateway import (
     AgentGateway,
     ExplicitSessionResolver,
     InboundMessage,
@@ -44,9 +44,9 @@ def _make_gateway(*, run_events=None, resolver=None) -> tuple[AgentGateway, dict
     runner.run_async = fake_run_async
 
     with (
-        patch("orrery_core.gateway.App", return_value=MagicMock()),
-        patch("orrery_core.gateway.Runner", return_value=runner),
-        patch("orrery_core.gateway.create_session_service", return_value=MagicMock()),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.gateway.Runner", return_value=runner),
+        patch("orrery_core.serving.gateway.create_session_service", return_value=MagicMock()),
     ):
         gw = AgentGateway(
             app_name="test",

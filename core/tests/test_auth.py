@@ -1,4 +1,4 @@
-"""Tests for orrery_core.auth."""
+"""Tests for orrery_core.security.auth."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from orrery_core.auth import (
+from orrery_core.security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
     AuthError,
@@ -19,7 +19,7 @@ from orrery_core.auth import (
     extract_role,
     verify_token,
 )
-from orrery_core.rbac import USER_ROLE_STATE_KEY
+from orrery_core.security.rbac import USER_ROLE_STATE_KEY
 
 # ── extract_role ─────────────────────────────────────────────────────
 
@@ -218,7 +218,7 @@ class TestVerifyTokenRS256:
         )
 
         # Clear the module-level JWKS client cache so this test is isolated.
-        from orrery_core import auth
+        from orrery_core.security import auth
 
         auth._jwks_clients.clear()
 

@@ -1,10 +1,10 @@
-"""Tests for orrery_core.secrets."""
+"""Tests for orrery_core.security.secrets."""
 
 from __future__ import annotations
 
 import pytest
 
-from orrery_core.secrets import FileBackend, SecretsBackend, SecretsManager
+from orrery_core.security.secrets import FileBackend, SecretsBackend, SecretsManager
 
 # ── FileBackend ──────────────────────────────────────────────────────
 

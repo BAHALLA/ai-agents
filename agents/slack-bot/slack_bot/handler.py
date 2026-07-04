@@ -58,20 +58,27 @@ class SlackAgentHandler:
         self.channel_ref["channel"] = channel
         self.channel_ref["thread_ts"] = thread_ts
 
+        # Resolve the role on *every* turn so long-lived threads pick up
+        # permission changes, then re-stamp it via state_delta below — matching
+        # the Google Chat and HTTP surfaces. Without this, a thread's role would
+        # be frozen at whatever it was when the session was first created.
+        role = self._config.resolve_role(user_id)
+
         # Resolve or create ADK session for this thread
         session_id = self.session_map.get(channel, thread_ts)
         if session_id is None:
-            role = self._config.resolve_role(user_id)
-            initial_state: dict[str, object] = {}
-            set_user_role(initial_state, role)
             session = await self.gateway.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
-                state=initial_state,
             )
             session_id = session.id
             self.session_map.set(channel, thread_ts, session_id)
             logger.info("New session for user=%s role=%s", user_id, role)
+
+        # Per-turn identity: set_user_role stamps user_role + the server-trusted
+        # lock flag so GuardrailsPlugin honors it instead of resetting to viewer.
+        turn_state: dict[str, object] = {}
+        set_user_role(turn_state, role)
 
         # Run the turn through the shared gateway pipeline.
         try:
@@ -79,6 +86,7 @@ class SlackAgentHandler:
                 user_id=user_id,
                 session_id=session_id,
                 text=text,
+                state_delta=turn_state,
             )
         except Exception:
             logger.exception("Agent runner error")

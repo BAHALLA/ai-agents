@@ -18,7 +18,7 @@ Just Work because they all resolve to the same secret on disk:
     make dev-token-viewer
 
 Pick a role with ``--role``; the token's ``roles`` claim is read by
-``orrery_core.auth.extract_role`` and mapped to viewer/operator/admin.
+``orrery_core.security.auth.extract_role`` and mapped to viewer/operator/admin.
 
 This script is a LOCAL DEV HELPER. Do not use the default secret or the
 generated ``~/.cache/orrery/jwt-secret`` file for anything other than

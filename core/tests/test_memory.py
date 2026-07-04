@@ -10,7 +10,7 @@ from google.adk.memory.memory_entry import MemoryEntry
 from google.adk.sessions.session import Session
 from google.genai import types
 
-from orrery_core.memory import SecureMemoryService
+from orrery_core.persistence.memory import SecureMemoryService
 
 
 def _make_event(text: str, event_id: str = "evt-1", author: str = "user") -> Event:

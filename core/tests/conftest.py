@@ -20,7 +20,7 @@ _TEST_DB_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
 @pytest.fixture
 def postgres_url() -> str:
     """A reachable PostgreSQL URL, or skip the test."""
-    from orrery_core.db import database_reachable, is_postgres_url
+    from orrery_core.persistence.db import database_reachable, is_postgres_url
 
     if not _TEST_DB_URL or not is_postgres_url(_TEST_DB_URL):
         pytest.skip("No PostgreSQL TEST_DATABASE_URL/DATABASE_URL configured")
@@ -36,7 +36,7 @@ def pg_app(postgres_url: str):
     A per-test ``app_name`` keeps tests isolated while sharing one database, so
     they never see or clobber each other's (or real) memory rows.
     """
-    from orrery_core.db import to_sync_url
+    from orrery_core.persistence.db import to_sync_url
 
     app_name = f"pytest_{uuid.uuid4().hex[:12]}"
     yield postgres_url, app_name

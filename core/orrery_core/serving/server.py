@@ -51,8 +51,8 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
     ) from exc
 
-from .auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
-from .db import create_session_service
+from ..persistence.db import create_session_service
+from ..security.auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
 
 logger = logging.getLogger("orrery.server")

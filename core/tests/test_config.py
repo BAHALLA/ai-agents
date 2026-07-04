@@ -1,11 +1,11 @@
-"""Tests for orrery_core.config."""
+"""Tests for orrery_core.agent.config."""
 
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from orrery_core.config import AgentConfig, load_config
+from orrery_core.agent.config import AgentConfig, load_config
 
 
 @pytest.fixture(autouse=True)

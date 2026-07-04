@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from orrery_core.metrics import (
+from orrery_core.observability.metrics import (
     CIRCUIT_BREAKER_STATE,
     LLM_TOKENS_TOTAL,
     TOOL_CALLS_TOTAL,
@@ -230,7 +230,7 @@ class TestOnToolErrorCallback:
 
 class TestCircuitBreakerGauge:
     def test_updates_gauge_on_before_callback(self):
-        from orrery_core.resilience import CircuitBreaker
+        from orrery_core.reliability.resilience import CircuitBreaker
 
         breaker = CircuitBreaker(failure_threshold=2)
         mc = MetricsCollector(circuit_breaker=breaker)
@@ -240,7 +240,7 @@ class TestCircuitBreakerGauge:
         assert CIRCUIT_BREAKER_STATE.labels(tool="cb_tool")._value.get() == 0  # closed
 
     def test_reflects_open_state(self):
-        from orrery_core.resilience import CircuitBreaker
+        from orrery_core.reliability.resilience import CircuitBreaker
 
         breaker = CircuitBreaker(failure_threshold=2)
         breaker._record_failure("open_tool")
@@ -280,9 +280,9 @@ class TestTrackLlmTokens:
 
 
 class TestStartServer:
-    @patch("orrery_core.metrics.start_http_server")
+    @patch("orrery_core.observability.metrics.start_http_server")
     def test_starts_server_default_port(self, mock_start):
-        import orrery_core.metrics as m
+        import orrery_core.observability.metrics as m
 
         m._server_started = False
         mc = MetricsCollector()
@@ -290,9 +290,9 @@ class TestStartServer:
         mock_start.assert_called_once_with(9200)
         m._server_started = False  # reset for other tests
 
-    @patch("orrery_core.metrics.start_http_server")
+    @patch("orrery_core.observability.metrics.start_http_server")
     def test_idempotent_across_instances(self, mock_start):
-        import orrery_core.metrics as m
+        import orrery_core.observability.metrics as m
 
         m._server_started = False
         mc1 = MetricsCollector()
@@ -303,9 +303,9 @@ class TestStartServer:
         m._server_started = False
 
     @patch.dict("os.environ", {"METRICS_PORT": "9300"})
-    @patch("orrery_core.metrics.start_http_server")
+    @patch("orrery_core.observability.metrics.start_http_server")
     def test_reads_port_from_env(self, mock_start):
-        import orrery_core.metrics as m
+        import orrery_core.observability.metrics as m
 
         m._server_started = False
         mc = MetricsCollector()

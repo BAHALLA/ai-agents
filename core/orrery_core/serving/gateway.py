@@ -40,7 +40,7 @@ from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.workflow import Workflow
 from google.genai import types
 
-from .db import create_session_service
+from ..persistence.db import create_session_service
 from .events import extract_reply_text
 
 # An async callback invoked once per runner event (e.g. to render progress).

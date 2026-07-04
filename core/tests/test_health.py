@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from orrery_core.health import HealthServer
+from orrery_core.serving.health import HealthServer
 
 
 class TestHealthServerChecks:
@@ -44,10 +44,10 @@ class TestHealthServerChecks:
 
 
 class TestHealthServerStart:
-    @patch("orrery_core.health.HTTPServer")
-    @patch("orrery_core.health.threading.Thread")
+    @patch("orrery_core.serving.health.HTTPServer")
+    @patch("orrery_core.serving.health.threading.Thread")
     def test_start_creates_server(self, mock_thread_cls, mock_http_cls):
-        import orrery_core.health as health_mod
+        import orrery_core.serving.health as health_mod
 
         health_mod._server_started = False
         try:
@@ -59,10 +59,10 @@ class TestHealthServerStart:
         finally:
             health_mod._server_started = False
 
-    @patch("orrery_core.health.HTTPServer")
-    @patch("orrery_core.health.threading.Thread")
+    @patch("orrery_core.serving.health.HTTPServer")
+    @patch("orrery_core.serving.health.threading.Thread")
     def test_start_only_once(self, mock_thread_cls, mock_http_cls):
-        import orrery_core.health as health_mod
+        import orrery_core.serving.health as health_mod
 
         health_mod._server_started = False
         try:
@@ -74,10 +74,10 @@ class TestHealthServerStart:
             health_mod._server_started = False
 
     @patch.dict("os.environ", {"HEALTH_PORT": "7777"})
-    @patch("orrery_core.health.HTTPServer")
-    @patch("orrery_core.health.threading.Thread")
+    @patch("orrery_core.serving.health.HTTPServer")
+    @patch("orrery_core.serving.health.threading.Thread")
     def test_reads_env_port(self, mock_thread_cls, mock_http_cls):
-        import orrery_core.health as health_mod
+        import orrery_core.serving.health as health_mod
 
         health_mod._server_started = False
         try:

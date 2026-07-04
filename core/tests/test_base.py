@@ -1,11 +1,11 @@
-"""Tests for orrery_core.base — model resolution and agent creation."""
+"""Tests for orrery_core.agent.base — model resolution and agent creation."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 from google.adk.planners import BuiltInPlanner, PlanReActPlanner
 
-from orrery_core.base import resolve_model, resolve_planner
+from orrery_core.agent.base import resolve_model, resolve_planner
 
 # ── resolve_model ────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ class TestResolveModel:
         result = resolve_model()
         assert result == "gemini-2.5-pro"
 
-    @patch("orrery_core.base.LiteLlm", create=True)
+    @patch("orrery_core.agent.base.LiteLlm", create=True)
     def test_anthropic_provider(self, mock_litellm_cls, monkeypatch):
         self._clean_env(monkeypatch)
         monkeypatch.setenv("MODEL_PROVIDER", "anthropic")
@@ -62,7 +62,7 @@ class TestResolveModel:
         assert result is mock_instance
         mock_litellm_cls.assert_called_once_with(model="anthropic/claude-sonnet-4-20250514")
 
-    @patch("orrery_core.base.LiteLlm", create=True)
+    @patch("orrery_core.agent.base.LiteLlm", create=True)
     def test_provider_prefix_auto_added(self, mock_litellm_cls, monkeypatch):
         self._clean_env(monkeypatch)
         monkeypatch.setenv("MODEL_PROVIDER", "openai")

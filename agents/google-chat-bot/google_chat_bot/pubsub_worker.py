@@ -39,7 +39,7 @@ from typing import Any
 
 from google.cloud import pubsub_v1
 
-from orrery_core.health import HealthServer
+from orrery_core.serving.health import HealthServer
 
 from .app import build_handler, config
 from .handler import GoogleChatHandler

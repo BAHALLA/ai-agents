@@ -18,11 +18,11 @@ from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.workflow import Workflow
 
-from .db import create_session_service
+from ..observability.log import mask_dsn
+from ..persistence.db import create_session_service
+from ..security.rbac import set_user_role
 from .gateway import AgentGateway
 from .health import HealthServer
-from .log import mask_dsn
-from .rbac import set_user_role
 
 logger = logging.getLogger("orrery.runner")
 
@@ -111,7 +111,7 @@ async def run_persistent(
     # Co-locate long-term memory with the session store so recall persists too
     # when PostgreSQL is configured. Callers can still pass an explicit override.
     if memory_service is None:
-        from .memory import create_memory_service
+        from ..persistence.memory import create_memory_service
 
         memory_service = create_memory_service(db_url=resolved_db_url)
 

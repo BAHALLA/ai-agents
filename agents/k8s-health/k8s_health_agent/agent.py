@@ -1,5 +1,5 @@
 from orrery_core import create_agent, load_agent_env
-from orrery_core.guardrails import require_confirmation
+from orrery_core.security.guardrails import require_confirmation
 
 from .operators import (
     describe_custom_resource,

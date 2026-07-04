@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from orrery_core import confirm, destructive
-from orrery_core.validation import (
+from orrery_core.security.validation import (
     MAX_LOG_LINES,
     validate_path,
     validate_positive_int,

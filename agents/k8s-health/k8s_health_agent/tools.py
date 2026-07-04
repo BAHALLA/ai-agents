@@ -9,7 +9,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, confirm, destructive
-from orrery_core.validation import (
+from orrery_core.security.validation import (
     K8S_NAME_PATTERN,
     MAX_LOG_LINES,
     MAX_REPLICAS,

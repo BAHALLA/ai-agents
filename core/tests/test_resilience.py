@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orrery_core.resilience import (
+from orrery_core.reliability.resilience import (
     CircuitBreaker,
     CircuitState,
     with_retry,
@@ -47,7 +47,7 @@ class TestCircuitBreakerState:
         assert cb.state("tool_a") == CircuitState.OPEN
 
         # Simulate time passing
-        with patch("orrery_core.resilience.time") as mock_time:
+        with patch("orrery_core.reliability.resilience.time") as mock_time:
             mock_time.monotonic.return_value = cb._opened_at["tool_a"] + 11.0
             assert cb.state("tool_a") == CircuitState.HALF_OPEN
 
@@ -326,7 +326,7 @@ class TestWithRetryAsync:
             return "ok"
 
         async def run_with_mock():
-            with patch("orrery_core.resilience.asyncio.sleep") as mock_sleep:
+            with patch("orrery_core.reliability.resilience.asyncio.sleep") as mock_sleep:
                 mock_sleep.return_value = None
                 await flaky()
                 assert mock_sleep.called

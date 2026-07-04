@@ -1,10 +1,10 @@
-"""Tests for orrery_core.audit."""
+"""Tests for orrery_core.observability.audit."""
 
 import json
 import logging
 from pathlib import Path
 
-from orrery_core.audit import _sanitize, _sanitize_args, audit_logger
+from orrery_core.observability.audit import _sanitize, _sanitize_args, audit_logger
 
 
 def test_audit_logger_writes_jsonl(tmp_path: Path, fake_tool, fake_ctx):

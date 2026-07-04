@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orrery_core.config import AgentConfig
+from orrery_core.agent.config import AgentConfig
 
 
 class GoogleChatBotConfig(AgentConfig):

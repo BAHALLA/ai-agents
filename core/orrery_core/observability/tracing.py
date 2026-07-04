@@ -71,9 +71,9 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 
+from ..security.rbac import USER_ROLE_STATE_KEY
 from .log import request_id_var
 from .metrics import track_llm_tokens
-from .rbac import USER_ROLE_STATE_KEY
 
 logger = logging.getLogger("orrery.tracing")
 

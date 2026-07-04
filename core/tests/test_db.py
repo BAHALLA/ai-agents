@@ -8,10 +8,12 @@ no server.
 
 from __future__ import annotations
 
+import pytest
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
-from orrery_core.db import (
+from orrery_core.persistence.db import (
+    DatabaseUnavailableError,
     create_session_service,
     database_reachable,
     is_postgres_url,
@@ -67,15 +69,30 @@ def test_create_session_service_in_memory_when_no_url():
     assert isinstance(create_session_service(None), InMemorySessionService)
 
 
-def test_create_session_service_rejects_non_postgres(caplog):
-    with caplog.at_level("WARNING", logger="orrery.db"):
-        svc = create_session_service("sqlite:///whatever.db")
-    assert isinstance(svc, InMemorySessionService)
-    assert any("only PostgreSQL is supported" in r.message for r in caplog.records)
+def test_create_session_service_rejects_non_postgres(monkeypatch):
+    """A non-PostgreSQL URL is a misconfiguration — fail fast by default."""
+    monkeypatch.delenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", raising=False)
+    with pytest.raises(DatabaseUnavailableError, match="only PostgreSQL is supported"):
+        create_session_service("sqlite:///whatever.db")
 
 
-def test_create_session_service_falls_back_when_unreachable(caplog):
+def test_create_session_service_raises_when_unreachable_by_default(monkeypatch):
+    """A configured-but-unreachable DB fails fast so pods CrashLoopBackOff."""
+    monkeypatch.delenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", raising=False)
+    with pytest.raises(DatabaseUnavailableError, match="database unreachable"):
+        create_session_service(_UNREACHABLE_PG)
+
+
+def test_create_session_service_falls_back_when_fallback_env_set(monkeypatch, caplog):
+    """ORRERY_DB_ALLOW_INMEMORY_FALLBACK opts into the in-memory fallback."""
+    monkeypatch.setenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", "1")
     with caplog.at_level("WARNING", logger="orrery.db"):
         svc = create_session_service(_UNREACHABLE_PG)
     assert isinstance(svc, InMemorySessionService)
     assert any("falling back to in-memory sessions" in r.message for r in caplog.records)
+
+
+def test_create_session_service_falls_back_when_allow_fallback_arg():
+    """The explicit allow_fallback argument overrides the env default."""
+    svc = create_session_service(_UNREACHABLE_PG, allow_fallback=True)
+    assert isinstance(svc, InMemorySessionService)

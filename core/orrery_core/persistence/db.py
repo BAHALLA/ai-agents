@@ -16,6 +16,7 @@ hard when, say, Postgres isn't running yet.
 from __future__ import annotations
 
 import logging
+import os
 
 import sqlalchemy as sa
 from google.adk.sessions.base_session_service import BaseSessionService
@@ -24,9 +25,30 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
-from .log import mask_dsn
+from ..observability.log import mask_dsn
 
 logger = logging.getLogger("orrery.db")
+
+# Env flag that opts a configured-but-unavailable database into an in-memory
+# fallback instead of a hard failure. Off by default so production fails fast.
+_FALLBACK_ENV = "ORRERY_DB_ALLOW_INMEMORY_FALLBACK"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+class DatabaseUnavailableError(RuntimeError):
+    """Raised when a configured ``DATABASE_URL`` cannot be honored.
+
+    Surfacing this instead of silently degrading to an in-memory store lets an
+    orchestrator (Kubernetes) keep the pod in ``CrashLoopBackOff`` until the
+    database is genuinely ready, rather than admitting traffic to a pod that
+    hoards sessions in local memory (split-brain across replicas, data lost on
+    restart).
+    """
+
+
+def _inmemory_fallback_allowed() -> bool:
+    """True if the in-memory fallback is explicitly opted into via env."""
+    return os.getenv(_FALLBACK_ENV, "").strip().lower() in _TRUTHY
 
 
 def is_postgres_url(url: str) -> bool:
@@ -80,18 +102,56 @@ def database_reachable(db_url: str, *, connect_timeout: int = 5) -> bool:
         engine.dispose()
 
 
-def create_session_service(db_url: str | None, *, connect_timeout: int = 5) -> BaseSessionService:
+def _session_fallback_or_raise(reason: str, *, allow_fallback: bool) -> BaseSessionService:
+    """Either raise (fail-fast) or degrade to an in-memory session store.
+
+    When ``DATABASE_URL`` is set the operator asked for durable, shared
+    sessions, so an unavailable store is fatal by default: raising here keeps a
+    Kubernetes pod in ``CrashLoopBackOff`` until Postgres is ready instead of
+    admitting traffic to a pod whose sessions are trapped in local memory.
+    ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1`` opts into the in-memory fallback for
+    local development.
+    """
+    if not allow_fallback:
+        raise DatabaseUnavailableError(
+            f"PostgreSQL session store unavailable ({reason}). Refusing to start "
+            "on a non-durable in-memory store while DATABASE_URL is set — a silent "
+            "fallback would split sessions across replicas and lose them on restart. "
+            "Fix the database connection, or set "
+            f"{_FALLBACK_ENV}=1 to allow the in-memory fallback (local dev only)."
+        )
+    logger.warning(
+        "PostgreSQL session store unavailable (%s) — falling back to in-memory sessions "
+        "(lost on restart, not shared across replicas). Verify DATABASE_URL points at a "
+        "reachable PostgreSQL instance to persist sessions.",
+        reason,
+    )
+    return InMemorySessionService()
+
+
+def create_session_service(
+    db_url: str | None,
+    *,
+    connect_timeout: int = 5,
+    allow_fallback: bool | None = None,
+) -> BaseSessionService:
     """Build a session service: in-memory, or PostgreSQL when configured.
 
     Resolution:
 
     - No ``db_url`` → :class:`InMemorySessionService` (fine for local single
       process; a warning notes it is non-durable).
-    - Non-PostgreSQL ``db_url`` → rejected (SQLite and friends are unsupported);
-      falls back to in-memory with a warning.
+    - Non-PostgreSQL ``db_url`` → rejected (SQLite and friends are unsupported).
     - Reachable PostgreSQL ``db_url`` → :class:`DatabaseSessionService`.
-    - Configured but **unreachable** ``db_url`` → in-memory fallback plus a
-      warning, rather than crashing startup.
+    - Configured but **unreachable/unusable** ``db_url`` → fail fast by raising
+      :class:`DatabaseUnavailableError`, unless the in-memory fallback is opted
+      into (``allow_fallback`` / ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1``).
+
+    Args:
+        db_url: PostgreSQL URL, or ``None`` for an in-memory store.
+        connect_timeout: Seconds to wait for the reachability probe.
+        allow_fallback: Force the in-memory fallback on/off. Defaults to the
+            ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK`` env flag.
     """
     if not db_url:
         logger.warning(
@@ -100,30 +160,23 @@ def create_session_service(db_url: str | None, *, connect_timeout: int = 5) -> B
         )
         return InMemorySessionService()
 
-    if not is_postgres_url(db_url):
-        logger.warning(
-            "Unsupported database URL %s — only PostgreSQL is supported. "
-            "Falling back to in-memory sessions.",
-            mask_dsn(db_url),
-        )
-        return InMemorySessionService()
+    allow = _inmemory_fallback_allowed() if allow_fallback is None else allow_fallback
 
-    fallback_reason: str | None = None
+    if not is_postgres_url(db_url):
+        return _session_fallback_or_raise(
+            f"unsupported database URL {mask_dsn(db_url)} — only PostgreSQL is supported",
+            allow_fallback=allow,
+        )
+
     if database_reachable(db_url, connect_timeout=connect_timeout):
         try:
             service = DatabaseSessionService(db_url=to_async_url(db_url))
         except Exception as exc:  # ADK wraps engine/driver errors as ValueError
-            fallback_reason = f"session store init failed ({type(exc).__name__}: {exc})"
-        else:
-            logger.info("Using PostgreSQL session store: %s", mask_dsn(db_url))
-            return service
-    else:
-        fallback_reason = "database unreachable"
+            return _session_fallback_or_raise(
+                f"session store init failed ({type(exc).__name__}: {exc})",
+                allow_fallback=allow,
+            )
+        logger.info("Using PostgreSQL session store: %s", mask_dsn(db_url))
+        return service
 
-    logger.warning(
-        "PostgreSQL session store unavailable (%s) — falling back to in-memory sessions "
-        "(lost on restart, not shared across replicas). Start PostgreSQL "
-        "(e.g. `make infra-up`) to persist sessions.",
-        fallback_reason,
-    )
-    return InMemorySessionService()
+    return _session_fallback_or_raise("database unreachable", allow_fallback=allow)

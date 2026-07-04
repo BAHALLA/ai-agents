@@ -27,7 +27,7 @@ def mock_runner():
 @pytest.fixture
 def gateway(mock_runner, mock_session_service):
     """A real AgentGateway wrapping the mock runner + session service."""
-    with patch("orrery_core.gateway.App"), patch("orrery_core.gateway.Runner"):
+    with patch("orrery_core.serving.gateway.App"), patch("orrery_core.serving.gateway.Runner"):
         gw = AgentGateway(
             app_name=APP_NAME,
             root_agent=MagicMock(),

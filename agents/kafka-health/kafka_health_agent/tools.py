@@ -9,7 +9,7 @@ from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicP
 from confluent_kafka.admin import AdminClient, NewPartitions, NewTopic, OffsetSpec
 
 from orrery_core import AgentConfig, confirm, destructive, with_retry
-from orrery_core.validation import (
+from orrery_core.security.validation import (
     KAFKA_TOPIC_PATTERN,
     MAX_PARTITIONS,
     MAX_REPLICATION_FACTOR,
