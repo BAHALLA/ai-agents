@@ -104,7 +104,7 @@ Or from the repo root:
 ```bash
 make run-assistant              # ADK Dev UI (in-memory state)
 make run-assistant-cli          # Terminal mode (in-memory state)
-make run-assistant-persistent   # Terminal with SQLite persistence
+make run-assistant-persistent   # Terminal with persistence (in-memory, or PostgreSQL via DATABASE_URL)
 make run-assistant-api          # FastAPI front door with JWT auth (dev secret)
 make run-triage                 # Run the deterministic triage Workflow once (batch)
 ```
@@ -120,5 +120,6 @@ and `app:*` state across sessions:
 make run-assistant-persistent
 ```
 
-This uses `DatabaseSessionService` with a local SQLite file, so notes and preferences
-survive restarts. Type `new` to start a fresh session while keeping long-term state.
+Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` and
+`DatabaseSessionService` keeps notes and preferences across restarts. Type `new`
+to start a fresh session while keeping long-term state.

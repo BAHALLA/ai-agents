@@ -38,8 +38,8 @@ def mask_dsn(url: str) -> str:
 
     >>> mask_dsn("postgresql+asyncpg://alice:s3cret@db:5432/agents")
     'postgresql+asyncpg://alice:[REDACTED]@db:5432/agents'
-    >>> mask_dsn("sqlite:///local.db")
-    'sqlite:///local.db'
+    >>> mask_dsn("postgresql://db:5432/agents")
+    'postgresql://db:5432/agents'
     """
     return _DSN_PASSWORD_RE.sub(r"\1[REDACTED]\2", url)
 

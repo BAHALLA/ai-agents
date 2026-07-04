@@ -1,5 +1,5 @@
 from orrery_assistant.agent import root_agent
-from orrery_core import SecureMemoryService, default_plugins
+from orrery_core import create_memory_service, default_plugins
 from orrery_core.runner import create_context_cache_config
 from orrery_core.server import ServerConfig, create_app
 
@@ -9,6 +9,8 @@ api = create_app(
     app_name="orrery",
     plugins=default_plugins(enable_auth=config.auth_enabled, enable_memory=True),
     config=config,
-    memory_service=SecureMemoryService(),
+    # Persist long-term memory in the same database as sessions when configured
+    # (via DATABASE_URL); falls back to in-memory recall otherwise.
+    memory_service=create_memory_service(db_url=config.database_url),
     context_cache_config=create_context_cache_config(),
 )

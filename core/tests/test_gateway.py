@@ -1,0 +1,198 @@
+"""Tests for the shared channel gateway (orrery_core/gateway.py)."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from orrery_core.gateway import (
+    AgentGateway,
+    ExplicitSessionResolver,
+    InboundMessage,
+    MappedSessionResolver,
+    OutboundReply,
+)
+
+
+def _event(text: str, *, thought: bool = False):
+    """A minimal fake runner event compatible with extract_reply_text."""
+    part = SimpleNamespace(text=text, thought=thought)
+    return SimpleNamespace(content=SimpleNamespace(parts=[part]))
+
+
+def _make_gateway(*, run_events=None, resolver=None) -> tuple[AgentGateway, dict]:
+    """Build a gateway over a fake runner; return it plus a capture dict.
+
+    The runner is a plain MagicMock (patched in as ``gateway.Runner``) whose
+    ``run_async`` records its kwargs, so tests can assert what the gateway
+    forwarded without reaching into the typed gateway.
+    """
+    events = run_events if run_events is not None else [_event("hello")]
+    captured: dict = {}
+
+    async def fake_run_async(*, user_id, session_id, new_message, state_delta=None):
+        captured["user_id"] = user_id
+        captured["session_id"] = session_id
+        captured["state_delta"] = state_delta
+        captured["text"] = new_message.parts[0].text
+        for ev in events:
+            yield ev
+
+    runner = MagicMock()
+    runner.run_async = fake_run_async
+
+    with (
+        patch("orrery_core.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.gateway.Runner", return_value=runner),
+        patch("orrery_core.gateway.create_session_service", return_value=MagicMock()),
+    ):
+        gw = AgentGateway(
+            app_name="test",
+            root_agent=MagicMock(),
+            plugins=[],
+            session_resolver=resolver,
+        )
+    return gw, captured
+
+
+# ── run_in_session ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_in_session_collects_reply_and_forwards_state_delta():
+    gw, captured = _make_gateway(run_events=[_event("Hello "), _event("world")])
+    reply = await gw.run_in_session(
+        user_id="u1", session_id="s1", text="hi", state_delta={"user_role": "admin"}
+    )
+    assert isinstance(reply, OutboundReply)
+    assert reply.text == "Hello world"
+    assert reply.session_id == "s1"
+    assert captured["state_delta"] == {"user_role": "admin"}
+    assert captured["text"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_run_in_session_skips_thought_parts():
+    gw, _ = _make_gateway(run_events=[_event("thinking...", thought=True), _event("answer")])
+    reply = await gw.run_in_session(user_id="u1", session_id="s1", text="hi")
+    assert reply.text == "answer"
+
+
+@pytest.mark.asyncio
+async def test_run_in_session_invokes_on_event_per_event():
+    events = [_event("a"), _event("b")]
+    gw, _ = _make_gateway(run_events=events)
+    seen = []
+
+    async def on_event(ev):
+        seen.append(ev)
+
+    await gw.run_in_session(user_id="u1", session_id="s1", text="hi", on_event=on_event)
+    assert seen == events
+
+
+# ── run (with resolver) ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_resolves_session_then_runs():
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="resolved-sid")
+    gw, captured = _make_gateway(resolver=resolver)
+
+    msg = InboundMessage(
+        text="hi",
+        user_id="u1",
+        conversation_key="chan:thread",
+        channel="slack",
+        state_delta={"user_role": "operator"},
+    )
+    reply = await gw.run(msg)
+
+    resolver.resolve.assert_awaited_once()
+    assert reply.session_id == "resolved-sid"
+    assert captured["session_id"] == "resolved-sid"
+    assert captured["state_delta"] == {"user_role": "operator"}
+
+
+# ── dispatch (parse → run → deliver) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ignores_unparseable_payload():
+    gw, _ = _make_gateway()
+    adapter = MagicMock()
+    adapter.parse = AsyncMock(return_value=None)
+    adapter.deliver = AsyncMock()
+
+    assert await gw.dispatch(adapter, {"junk": True}) is None
+    adapter.deliver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_parses_runs_and_delivers():
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="sid-1")
+    gw, _ = _make_gateway(run_events=[_event("pong")], resolver=resolver)
+
+    msg = InboundMessage(text="ping", user_id="u1", conversation_key="k", channel="http")
+    adapter = MagicMock(spec=["name", "parse", "deliver"])
+    adapter.parse = AsyncMock(return_value=msg)
+    adapter.deliver = AsyncMock(return_value={"ok": True})
+
+    result = await gw.dispatch(adapter, raw={"text": "ping"})
+
+    adapter.parse.assert_awaited_once_with({"text": "ping"})
+    deliver_call = adapter.deliver.await_args
+    assert deliver_call is not None
+    delivered_reply, delivered_msg = deliver_call.args
+    assert delivered_reply.text == "pong"
+    assert delivered_msg is msg
+    assert result == {"ok": True}
+
+
+# ── Resolvers ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mapped_resolver_creates_once_then_reuses():
+    svc = MagicMock()
+    svc.create_session = AsyncMock(
+        side_effect=[SimpleNamespace(id="new-1"), SimpleNamespace(id="new-2")]
+    )
+    r = MappedSessionResolver()
+
+    a = await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:thread")
+    b = await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:thread")
+    assert a == b == "new-1"
+    svc.create_session.assert_awaited_once()
+
+    # After forgetting, a new session is created.
+    r.forget("chan:thread")
+    c = await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:thread")
+    assert c == "new-2"
+
+
+@pytest.mark.asyncio
+async def test_explicit_resolver_reuses_existing_and_creates_when_absent():
+    svc = MagicMock()
+    svc.get_session = AsyncMock(return_value=SimpleNamespace(id="existing"))
+    svc.create_session = AsyncMock(return_value=SimpleNamespace(id="fresh"))
+    r = ExplicitSessionResolver()
+
+    # Known id → reused.
+    assert (
+        await r.resolve(session_service=svc, app_name="a", user_id="u", key="existing")
+        == "existing"
+    )
+
+    # Empty key → new session, no lookup.
+    svc.get_session.reset_mock()
+    assert await r.resolve(session_service=svc, app_name="a", user_id="u", key="") == "fresh"
+    svc.get_session.assert_not_called()
+
+    # Unknown id → new session.
+    svc.get_session = AsyncMock(return_value=None)
+    assert await r.resolve(session_service=svc, app_name="a", user_id="u", key="ghost") == "fresh"

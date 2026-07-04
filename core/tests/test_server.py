@@ -39,8 +39,10 @@ def mock_session():
 def patched_runner(mock_session):
     """Patch the ADK Runner + session service in server.create_app."""
 
-    async def fake_run_async(*, user_id, session_id, new_message):
-        # Yield a single event with response text echoing the input.
+    async def fake_run_async(*, user_id, session_id, new_message, state_delta=None):
+        # Record the per-turn state_delta (where identity now travels), then
+        # yield a single event echoing the input.
+        session_service.last_state_delta = state_delta
         text = new_message.parts[0].text
         event = MagicMock()
         part = MagicMock()
@@ -55,11 +57,12 @@ def patched_runner(mock_session):
     session_service = MagicMock()
     session_service.create_session = AsyncMock(return_value=mock_session)
     session_service.get_session = AsyncMock(return_value=None)
+    session_service.last_state_delta = None
 
     with (
-        patch("orrery_core.server.Runner", return_value=runner),
-        patch("orrery_core.server.App", return_value=MagicMock()),
-        patch("orrery_core.server.InMemorySessionService", return_value=session_service),
+        patch("orrery_core.gateway.Runner", return_value=runner),
+        patch("orrery_core.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.server.create_session_service", return_value=session_service),
     ):
         yield session_service
 
@@ -141,19 +144,19 @@ def test_chat_with_valid_token_dispatches_to_runner(app_with_auth, patched_runne
     assert body["session_id"] == "sess-1"
     assert body["response"] == "echo:hello"
 
-    # Session was created under the JWT subject and seeded with _auth.
+    # Session was created under the JWT subject; identity is carried per-turn
+    # in state_delta (applied before the agent runs) rather than seeded at create.
     patched_runner.create_session.assert_called_once()
-    call = patched_runner.create_session.call_args
-    assert call.kwargs["user_id"] == "alice"
-    seeded = call.kwargs["state"]
-    assert seeded[AUTH_STATE_KEY]["subject"] == "alice"
-    assert seeded[AUTH_STATE_KEY]["role"] == "operator"
+    assert patched_runner.create_session.call_args.kwargs["user_id"] == "alice"
+    delta = patched_runner.last_state_delta
+    assert delta[AUTH_STATE_KEY]["subject"] == "alice"
+    assert delta[AUTH_STATE_KEY]["role"] == "operator"
 
 
 def test_chat_excludes_thinking_parts(mock_session):
     """Gemini planner thought parts must not appear in the /chat response."""
 
-    async def fake_run_async(*, user_id, session_id, new_message):
+    async def fake_run_async(*, user_id, session_id, new_message, state_delta=None):
         event = MagicMock()
         thought = MagicMock()
         thought.text = "Let me reason about this..."
@@ -171,9 +174,9 @@ def test_chat_excludes_thinking_parts(mock_session):
     session_service.get_session = AsyncMock(return_value=None)
 
     with (
-        patch("orrery_core.server.Runner", return_value=runner),
-        patch("orrery_core.server.App", return_value=MagicMock()),
-        patch("orrery_core.server.InMemorySessionService", return_value=session_service),
+        patch("orrery_core.gateway.Runner", return_value=runner),
+        patch("orrery_core.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.server.create_session_service", return_value=session_service),
     ):
         config = ServerConfig(auth_enabled=False, jwt=JWTConfig(algorithm="HS256", secret="x"))
         app = create_app(root_agent=MagicMock(), app_name="test", plugins=[], config=config)
@@ -206,8 +209,8 @@ def test_chat_reuses_existing_session_and_restamps_auth(app_with_auth, patched_r
     )
 
     assert r.status_code == 200
-    # Auth context was re-stamped with the latest verified role.
-    assert existing.state[AUTH_STATE_KEY]["role"] == "admin"
+    # Auth context is re-stamped each turn via state_delta with the latest role.
+    assert patched_runner.last_state_delta[AUTH_STATE_KEY]["role"] == "admin"
     patched_runner.create_session.assert_not_called()
 
 
@@ -229,10 +232,10 @@ def test_chat_without_token_when_auth_disabled(app_no_auth, patched_runner):
     client = TestClient(app_no_auth)
     r = client.post("/chat", json={"message": "hi"})
     assert r.status_code == 200
-    # Anonymous user is assigned viewer role.
-    seeded = patched_runner.create_session.call_args.kwargs["state"]
-    assert seeded[AUTH_STATE_KEY]["role"] == "viewer"
-    assert seeded[AUTH_STATE_KEY]["subject"].startswith("anonymous:")
+    # Anonymous user is assigned viewer role, carried in state_delta.
+    delta = patched_runner.last_state_delta
+    assert delta[AUTH_STATE_KEY]["role"] == "viewer"
+    assert delta[AUTH_STATE_KEY]["subject"].startswith("anonymous:")
 
 
 # ── ServerConfig ─────────────────────────────────────────────────────

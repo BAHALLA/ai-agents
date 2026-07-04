@@ -79,8 +79,8 @@ Check the `orrery_llm_tokens_total` Prometheus counter and the cache hit rate. C
 ## Sessions & storage
 
 ### Sessions not persisting across restarts
-- `DATABASE_URL` isn't being read. The startup logs should print `Using database session store: postgresql+asyncpg://...[REDACTED]@...`. If they say `Using SQLite session store`, the env var isn't wired (check the Secret is mounted via `envFrom` in K8s).
-- SQLite is single-writer and **will** corrupt under multi-replica load. Use Postgres for anything with >1 replica.
+- `DATABASE_URL` isn't being read. The startup logs should print `Using PostgreSQL session store: postgresql+asyncpg://...[REDACTED]@...`. If they say `Using in-memory session store`, the env var isn't wired (check the Secret is mounted via `envFrom` in K8s).
+- In-memory sessions are per-process and lost on restart. Use PostgreSQL for anything with >1 replica (SQLite is not supported).
 
 ### `Session not found` (Google Chat)
 The bot uses `auto_create_session=True`, so this shouldn't normally fire. If it does, confirm `DATABASE_URL` is valid (or unset, which triggers the in-memory fallback).

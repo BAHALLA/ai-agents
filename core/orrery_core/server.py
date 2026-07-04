@@ -34,18 +34,12 @@ import logging
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
-from google.adk.apps import App
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
-from google.adk.runners import Runner
-from google.adk.sessions.database_session_service import DatabaseSessionService
-from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.workflow import Workflow
-from google.genai import types as genai_types
 
 try:
     from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -58,8 +52,8 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
     ) from exc
 
 from .auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
-from .events import extract_reply_text
-from .log import mask_dsn
+from .db import create_session_service
+from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
 
 logger = logging.getLogger("orrery.server")
 
@@ -147,23 +141,19 @@ def create_app(
             "RBAC is meaningless without verified identity."
         )
 
-    if cfg.database_url:
-        logger.info("Using database session store: %s", mask_dsn(cfg.database_url))
-        session_service: Any = DatabaseSessionService(db_url=cfg.database_url)
-    else:
-        logger.warning(
-            "Using in-memory session store — sessions will be lost on restart "
-            "and cannot be shared across replicas."
-        )
-        session_service = InMemorySessionService()
-
-    adk_app = App(
-        name=app_name,
+    # The gateway owns the shared turn pipeline (runner, session mapping, run
+    # loop, reply extraction). This HTTP surface is one ChannelAdapter over it.
+    # Probe the configured database and fall back to in-memory sessions (with a
+    # warning) when it is unset or unreachable, rather than crashing at startup.
+    gateway = AgentGateway(
+        app_name=app_name,
         root_agent=root_agent,
         plugins=list(plugins or []),
+        session_service=create_session_service(cfg.database_url),
+        memory_service=memory_service,
         context_cache_config=context_cache_config,
+        session_resolver=ExplicitSessionResolver(),
     )
-    runner = Runner(app=adk_app, session_service=session_service, memory_service=memory_service)
 
     api = FastAPI(title=f"{app_name} (orrery)", docs_url="/docs", redoc_url=None)
 
@@ -218,36 +208,17 @@ def create_app(
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
-        user_id = auth.subject
-
-        session = None
-        if body.session_id:
-            session = await session_service.get_session(
-                app_name=app_name, user_id=user_id, session_id=body.session_id
-            )
-
-        if session is None:
-            initial_state: dict[str, Any] = {AUTH_STATE_KEY: auth.as_state()}
-            session = await session_service.create_session(
-                app_name=app_name, user_id=user_id, state=initial_state
-            )
-        else:
-            # Re-stamp auth context so a long-lived session inherits the
-            # latest verified role (the token may have been re-minted with
-            # a different role since the session was created).
-            session.state[AUTH_STATE_KEY] = auth.as_state()
-
-        message = genai_types.Content(
-            role="user",
-            parts=[genai_types.Part.from_text(text=body.message)],
+        # Identity travels in state_delta each turn (applied before the agent
+        # runs), so a long-lived session always inherits the latest verified
+        # role and AuthPlugin resolves RBAC from it.
+        msg = InboundMessage(
+            text=body.message,
+            user_id=auth.subject,
+            conversation_key=body.session_id or "",
+            channel="http",
+            state_delta={AUTH_STATE_KEY: auth.as_state()},
         )
-
-        response_text = ""
-        async for event in runner.run_async(
-            user_id=user_id, session_id=session.id, new_message=message
-        ):
-            response_text += extract_reply_text(event)
-
-        return ChatResponse(session_id=session.id, response=response_text)
+        reply = await gateway.run(msg)
+        return ChatResponse(session_id=reply.session_id, response=reply.text)
 
     return api

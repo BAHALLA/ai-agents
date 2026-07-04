@@ -4,8 +4,9 @@ version = "0.1.11"
 description = "Agent demonstrating memory and state patterns in ADK"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
-    "aiosqlite>=0.20.0",
+    # [postgres] provides the psycopg2 + asyncpg drivers for PostgreSQL-backed
+    # sessions and memory. No DATABASE_URL → in-memory.
+    "orrery-core[postgres]",
 ]
 
 [tool.uv.sources]

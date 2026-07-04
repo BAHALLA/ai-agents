@@ -2,10 +2,55 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
+
+# A PostgreSQL URL for the persistent-store tests. Only PostgreSQL is supported
+# (SQLite was removed), so these tests skip cleanly when no reachable Postgres
+# is configured — e.g. in CI without a database service.
+_TEST_DB_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+
+
+@pytest.fixture
+def postgres_url() -> str:
+    """A reachable PostgreSQL URL, or skip the test."""
+    from orrery_core.db import database_reachable, is_postgres_url
+
+    if not _TEST_DB_URL or not is_postgres_url(_TEST_DB_URL):
+        pytest.skip("No PostgreSQL TEST_DATABASE_URL/DATABASE_URL configured")
+    if not database_reachable(_TEST_DB_URL):
+        pytest.skip("PostgreSQL not reachable")
+    return _TEST_DB_URL
+
+
+@pytest.fixture
+def pg_app(postgres_url: str):
+    """Yield ``(postgres_url, unique_app_name)`` and clean up memory rows after.
+
+    A per-test ``app_name`` keeps tests isolated while sharing one database, so
+    they never see or clobber each other's (or real) memory rows.
+    """
+    from orrery_core.db import to_sync_url
+
+    app_name = f"pytest_{uuid.uuid4().hex[:12]}"
+    yield postgres_url, app_name
+
+    engine = sa.create_engine(to_sync_url(postgres_url), connect_args={"connect_timeout": 5})
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "DELETE FROM orrery_memory_events WHERE app_name = %(app)s", {"app": app_name}
+            )
+    except SQLAlchemyError:
+        pass  # table may not exist if the test created no rows
+    finally:
+        engine.dispose()
 
 
 class FakeState(dict):

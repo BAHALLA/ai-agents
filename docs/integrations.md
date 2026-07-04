@@ -25,7 +25,7 @@ Brings the same collaborative pattern to Google Workspace, including Workspace A
 
 ### 4. CLI Runner
 A headless interface for terminal-based interactions and CI/CD automation.
-- **Features**: Persistent session support (SQLite or Postgres), structured JSON logging, and a health probe server for readiness checks.
+- **Features**: Persistent session support (in-memory or PostgreSQL), structured JSON logging, and a health probe server for readiness checks.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
 - **Run Commands**: `make run-devops-cli` (ephemeral REPL via `adk run`) or `make run-devops-persistent` (session store + memory + health probes via `run_persistent()`).
 - **Entry point**: [`core.runner.run_persistent`](core/README.md) — this is also what the production container runs.

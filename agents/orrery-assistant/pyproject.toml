@@ -4,14 +4,15 @@ version = "0.1.11"
 description = "DevOps orchestrator that delegates to specialized sub-agents"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
+    # [postgres] provides the psycopg2 (sync probe) + asyncpg (ADK) drivers
+    # for PostgreSQL-backed sessions and memory. No DATABASE_URL → in-memory.
+    "orrery-core[postgres]",
     "docker-agent",
     "elasticsearch-agent",
     "kafka-health-agent",
     "k8s-health-agent",
     "observability-agent",
     "ops-journal",
-    "aiosqlite>=0.20.0",
 ]
 
 [tool.setuptools.packages.find]

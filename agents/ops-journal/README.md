@@ -35,8 +35,8 @@ The `ctx.state` object is **delta-aware**: changes are tracked and only the diff
 
 | Service | Storage | Use case |
 |---------|---------|----------|
-| `InMemorySessionService` | RAM | Development (`adk web` default) |
-| `DatabaseSessionService` | SQLite / PostgreSQL / MySQL | Production |
+| `InMemorySessionService` | RAM | Development (`adk web` default; also used when no `DATABASE_URL`) |
+| `DatabaseSessionService` | PostgreSQL | Production (set `DATABASE_URL`) |
 
 With `adk web`, state resets on restart. Use `run_persistent.py` for true persistence:
 
@@ -44,7 +44,7 @@ With `adk web`, state resets on restart. Use `run_persistent.py` for true persis
 make run-journal-persistent
 ```
 
-This uses `DatabaseSessionService` with a local SQLite file (`ops_journal.db`), so `user:*` and `app:*` state survive across sessions and restarts.
+Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `user:*` and `app:*` state survive across sessions and restarts. SQLite is not supported.
 
 ## Tools
 
@@ -79,7 +79,7 @@ This uses `DatabaseSessionService` with a local SQLite file (`ops_journal.db`), 
 # ADK Dev UI (in-memory state — resets on restart)
 make run-journal
 
-# Terminal mode with SQLite persistence
+# Terminal mode with persistence (in-memory, or PostgreSQL via DATABASE_URL)
 make run-journal-persistent
 ```
 

@@ -12,16 +12,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from google.adk.apps import App
-from google.adk.runners import Runner
-from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
 from slack_bolt.async_app import AsyncApp
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from orrery_core import MetricsPlugin, authorize, default_plugins
+from orrery_core import (
+    AgentGateway,
+    MetricsPlugin,
+    authorize,
+    create_session_service,
+    default_plugins,
+)
 
 from .config import SlackBotConfig
 from .confirmation import ConfirmationStore, slack_confirmation, wire_tool_callbacks
@@ -99,7 +102,7 @@ async def lifespan(app: FastAPI):
     # Import agent here to avoid circular imports at module level
     from orrery_assistant.agent import root_agent
 
-    session_service = DatabaseSessionService(db_url=config.resolve_db_url())
+    session_service = create_session_service(config.resolve_db_url() or None)
 
     # Slack-specific confirmation buttons are kept as agent-level callback.
     # Cross-cutting concerns (RBAC, metrics, audit, etc.) are handled by plugins.
@@ -118,12 +121,15 @@ async def lifespan(app: FastAPI):
     # Use default plugins but skip the guardrail gate (Slack has its own
     # confirmation flow via interactive buttons).
     plugins = default_plugins(guardrail_mode="none")
-    adk_app = App(name=APP_NAME, root_agent=root_agent, plugins=plugins)
-    runner = Runner(app=adk_app, session_service=session_service)
+    gateway = AgentGateway(
+        app_name=APP_NAME,
+        root_agent=root_agent,
+        plugins=plugins,
+        session_service=session_service,
+    )
 
     _handler = SlackAgentHandler(
-        runner=runner,
-        session_service=session_service,
+        gateway=gateway,
         session_map=session_map,
         channel_ref=channel_ref,
         config=config,

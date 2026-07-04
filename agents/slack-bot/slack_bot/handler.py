@@ -5,11 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from google.adk.runners import Runner
-from google.adk.sessions.base_session_service import BaseSessionService
-from google.genai import types
-
-from orrery_core import extract_reply_text, set_user_role
+from orrery_core import AgentGateway, set_user_role
 
 from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
@@ -21,18 +17,21 @@ APP_NAME = "slack_devops"
 
 
 class SlackAgentHandler:
-    """Bridges Slack message events to the ADK Runner."""
+    """Bridges Slack message events to the shared :class:`AgentGateway`.
+
+    This is the Slack channel adapter: it maps a Slack thread to an ADK
+    session (via :class:`SessionMap`), runs the turn through the gateway's
+    shared pipeline, and renders the reply as Slack mrkdwn in-thread.
+    """
 
     def __init__(
         self,
-        runner: Runner,
-        session_service: BaseSessionService,
+        gateway: AgentGateway,
         session_map: SessionMap,
         channel_ref: dict[str, str],
         config: SlackBotConfig | None = None,
     ) -> None:
-        self.runner = runner
-        self.session_service = session_service
+        self.gateway = gateway
         self.session_map = session_map
         self.channel_ref = channel_ref
         self._config = config or SlackBotConfig()
@@ -65,7 +64,7 @@ class SlackAgentHandler:
             role = self._config.resolve_role(user_id)
             initial_state: dict[str, object] = {}
             set_user_role(initial_state, role)
-            session = await self.session_service.create_session(
+            session = await self.gateway.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
                 state=initial_state,
@@ -74,20 +73,13 @@ class SlackAgentHandler:
             self.session_map.set(channel, thread_ts, session_id)
             logger.info("New session for user=%s role=%s", user_id, role)
 
-        message = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=text)],
-        )
-
-        # Run the agent and collect the response
-        response_text = ""
+        # Run the turn through the shared gateway pipeline.
         try:
-            async for event in self.runner.run_async(
+            reply = await self.gateway.run_in_session(
                 user_id=user_id,
                 session_id=session_id,
-                new_message=message,
-            ):
-                response_text += extract_reply_text(event)
+                text=text,
+            )
         except Exception:
             logger.exception("Agent runner error")
             await say(
@@ -96,6 +88,7 @@ class SlackAgentHandler:
             )
             return
 
+        response_text = reply.text
         if not response_text:
             return
 

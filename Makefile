@@ -1,4 +1,4 @@
-.PHONY: help install test eval lint type-check ty fmt infra-up infra-down infra-reset \
+.PHONY: help install test eval lint type-check ty fmt check clean infra-up infra-down infra-reset \
        tracing-up tracing-down \
        docker-build docker-demo docker-down \
        docs-serve docs-build docs-deploy \
@@ -63,6 +63,16 @@ ty: type-check ## Alias for type-check
 fmt: ## Auto-fix lint and format issues
 	uv run ruff check --fix .
 	uv run ruff format .
+
+check: fmt lint ty test ## Run the full quality gate (fmt + lint + ty + test)
+
+clean: ## Remove Python caches, tool caches, and build artifacts (keeps .venv)
+	@echo "▶ Cleaning build artifacts and caches…"
+	find . -type d -name '__pycache__' -not -path './.venv/*' -prune -exec rm -rf {} +
+	find . -type d -name '*.egg-info' -not -path './.venv/*' -prune -exec rm -rf {} +
+	find . -type f -name '*.py[co]' -not -path './.venv/*' -delete
+	rm -rf .pytest_cache .ruff_cache .hypothesis .mypy_cache .coverage htmlcov build dist site
+	@echo "▶ Clean. (.venv preserved — use 'rm -rf .venv' for a full reset.)"
 
 infra-up: ## Start shared infrastructure (Kafka, Prometheus, Loki, Alertmanager)
 	docker compose up -d

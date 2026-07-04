@@ -4,12 +4,13 @@ version = "0.1.11"
 description = "Slack bot integration for the DevOps agent platform"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
+    # [postgres] provides the psycopg2 + asyncpg drivers for PostgreSQL-backed
+    # sessions. No DATABASE_URL / SLACK_DB_URL → in-memory.
+    "orrery-core[postgres]",
     "orrery-assistant",
     "slack-bolt>=1.28.0",
     "fastapi>=0.138.0",
     "uvicorn>=0.49.0",
-    "aiosqlite>=0.20.0",
     "aiohttp>=3.14.1",
     "slowapi>=0.1.10",
 ]

@@ -664,7 +664,7 @@ dependencies = [
     { name = "google-cloud-pubsub", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "orrery-assistant", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "orrery-core", extra = ["postgres"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-settings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
@@ -676,7 +676,7 @@ requires-dist = [
     { name = "google-cloud-pubsub", specifier = ">=2.39.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "orrery-assistant", editable = "agents/orrery-assistant" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["postgres"], editable = "core" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "uvicorn", specifier = ">=0.49.0" },
 ]
@@ -1824,15 +1824,11 @@ name = "ops-journal"
 version = "0.1.11"
 source = { editable = "agents/ops-journal" }
 dependencies = [
-    { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "orrery-core", extra = ["postgres"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20.0" },
-    { name = "orrery-core", editable = "core" },
-]
+requires-dist = [{ name = "orrery-core", extras = ["postgres"], editable = "core" }]
 
 [[package]]
 name = "orrery"
@@ -1925,26 +1921,24 @@ name = "orrery-assistant"
 version = "0.1.11"
 source = { editable = "agents/orrery-assistant" }
 dependencies = [
-    { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "docker-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "elasticsearch-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "k8s-health-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "kafka-health-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "observability-agent", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "ops-journal", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "orrery-core", extra = ["postgres"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "docker-agent", editable = "agents/docker-agent" },
     { name = "elasticsearch-agent", editable = "agents/elasticsearch" },
     { name = "k8s-health-agent", editable = "agents/k8s-health" },
     { name = "kafka-health-agent", editable = "agents/kafka-health" },
     { name = "observability-agent", editable = "agents/observability" },
     { name = "ops-journal", editable = "agents/ops-journal" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["postgres"], editable = "core" },
 ]
 
 [[package]]
@@ -2654,10 +2648,9 @@ version = "0.1.11"
 source = { editable = "agents/slack-bot" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "aiosqlite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "orrery-assistant", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "orrery-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "orrery-core", extra = ["postgres"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "slack-bolt", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "slowapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -2666,10 +2659,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.1" },
-    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "fastapi", specifier = ">=0.138.0" },
     { name = "orrery-assistant", editable = "agents/orrery-assistant" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["postgres"], editable = "core" },
     { name = "slack-bolt", specifier = ">=1.28.0" },
     { name = "slowapi", specifier = ">=0.1.10" },
     { name = "uvicorn", specifier = ">=0.49.0" },

@@ -17,7 +17,9 @@ class SlackBotConfig(AgentConfig):
     slack_signing_secret: str = ""
     slack_app_token: str = ""  # only needed for Socket Mode
     slack_bot_port: int = 3000
-    slack_db_url: str = "sqlite+aiosqlite:///slack_devops.db"
+    # Empty → in-memory sessions. Set to a PostgreSQL URL (or DATABASE_URL) to
+    # persist. SQLite is not supported.
+    slack_db_url: str = ""
 
     # Rate limiting for the /slack/events endpoint (per source IP).
     # Format is slowapi-compatible, e.g. "60/minute" or "5/second".
@@ -34,8 +36,8 @@ class SlackBotConfig(AgentConfig):
         """Return the session-store URL, preferring ``DATABASE_URL`` if set.
 
         When the platform is running on Kubernetes with a shared Postgres,
-        ``DATABASE_URL`` should be set and will take precedence over the
-        legacy ``slack_db_url`` default.
+        ``DATABASE_URL`` should be set and takes precedence over ``slack_db_url``.
+        Empty means an in-memory session store.
         """
         return os.getenv("DATABASE_URL") or self.slack_db_url
 

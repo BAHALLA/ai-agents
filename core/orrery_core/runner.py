@@ -14,15 +14,12 @@ from collections.abc import Sequence
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
-from google.adk.apps import App
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
-from google.adk.runners import Runner
-from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.adk.workflow import Workflow
-from google.genai import types
 
-from .events import extract_reply_text
+from .db import create_session_service
+from .gateway import AgentGateway
 from .health import HealthServer
 from .log import mask_dsn
 from .rbac import set_user_role
@@ -78,51 +75,57 @@ async def run_persistent(
     health_port: int | None = None,
     context_cache_config: ContextCacheConfig | None = None,
 ) -> None:
-    """Run an agent in a persistent CLI loop with SQLite-backed sessions.
+    """Run an agent in a persistent CLI loop backed by in-memory or PostgreSQL.
 
     Args:
         agent: The root agent to run.
         app_name: Application name for session scoping.
-        db_url: SQLAlchemy database URL. Defaults to ``sqlite:///{app_name}.db``.
+        db_url: PostgreSQL URL. When omitted, falls back to ``DATABASE_URL`` and
+            then to an in-memory session store.
         user_id: User ID for session scoping.
         plugins: Optional list of ADK plugins for cross-cutting concerns.
             Use ``default_plugins()`` for the standard set.
         memory_service: Optional memory service for cross-session recall.
-            Use ``SecureMemoryService()`` for dev with redaction and limits.
+            When omitted, a redacting memory service co-located with the session
+            store is created automatically (see ``create_memory_service``), so
+            long-term recall persists when PostgreSQL is configured.
         health_port: Port for the health probe server.  Defaults to the
             ``HEALTH_PORT`` env var or 8080.
         context_cache_config: Optional context caching configuration.
             Use ``create_context_cache_config()`` for env-var-configurable
             defaults.  Only effective with Gemini models.
 
-    Session database resolution order:
+    Session store resolution order:
 
     1. Explicit ``db_url`` argument (highest priority).
-    2. ``DATABASE_URL`` environment variable — use a PostgreSQL URL
-       (``postgresql+asyncpg://user:pass@host:5432/agents``) for
-       multi-instance deployments. SQLite does not support concurrent
-       writers and must not be used when running multiple replicas.
-    3. SQLite fallback ``sqlite:///{app_name}.db`` (single-instance only).
+    2. ``DATABASE_URL`` environment variable — a PostgreSQL URL
+       (``postgresql+asyncpg://user:pass@host:5432/agents``). Required for
+       multi-replica deployments.
+    3. No URL → an in-memory session store (single process, lost on restart).
     """
-    resolved_db_url = db_url or os.getenv("DATABASE_URL") or f"sqlite:///{app_name}.db"
-    if resolved_db_url.startswith("sqlite"):
-        logger.info("Using SQLite session store — not safe for multi-instance deployments")
-    else:
-        logger.info("Using database session store: %s", mask_dsn(resolved_db_url))
+    resolved_db_url = db_url or os.getenv("DATABASE_URL")
+    # Probe first; fall back to an in-memory session store (with a warning) if
+    # PostgreSQL is configured but unreachable, instead of crashing on startup.
+    session_service = create_session_service(resolved_db_url)
 
-    session_service = DatabaseSessionService(db_url=resolved_db_url)
+    # Co-locate long-term memory with the session store so recall persists too
+    # when PostgreSQL is configured. Callers can still pass an explicit override.
+    if memory_service is None:
+        from .memory import create_memory_service
 
-    # Wrap the agent in an ADK App so plugins can be passed via the supported
-    # `app` argument (the `plugins=` kwarg on Runner is deprecated).
+        memory_service = create_memory_service(db_url=resolved_db_url)
+
+    # The gateway owns the shared turn pipeline; this CLI is one surface over it.
     if context_cache_config is not None:
         logger.info("Context caching enabled: %s", context_cache_config)
-    app = App(
-        name=app_name,
+    gateway = AgentGateway(
+        app_name=app_name,
         root_agent=agent,
-        plugins=list(plugins) if plugins else [],
+        plugins=plugins,
+        session_service=session_service,
+        memory_service=memory_service,
         context_cache_config=context_cache_config,
     )
-    runner = Runner(app=app, session_service=session_service, memory_service=memory_service)
 
     # Start health probe server
     health = HealthServer()
@@ -139,17 +142,14 @@ async def run_persistent(
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    initial_state: dict[str, object] = {}
-    set_user_role(initial_state, "admin")  # CLI user gets admin (local dev)
-    session = await session_service.create_session(
-        app_name=app_name,
-        user_id=user_id,
-        state=initial_state,
-    )
+    # CLI user gets admin (local dev). Identity travels per-turn via state_delta.
+    admin_delta: dict[str, object] = {}
+    set_user_role(admin_delta, "admin")
+    session = await session_service.create_session(app_name=app_name, user_id=user_id)
 
     print(f"{agent.name} (persistent mode)")
     print(f"Session: {session.id}")
-    print(f"Database: {mask_dsn(resolved_db_url)}")
+    print(f"Store: {mask_dsn(resolved_db_url) if resolved_db_url else 'in-memory'}")
     print("Type 'quit' to exit, 'new' for a new session.\n")
 
     while not shutdown_event.is_set():
@@ -167,28 +167,17 @@ async def run_persistent(
         if user_input.lower() == "quit":
             break
         if user_input.lower() == "new":
-            new_state: dict[str, object] = {}
-            set_user_role(new_state, "admin")
-            session = await session_service.create_session(
-                app_name=app_name,
-                user_id=user_id,
-                state=new_state,
-            )
+            session = await session_service.create_session(app_name=app_name, user_id=user_id)
             print(f"\n--- New session: {session.id} ---\n")
             continue
 
-        message = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=user_input)],
-        )
-
-        response_text = ""
-        async for event in runner.run_async(
+        reply = await gateway.run_in_session(
             user_id=user_id,
             session_id=session.id,
-            new_message=message,
-        ):
-            response_text += extract_reply_text(event)
+            text=user_input,
+            state_delta=admin_delta,
+        )
+        response_text = reply.text
 
         if response_text:
             print(f"\nAgent: {response_text}\n")

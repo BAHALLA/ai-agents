@@ -50,10 +50,10 @@ def test_json_formatter_extra_fields():
     assert entry["tool_args"] == {"timeout": 10}
 
 
-def test_mask_dsn_sqlite():
+def test_mask_dsn_without_credentials():
     from orrery_core.log import mask_dsn
 
-    url = "sqlite+aiosqlite:///test.db"
+    url = "postgresql+asyncpg://localhost:5432/db"
     assert mask_dsn(url) == url
 
 

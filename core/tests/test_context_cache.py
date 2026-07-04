@@ -70,11 +70,11 @@ class TestRunPersistentCacheConfig:
 
         with (
             patch(
-                "orrery_core.runner.DatabaseSessionService",
+                "orrery_core.runner.create_session_service",
                 return_value=mock_session_service,
             ),
-            patch("orrery_core.runner.App") as mock_app_cls,
-            patch("orrery_core.runner.Runner") as mock_runner_cls,
+            patch("orrery_core.gateway.App") as mock_app_cls,
+            patch("orrery_core.gateway.Runner") as mock_runner_cls,
             patch("orrery_core.runner.HealthServer"),
         ):
             mock_runner = MagicMock()
@@ -89,6 +89,7 @@ class TestRunPersistentCacheConfig:
                     mock_agent,
                     app_name="test_app",
                     context_cache_config=config,
+                    memory_service=MagicMock(),
                 )
 
             # App should have been called with context_cache_config
@@ -108,11 +109,11 @@ class TestRunPersistentCacheConfig:
 
         with (
             patch(
-                "orrery_core.runner.DatabaseSessionService",
+                "orrery_core.runner.create_session_service",
                 return_value=mock_session_service,
             ),
-            patch("orrery_core.runner.App") as mock_app_cls,
-            patch("orrery_core.runner.Runner") as mock_runner_cls,
+            patch("orrery_core.gateway.App") as mock_app_cls,
+            patch("orrery_core.gateway.Runner") as mock_runner_cls,
             patch("orrery_core.runner.HealthServer"),
         ):
             mock_runner = MagicMock()
@@ -125,6 +126,7 @@ class TestRunPersistentCacheConfig:
                 await run_persistent(
                     mock_agent,
                     app_name="test_app",
+                    memory_service=MagicMock(),
                 )
 
             call_kwargs = mock_app_cls.call_args

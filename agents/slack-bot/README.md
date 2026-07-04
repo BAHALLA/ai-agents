@@ -92,7 +92,7 @@ Destructive tools show `:warning:`, confirm tools show `:large_blue_circle:`.
 | New thread | New session |
 | Reply in thread | Continues session |
 
-Sessions are persisted in SQLite (`slack_devops.db`).
+Sessions are in-memory by default; set `SLACK_DB_URL` or `DATABASE_URL` to a PostgreSQL URL to persist them.
 
 ## Configuration Reference
 
@@ -102,7 +102,7 @@ Sessions are persisted in SQLite (`slack_devops.db`).
 | `SLACK_SIGNING_SECRET` | — | App signing secret |
 | `SLACK_APP_TOKEN` | — | App-level token for Socket Mode (`xapp-...`) |
 | `SLACK_BOT_PORT` | `3000` | Port for webhook mode |
-| `SLACK_DB_URL` | `sqlite+aiosqlite:///slack_devops.db` | Session database URL |
+| `SLACK_DB_URL` | _(empty → in-memory)_ | PostgreSQL session URL; `DATABASE_URL` takes precedence |
 
 ## Testing
 

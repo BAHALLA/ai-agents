@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from slack_bot.handler import SlackAgentHandler
+from orrery_core import AgentGateway
+from slack_bot.handler import APP_NAME, SlackAgentHandler
 
 
 @pytest.fixture
@@ -24,10 +25,23 @@ def mock_runner():
 
 
 @pytest.fixture
-def handler(mock_runner, mock_session_service, session_map, channel_ref):
+def gateway(mock_runner, mock_session_service):
+    """A real AgentGateway wrapping the mock runner + session service."""
+    with patch("orrery_core.gateway.App"), patch("orrery_core.gateway.Runner"):
+        gw = AgentGateway(
+            app_name=APP_NAME,
+            root_agent=MagicMock(),
+            plugins=[],
+            session_service=mock_session_service,
+        )
+    gw.runner = mock_runner
+    return gw
+
+
+@pytest.fixture
+def handler(gateway, session_map, channel_ref):
     return SlackAgentHandler(
-        runner=mock_runner,
-        session_service=mock_session_service,
+        gateway=gateway,
         session_map=session_map,
         channel_ref=channel_ref,
     )

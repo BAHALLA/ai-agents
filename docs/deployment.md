@@ -52,9 +52,10 @@ docker buildx build \
 ## Step 2 — Provision Postgres
 
 The Slack bot and the orrery-assistant share a `DatabaseSessionService`
-instance. For multi-replica deployments, **SQLite is not an option** —
-it does not support concurrent writers and will silently corrupt
-sessions under load.
+instance. The platform supports only **in-memory** (no `DATABASE_URL`) or
+**PostgreSQL** (`DATABASE_URL` set) stores — SQLite is not supported.
+Multi-replica deployments **require** PostgreSQL; without a `DATABASE_URL`
+sessions are in-memory and lost on restart.
 
 Create a database and user:
 
@@ -341,8 +342,8 @@ still not ready after that, look for slow cold starts from:
 ### Sessions not persisting across restarts
 
 Verify `DATABASE_URL` is actually being read — the pod logs should print
-`Using database session store: postgresql+asyncpg://...[REDACTED]@...`.
-If you see `Using SQLite session store`, the env var isn't wired
+`Using PostgreSQL session store: postgresql+asyncpg://...[REDACTED]@...`.
+If you see `Using in-memory session store`, the env var isn't wired
 (check the Secret is mounted via `envFrom`).
 
 ### LLM costs spike unexpectedly

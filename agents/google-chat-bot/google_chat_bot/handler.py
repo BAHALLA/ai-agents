@@ -7,10 +7,7 @@ import logging
 import time
 from typing import Any
 
-from google.adk.runners import Runner
-from google.genai import types
-
-from orrery_core import extract_reply_text, set_user_role
+from orrery_core import AgentGateway, set_user_role
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
 from .chat_client import ChatClient
@@ -59,12 +56,12 @@ class GoogleChatHandler:
 
     def __init__(
         self,
-        runner: Runner,
+        gateway: AgentGateway,
         config: GoogleChatBotConfig,
         store: ConfirmationStore | None = None,
         chat_client: ChatClient | None = None,
     ):
-        self.runner = runner
+        self.gateway = gateway
         self.config = config
         self.store = store or ConfirmationStore()
         # When chat_client is None, the handler stays in the legacy
@@ -298,23 +295,19 @@ class GoogleChatHandler:
         if extra_state:
             state_delta.update(extra_state)
 
-        message = types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
-
         cards, token = start_request_buffer()
         try:
-            response_text = ""
-            async for run_event in self.runner.run_async(
+            # Route the turn through the shared gateway pipeline. When a tracker
+            # is present it observes each event for progressive card updates and
+            # owns the collected text; otherwise the gateway's reply text is used.
+            reply = await self.gateway.run_in_session(
                 user_id=user_id,
                 session_id=session_id,
-                new_message=message,
+                text=user_text,
                 state_delta=state_delta,
-            ):
-                if tracker is not None:
-                    await tracker.consume(run_event)
-                else:
-                    response_text += extract_reply_text(run_event)
-            if tracker is not None:
-                response_text = tracker.collected_text
+                on_event=(tracker.consume if tracker is not None else None),
+            )
+            response_text = tracker.collected_text if tracker is not None else reply.text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))
         except Exception:
             logger.exception("Agent runner failed during turn")

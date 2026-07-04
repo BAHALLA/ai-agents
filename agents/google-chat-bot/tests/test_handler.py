@@ -15,6 +15,8 @@ from google_chat_bot.confirmation import (
 )
 from google_chat_bot.handler import GoogleChatHandler
 
+from orrery_core import AgentGateway
+
 
 @pytest.fixture
 def config():
@@ -46,7 +48,9 @@ def store():
 
 @pytest.fixture
 def handler(mock_runner, config, store):
-    return GoogleChatHandler(runner=mock_runner, config=config, store=store)
+    return GoogleChatHandler(
+        gateway=AgentGateway.from_runner(mock_runner), config=config, store=store
+    )
 
 
 class TestResolveRole:
@@ -729,7 +733,7 @@ def async_handler(config, store, progressive_runner):
     chat_client.create_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-1"})
     chat_client.update_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-1"})
     return GoogleChatHandler(
-        runner=progressive_runner,
+        gateway=AgentGateway.from_runner(progressive_runner),
         config=config,
         store=store,
         chat_client=chat_client,
@@ -815,7 +819,7 @@ class TestProgressiveUpdates:
         chat_client.create_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-2"})
         chat_client.update_message = AsyncMock(return_value={})
         handler = GoogleChatHandler(
-            runner=progressive_runner,
+            gateway=AgentGateway.from_runner(progressive_runner),
             config=config,
             store=store,
             chat_client=chat_client,
@@ -859,7 +863,7 @@ class TestProgressiveUpdates:
 
         chat_client.update_message = AsyncMock(side_effect=update_side_effect)
         handler = GoogleChatHandler(
-            runner=progressive_runner,
+            gateway=AgentGateway.from_runner(progressive_runner),
             config=config,
             store=store,
             chat_client=chat_client,
@@ -891,7 +895,10 @@ class TestProgressiveUpdates:
         chat_client.create_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-4"})
         chat_client.update_message = AsyncMock(return_value={})
         handler = GoogleChatHandler(
-            runner=runner, config=config, store=store, chat_client=chat_client
+            gateway=AgentGateway.from_runner(runner),
+            config=config,
+            store=store,
+            chat_client=chat_client,
         )
         event = {
             "type": "MESSAGE",
@@ -930,7 +937,10 @@ class TestProgressiveUpdates:
         chat_client.create_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-X"})
         chat_client.update_message = AsyncMock(return_value={"name": "spaces/abc/messages/PROG-X"})
         handler = GoogleChatHandler(
-            runner=runner, config=config, store=store, chat_client=chat_client
+            gateway=AgentGateway.from_runner(runner),
+            config=config,
+            store=store,
+            chat_client=chat_client,
         )
         event = {
             "type": "MESSAGE",
@@ -955,7 +965,7 @@ class TestProgressiveUpdates:
         chat_client.create_message = AsyncMock(return_value={"name": "spaces/abc/messages/REM-1"})
         chat_client.update_message = AsyncMock(return_value={})
         handler = GoogleChatHandler(
-            runner=progressive_runner,
+            gateway=AgentGateway.from_runner(progressive_runner),
             config=config,
             store=store,
             chat_client=chat_client,

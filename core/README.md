@@ -509,7 +509,7 @@ Loads configuration from the `.env` file next to the calling module, with enviro
 
 ### `run_persistent()`
 
-An async helper that runs an agent in a CLI loop with SQLite-backed sessions. Supports plugins.
+An async helper that runs an agent in a CLI loop with in-memory or PostgreSQL-backed sessions (set `DATABASE_URL` to persist). Supports plugins.
 
 ```python
 import asyncio
@@ -523,7 +523,7 @@ asyncio.run(run_persistent(root_agent, app_name="my_agent", plugins=default_plug
 |-----------|---------|-------------|
 | `agent` | — | The root agent to run |
 | `app_name` | — | Application name for session scoping |
-| `db_url` | `sqlite:///{app_name}.db` | SQLAlchemy database URL |
+| `db_url` | `None` (in-memory) | PostgreSQL URL; falls back to `DATABASE_URL`, then in-memory |
 | `user_id` | `"default_user"` | User ID for session scoping |
 | `plugins` | `None` | List of ADK plugins (use `default_plugins()` for standard set) |
 
@@ -532,5 +532,5 @@ Session state (notes, preferences, bookmarks) survives across restarts. Type `ne
 For the web UI, use ADK's built-in persistence flag instead:
 
 ```bash
-adk web --session_service_uri=sqlite:///my_agent.db agents/my-agent
+adk web --session_service_uri=postgresql+asyncpg://user:pass@host:5432/agents agents/my-agent
 ```

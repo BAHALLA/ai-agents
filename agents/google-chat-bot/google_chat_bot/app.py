@@ -19,9 +19,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from google.adk.apps import App
 from google.adk.runners import Runner
-from google.adk.sessions import DatabaseSessionService, InMemorySessionService
 
+from orrery_core import AgentGateway
 from orrery_core.base import load_agent_env
+from orrery_core.db import create_session_service
 from orrery_core.plugins import default_plugins
 
 from .auth import verify_google_chat_token
@@ -89,8 +90,7 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
             ``spaces.messages.create`` or they are lost.
     """
     # 1. Session service — PostgreSQL if DATABASE_URL is set, else in-memory.
-    db_url = os.getenv("DATABASE_URL")
-    session_service = DatabaseSessionService(db_url=db_url) if db_url else InMemorySessionService()
+    session_service = create_session_service(os.getenv("DATABASE_URL"))
 
     # 2. Import the root agent here to avoid circular imports at module load.
     from orrery_assistant.agent import root_agent
@@ -128,6 +128,9 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
         session_service=session_service,
         auto_create_session=True,
     )
+    # Wrap the Runner (with its auto_create_session config) in the shared
+    # gateway pipeline; Chat uses deterministic session ids via run_in_session.
+    gateway = AgentGateway.from_runner(runner, session_service=session_service)
 
     chat_client = _build_chat_client(config)
     if require_chat_client and chat_client is None:
@@ -137,7 +140,7 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
             "workload identity has the chat.bot scope."
         )
 
-    return GoogleChatHandler(runner=runner, config=config, store=_store, chat_client=chat_client)
+    return GoogleChatHandler(gateway=gateway, config=config, store=_store, chat_client=chat_client)
 
 
 @asynccontextmanager
