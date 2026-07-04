@@ -36,7 +36,7 @@ services:
       retries: 5
 
   kafka-ui:
-    image: kafbat/kafka-ui
+    image: kafbat/kafka-ui:v1.5.0
     container_name: kafka-ui
     restart: unless-stopped
     depends_on:
@@ -85,7 +85,7 @@ services:
   # ── Observability stack ───────────────────────────────────────────────
 
   prometheus:
-    image: prom/prometheus:v3.3.0
+    image: prom/prometheus:v3.13.0
     container_name: prometheus
     restart: unless-stopped
     extra_hosts:
@@ -106,7 +106,7 @@ services:
       retries: 5
 
   loki:
-    image: grafana/loki:3.5.0
+    image: grafana/loki:3.7.3
     container_name: loki
     restart: unless-stopped
     ports:
@@ -121,7 +121,7 @@ services:
       retries: 5
 
   alertmanager:
-    image: prom/alertmanager:v0.28.1
+    image: prom/alertmanager:v0.33.0
     container_name: alertmanager
     restart: unless-stopped
     ports:
@@ -141,7 +141,7 @@ services:
   # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317.
 
   tempo:
-    image: grafana/tempo:2.7.1
+    image: grafana/tempo:2.10.7
     container_name: tempo
     profiles: [tracing]
     restart: unless-stopped
@@ -159,7 +159,7 @@ services:
       retries: 5
 
   grafana:
-    image: grafana/grafana:11.5.1
+    image: grafana/grafana:13.1.0
     container_name: grafana
     profiles: [tracing]
     restart: unless-stopped
