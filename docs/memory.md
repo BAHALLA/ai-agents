@@ -29,17 +29,23 @@ sequenceDiagram
     Note over SecureMemoryService: Redact secrets, enforce limits, store
 ```
 
-The memory system has three components:
+The memory system has these components:
 
 | Component | Role |
 |-----------|------|
-| **`SecureMemoryService`** | Wraps ADK's `InMemoryMemoryService` with security hardening |
+| **`SecureMemoryService`** | Security wrapper — redacts secrets and caps storage, then delegates to a **swappable inner backend** |
+| **`DatabaseMemoryService`** | Persistent inner backend (PostgreSQL) — durable, cross-restart, shared across replicas |
+| **`create_memory_service()`** | Factory that assembles the two from a DB URL (Postgres when set, in-memory otherwise) |
 | **`MemoryPlugin`** | Auto-saves sessions to memory after the root agent completes |
 | **`PreloadMemoryTool`** | ADK tool that auto-loads relevant memories at the start of each turn |
 
+`SecureMemoryService` is always the outer layer; its inner backend is either ADK's
+in-memory `InMemoryMemoryService` (default) or the Postgres-backed
+`DatabaseMemoryService` for durable recall.
+
 ## Security Hardening
 
-The `SecureMemoryService` wraps ADK's built-in `InMemoryMemoryService` and adds two layers of protection:
+The `SecureMemoryService` wraps whichever backend it delegates to (in-memory or the Postgres-backed `DatabaseMemoryService`) and adds two layers of protection — so redaction and storage caps apply regardless of where memories are persisted:
 
 ### Sensitive Data Redaction
 
@@ -78,25 +84,45 @@ Memory is scoped by `app_name` and `user_id` — inherited from ADK's design. Us
 
 ### Enable Memory in Persistent Mode
 
+`run_persistent` **auto-wires memory to match the session store**: when
+`DATABASE_URL` (or a `db_url`) is set it co-locates recall in PostgreSQL via
+`create_memory_service()`, otherwise it uses an in-memory backend. You only need
+to switch on the plugin:
+
 ```python
 import asyncio
-from orrery_core import SecureMemoryService, default_plugins, run_persistent
+from orrery_core import default_plugins, run_persistent
 from my_agent.agent import root_agent
 
 asyncio.run(
     run_persistent(
         root_agent,
         app_name="my_agent",
-        memory_service=SecureMemoryService(),
+        # memory_service is auto-created from DATABASE_URL; pass one only to override.
         plugins=default_plugins(enable_memory=True),
     )
 )
 ```
 
-This does two things:
+`enable_memory=True` activates the `MemoryPlugin`, which auto-saves sessions after
+each root agent interaction (skipping trivial sessions with fewer than 4 events).
 
-1. **`memory_service=SecureMemoryService()`** — enables the Runner to store and search memories
-2. **`enable_memory=True`** — activates the `MemoryPlugin`, which auto-saves sessions after each root agent interaction (skips trivial sessions with fewer than 4 events)
+To build the service explicitly — e.g. for a custom `Runner` — use the factory:
+
+```python
+from orrery_core import create_memory_service
+
+# Postgres-backed, redacted, durable recall:
+memory = create_memory_service(db_url="postgresql+asyncpg://agents:…@localhost:5432/agents")
+# No db_url (and no DATABASE_URL) → in-memory, non-durable.
+```
+
+!!! warning "Persistence fails fast by design"
+    If a `DATABASE_URL` is set but PostgreSQL is unreachable, `create_memory_service`
+    **raises** rather than silently falling back to in-memory recall (which would be
+    lost on restart and split across replicas). Set
+    `ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` to opt into the fallback for local dev.
+    See [Troubleshooting → Sessions & storage](troubleshooting.md#sessions-storage).
 
 ### Add Memory Tools to Your Agent
 
@@ -149,10 +175,17 @@ The `MemoryPlugin` is registered as part of `default_plugins()` when enabled. It
 
 ## Production Considerations
 
-The current `InMemoryMemoryService` uses keyword-based search and is suitable for development and testing. For production:
+- **Persistence** — ✅ available today. Set `DATABASE_URL` and recall is stored in
+  PostgreSQL via `DatabaseMemoryService` — durable across restarts and shared across
+  replicas. The in-memory backend remains the default only when no database is
+  configured (development/testing).
+- **Semantic search** — keyword matching may still miss relevant memories.
+  `DatabaseMemoryService` mirrors ADK's keyword-matching semantics (backed by durable
+  storage). For LLM-powered semantic recall, implement a custom `BaseMemoryService`
+  backed by PostgreSQL + pgvector, or switch to `VertexAiMemoryBankService`.
+- **Memory growth** — the `max_entries_per_user` cap applies per save; monitor table
+  growth in long-running deployments.
 
-- **Semantic search** — keyword matching may miss relevant memories. Consider implementing a custom `BaseMemoryService` backed by PostgreSQL + pgvector or switching to `VertexAiMemoryBankService` for LLM-powered semantic search.
-- **Persistence** — in-memory storage is lost on restart. A database-backed implementation is recommended for production.
-- **Memory growth** — the `max_entries_per_user` limit helps, but monitor memory usage in long-running deployments.
-
-The `SecureMemoryService` uses a delegation pattern, so swapping the inner service requires only a constructor change — no agent modifications needed.
+The `SecureMemoryService` uses a delegation pattern, so swapping the inner backend
+(in-memory ↔ Postgres ↔ a custom service) requires only a constructor change — no
+agent modifications needed.

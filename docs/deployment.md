@@ -3,7 +3,7 @@
 This guide covers deploying the `orrery-assistant` agent platform to
 Kubernetes with a shared Postgres session store, rolling updates, and
 autoscaling. For local development, see [`getting-started.md`](getting-started.md)
-and the `make docker-demo` target instead.
+and the `docker compose --profile demo up -d --build` demo stack instead.
 
 ---
 
@@ -56,6 +56,15 @@ instance. The platform supports only **in-memory** (no `DATABASE_URL`) or
 **PostgreSQL** (`DATABASE_URL` set) stores — SQLite is not supported.
 Multi-replica deployments **require** PostgreSQL; without a `DATABASE_URL`
 sessions are in-memory and lost on restart.
+
+When `DATABASE_URL` **is** set but the database is unreachable or unusable at
+startup, the process **fails fast** (`DatabaseUnavailableError`) rather than
+silently degrading to an in-memory store. This is deliberate: a silent fallback
+would let a pod report healthy while trapping sessions in local memory —
+split-brain across replicas, and permanent loss on restart. The failure keeps
+the pod in `CrashLoopBackOff` until Postgres is genuinely ready. For **local
+development only**, set `ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` to restore the
+graceful in-memory fallback; never set it in production.
 
 Create a database and user:
 
@@ -136,7 +145,7 @@ ingress:
 
 ## Step 4 — Enable authentication
 
-If you are exposing the agent over HTTP (Ingress, `orrery_core.server`,
+If you are exposing the agent over HTTP (Ingress, `orrery_core.serving.server`,
 `adk web`), turn on the JWT bearer-token front door before sending real
 traffic. Without it, RBAC roles in the JWT are not verifiable and any
 caller on the network can self-declare as `admin`. The Slack and Google

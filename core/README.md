@@ -63,12 +63,19 @@ runner = Runner(
 
 | Order | Plugin | Description |
 |-------|--------|-------------|
+| — | `TracingPlugin` | OpenTelemetry span enrichment. Prepended only when tracing is enabled (`enable_tracing` / `OTEL_TRACING_ENABLED`) |
+| — | `AuthPlugin` | Applies the verified JWT role each turn. Added only when `enable_auth=True` |
 | 1 | `GuardrailsPlugin` | RBAC (`authorize()`) + confirmation gate (`require_confirmation()` or `dry_run()`) + `ensure_default_role()` |
 | 2 | `ResiliencePlugin` | Per-tool circuit breaker |
 | 3 | `MetricsPlugin` | Prometheus metrics (tool counts, latency, errors, circuit breaker state) |
 | 4 | `AuditPlugin` | Structured audit logging for every tool invocation |
-| 5 | `ActivityPlugin` | Records tool calls to session state for cross-agent visibility |
-| 6 | `ErrorHandlerPlugin` | Graceful error recovery for tool and model failures (must be last) |
+| 5 | `ActivityPlugin` | Records tool calls to session state for cross-agent visibility (when `enable_activity_tracking`) |
+| 6 | `MemoryPlugin` | Auto-saves sessions to long-term memory after the root agent completes (when `enable_memory`) |
+| 7 | `ErrorHandlerPlugin` | Graceful error recovery for tool and model failures (must be last) |
+
+Each plugin's ADK adapter lives in `orrery_core/plugins/<name>_plugin.py`; the
+mechanism it wraps lives under the matching aspect package (e.g.
+`ResiliencePlugin` → `reliability/resilience.py`'s `CircuitBreaker`).
 
 Parameters:
 
@@ -80,6 +87,11 @@ Parameters:
 | `circuit_breaker_timeout` | `60.0` | Recovery timeout in seconds |
 | `audit_log_path` | `None` | Optional local audit log file path |
 | `enable_activity_tracking` | `True` | Whether to track activity in session state |
+| `enable_memory` | `False` | Auto-save sessions to long-term memory (requires a `memory_service` on the Runner) |
+| `memory_min_events` | `4` | Minimum events before a session is saved to memory |
+| `enable_auth` | `False` | Add `AuthPlugin` to apply the verified JWT role each turn |
+| `require_auth` | `True` | With `enable_auth`, force `viewer` when no verified `_auth` payload is present |
+| `enable_tracing` | `None` | Prepend `TracingPlugin`. `None` resolves from `OTEL_TRACING_ENABLED` |
 
 ### Individual plugins
 

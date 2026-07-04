@@ -5,7 +5,7 @@ Common errors across every surface, with pointers to the deeper fix. If the symp
 ## Authentication & authorization
 
 ### `401 Missing bearer token` / `401 Invalid token` on `POST /chat`
-The HTTP front door (`orrery_core.server`) requires a valid JWT bearer token whenever `AUTH_ENABLED=true`. Common causes:
+The HTTP front door (`orrery_core.serving.server`) requires a valid JWT bearer token whenever `AUTH_ENABLED=true`. Common causes:
 
 - **No Authorization header.** Send `Authorization: Bearer <jwt>`. `/healthz` and `/readyz` are intentionally exempt.
 - **Audience / issuer mismatch.** The token's `aud` and `iss` claims must match `JWT_AUDIENCE` / `JWT_ISSUER` byte-for-byte. The server returns a generic 401 to avoid leaking which check failed — set `LOG_LEVEL=DEBUG` to see the underlying PyJWT message.
@@ -82,8 +82,11 @@ Check the `orrery_llm_tokens_total` Prometheus counter and the cache hit rate. C
 - `DATABASE_URL` isn't being read. The startup logs should print `Using PostgreSQL session store: postgresql+asyncpg://...[REDACTED]@...`. If they say `Using in-memory session store`, the env var isn't wired (check the Secret is mounted via `envFrom` in K8s).
 - In-memory sessions are per-process and lost on restart. Use PostgreSQL for anything with >1 replica (SQLite is not supported).
 
+### `DatabaseUnavailableError: PostgreSQL session store unavailable` at startup
+`DATABASE_URL` is set but the database can't be reached or used, so the process **fails fast by design** rather than silently degrading to an in-memory store (which would split sessions across replicas and lose them on restart). Check that the DB host/port is reachable from the pod (NetworkPolicy, wrong namespace, DB not up yet) and that the Postgres driver is installed (`uv sync --extra postgres`). The pod will keep `CrashLoopBackOff`-ing until Postgres is ready — which is the intended behavior. For **local dev only**, set `ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` to fall back to in-memory instead of crashing.
+
 ### `Session not found` (Google Chat)
-The bot uses `auto_create_session=True`, so this shouldn't normally fire. If it does, confirm `DATABASE_URL` is valid (or unset, which triggers the in-memory fallback).
+The bot uses `auto_create_session=True`, so this shouldn't normally fire. If it does, confirm `DATABASE_URL` is valid (or unset, for the in-memory store). Note a misconfigured `DATABASE_URL` now fails fast at startup rather than silently running in-memory — see above.
 
 ---
 
@@ -98,8 +101,8 @@ Usually one of:
 ### Readiness probe flaps
 The startup probe allows up to 60 seconds (12 × 5s). Slow cold starts usually come from LLM warm-up calls or blocking client initialization. Full guidance: [Deployment → Readiness probe flaps](deployment.md#readiness-probe-flaps).
 
-### `make run-devops` fails with "address already in use"
-Both `make run-devops` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. Run one or the other — `docker compose down` clears the demo.
+### `make run-assistant` fails with "address already in use"
+Both `make run-assistant` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. Run one or the other — `docker compose down` clears the demo.
 
 ---
 

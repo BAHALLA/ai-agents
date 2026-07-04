@@ -5,7 +5,7 @@ RBAC is enforced uniformly by the `GuardrailsPlugin`, but **how the user's role 
 For the design rationale, see [ADR-001: RBAC](adr/001-rbac.md). For the API surface (`authorize`, `RolePolicy`, `@requires_role`, `set_user_role`), see the [Core Library RBAC section](core/README.md#role-based-access-control-rbac).
 
 !!! info "RBAC needs a trusted identity to be useful"
-    Self-declared roles (e.g. setting `user_role` from a state editor) are only safe for local development. Any production deployment should go through a transport that *verifies* identity before calling `set_user_role()`: Slack signing secrets, Google Chat OIDC tokens, or the JWT front door at `orrery_core.server`. See [Security & auth](config/security.md).
+    Self-declared roles (e.g. setting `user_role` from a state editor) are only safe for local development. Any production deployment should go through a transport that *verifies* identity before calling `set_user_role()`: Slack signing secrets, Google Chat OIDC tokens, or the JWT front door at `orrery_core.serving.server`. See [Security & auth](config/security.md).
 
 ## How roles are resolved
 
@@ -22,10 +22,10 @@ Before every agent turn, `GuardrailsPlugin.before_agent_callback` runs `ensure_d
 |---------|--------------|---------------|
 | ADK Web (`adk web`) | `viewer` | Edit session state: set `user_role` **and** `_role_set_by_server: true`, then start a **new session** |
 | ADK CLI (`adk run <agent>`) | `viewer` | No env-var knob — wrap the agent with `core.runner.run_persistent_cli()` or write a small script |
-| Persistent CLI (`make run-devops-persistent`) | `admin` (hard-coded) | Edit `core/orrery_core/runner.py:141` to change |
+| Persistent CLI (`make run-assistant-persistent`) | `admin` (hard-coded) | Edit the role stamped in `core/orrery_core/serving/runner.py` to change |
 | Slack bot | `viewer` unless mapped | Set `SLACK_ADMIN_USERS` / `SLACK_OPERATOR_USERS`; start a **new thread** |
 | Google Chat bot | `viewer` unless mapped | Set `GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`; start a **new thread** |
-| HTTP front door (`orrery_core.server`) | Derived from JWT every request | Mint a JWT with the matching `JWT_ROLE_CLAIM` value (`admin` / `operator` / `viewer` or aliases) |
+| HTTP front door (`orrery_core.serving.server`) | Derived from JWT every request | Mint a JWT with the matching `JWT_ROLE_CLAIM` value (`admin` / `operator` / `viewer` or aliases) |
 | Custom `Runner` in Python | Whatever your code sets | Call `set_user_role(initial_state, role)` before `create_session()` |
 
 !!! warning "Roles are baked into the session at creation time"
@@ -58,7 +58,7 @@ The LLM will usually relay this verbatim. If you see a confirmation prompt inste
 ADK's Dev UI is the easiest way to inspect state and try each role.
 
 ```bash
-make run-devops              # opens http://localhost:8000
+make run-assistant              # opens http://localhost:8000
 ```
 
 1. Open the Dev UI, pick the agent, and start a session.
@@ -86,17 +86,17 @@ Workarounds, ordered by convenience:
 **A. Use the persistent runner** (already wires `set_user_role(..., "admin")`):
 
 ```bash
-make run-devops-persistent
+make run-assistant-persistent
 ```
 
-To test a non-admin role here, temporarily edit `core/orrery_core/runner.py` — change `set_user_role(initial_state, "admin")` at line 141 to `"operator"` or `"viewer"` and re-run.
+To test a non-admin role here, temporarily edit `core/orrery_core/serving/runner.py` — change `set_user_role(initial_state, "admin")` to `"operator"` or `"viewer"` and re-run.
 
 **B. Write a 10-line script** using the core helper directly. Save as `scripts/try_role.py`:
 
 ```python
 import asyncio
 from orrery_core import set_user_role
-from orrery_core.runner import run_persistent_cli
+from orrery_core.serving.runner import run_persistent_cli
 from orrery_assistant.agent import root_agent
 
 # Patch the initial state by monkey-patching set_user_role's default.
@@ -141,7 +141,7 @@ Google Chat resolves the role from the signed-in user's email claim in the token
 !!! note "Swapping users is easier than swapping roles"
     If you control multiple Workspace accounts, the fastest way to exercise all three tiers is to list one account per tier in the env vars and @-mention from each one. No restart needed.
 
-## Testing with the HTTP front door (`orrery_core.server`)
+## Testing with the HTTP front door (`orrery_core.serving.server`)
 
 The JWT front door is the production replacement for `adk web`. The role is **verified per request** from the JWT — there is no env-var knob, and there is no per-thread session sticky like Slack / Google Chat. Unlike the chat transports, role changes apply immediately on the next call rather than at the next thread.
 

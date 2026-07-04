@@ -38,10 +38,10 @@ Open [http://localhost:8000](http://localhost:8000).
     reachable — use the Full stack option below for the complete experience.
 
 !!! warning "Dev mode — no authentication"
-    The Docker quick-start and `make run-devops` run **unauthenticated** on
+    The Docker quick-start and `make run-assistant` run **unauthenticated** on
     purpose, so you can try the agent without setting up an IdP. **Do not
     expose this on the public internet.** For any deployment beyond
-    localhost, enable JWT auth via `orrery_core.server` — see
+    localhost, enable JWT auth via `orrery_core.serving.server` — see
     [Production deployment → Step 4](deployment.md#step-4-enable-authentication)
     and the [Security guide](config/security.md).
 
@@ -95,12 +95,12 @@ Follow these steps if you want to modify agents or contribute to the core librar
 
 4.  **Run the Orchestrator**:
     ```bash
-    make run-devops
+    make run-assistant
     ```
     The ADK Dev UI will be available at [http://localhost:8000](http://localhost:8000).
 
 !!! warning "Same port as the Docker demo"
-    Both `make run-devops` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. If you're running the Docker demo, `make run-devops` will fail to start — `docker compose down` first, or change one of the ports.
+    Both `make run-assistant` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. If you're running the Docker demo, `make run-assistant` will fail to start — `docker compose down` first, or change one of the ports.
 
 ---
 

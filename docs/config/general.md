@@ -71,6 +71,33 @@ OLLAMA_API_BASE=http://localhost:11434
 
 ---
 
+## Session & Memory Persistence
+
+Sessions (conversation state) and long-term memory (cross-session recall) share
+one store. The platform supports exactly two backends — **in-memory** (no
+`DATABASE_URL`) or **PostgreSQL** (`DATABASE_URL` set). SQLite is not supported.
+Multi-replica deployments **require** PostgreSQL.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | unset | PostgreSQL URL, e.g. `postgresql+asyncpg://agents:secret@localhost:5432/agents`. When unset, sessions and memory are in-memory and lost on restart. |
+| `ORRERY_DB_ALLOW_INMEMORY_FALLBACK` | `false` | **Local-dev only.** When `DATABASE_URL` is set but the DB is unreachable, allow degrading to in-memory instead of failing fast. |
+
+!!! danger "Configured databases fail fast by design"
+    If `DATABASE_URL` is set but PostgreSQL is unreachable at startup, the process
+    **raises `DatabaseUnavailableError`** rather than silently running in-memory. A
+    silent fallback in a multi-replica deployment would split sessions across pods
+    and lose them on restart, while the pod still reported healthy. The crash keeps
+    the pod in `CrashLoopBackOff` until the database is genuinely ready.
+
+    For local development — where Postgres may not be running yet — set
+    `ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` to restore the graceful in-memory fallback.
+    **Never set it in production.** The schema is created automatically on first use;
+    no migration step is needed. See [Cross-session memory](../memory.md) and
+    [Production deployment → Provision Postgres](../deployment.md#step-2-provision-postgres).
+
+---
+
 ## Context Caching
 
 Context caching reduces token usage and latency by caching static system instructions (agent descriptions, tool schemas, RBAC rules) across requests. This is only effective with **Gemini models** — when using Claude/OpenAI via LiteLLM, the config is accepted but has no effect.
@@ -122,7 +149,7 @@ The reasoning-heavy agents in `orrery-assistant` (the root orchestrator, `triage
 
 - `plan_react` makes responses noticeably more verbose and adds an extra reasoning round-trip per turn — A/B-test before flipping it on for latency-sensitive surfaces.
 - Planners are intentionally **not** attached to per-system health checkers, the remediation verifier, or the journal writer. Those agents execute one short tool sequence per turn; planning would add latency without changing the output.
-- **Reasoning never leaks to users.** Whatever planner you choose, the model's reasoning (`builtin` thought tokens, `plan_react` `/*PLANNING*/`/`/*REASONING*/` phases, and provider reasoning surfaced through LiteLLM) is marked as a *thought* part by ADK. Every user-facing transport — Google Chat, Slack, the HTTP `/chat` API, and the CLI — funnels event text through `extract_reply_text()` (`orrery_core.events`), which drops thought parts and emits only the final answer. So `ORRERY_PLANNER_INCLUDE_THOUGHTS=true` makes thoughts available for tracing/progress without showing them in the reply.
+- **Reasoning never leaks to users.** Whatever planner you choose, the model's reasoning (`builtin` thought tokens, `plan_react` `/*PLANNING*/`/`/*REASONING*/` phases, and provider reasoning surfaced through LiteLLM) is marked as a *thought* part by ADK. Every user-facing transport — Google Chat, Slack, the HTTP `/chat` API, and the CLI — funnels event text through `extract_reply_text()` (`orrery_core.serving.events`), which drops thought parts and emits only the final answer. So `ORRERY_PLANNER_INCLUDE_THOUGHTS=true` makes thoughts available for tracing/progress without showing them in the reply.
 
 ---
 

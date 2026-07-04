@@ -47,7 +47,7 @@ Use **Guardrail Decorators** to mark tools that require human oversight:
 # agents/my-agent/my_agent/tools.py
 import asyncio
 from orrery_core import with_retry, confirm, destructive, ToolResult
-from orrery_core.validation import validate_string
+from orrery_core.security.validation import validate_string
 
 @with_retry(max_retries=3)
 async def get_status(name: str) -> dict:

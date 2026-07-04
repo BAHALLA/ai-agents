@@ -110,6 +110,6 @@ root_agent = create_agent(
 
 ## Implementation
 
-- `core/orrery_core/base.py` — Widened `tools` type to `Sequence[Callable[..., Any] | BaseTool]`, re-exported `AgentTool`
+- `core/orrery_core/agent/base.py` — Widened `tools` type to `Sequence[Callable[..., Any] | BaseTool]`, re-exported `AgentTool`
 - `core/orrery_core/__init__.py` — Added `AgentTool` export
 - `agents/orrery-assistant/orrery_assistant/agent.py` — Converted 5 specialist agents from `sub_agents` to `AgentTool`

@@ -1,7 +1,7 @@
 # Security & Authentication
 
 This page covers the authentication layer that gates the HTTP front door
-(`orrery_core.server`) and the secrets-management seam that keeps API
+(`orrery_core.serving.server`) and the secrets-management seam that keeps API
 keys out of environment variables.
 
 The Slack and Google Chat transports authenticate at their own layer
@@ -95,7 +95,7 @@ into session state. Enable it on the plugin stack:
 
 ```python
 from orrery_core import default_plugins
-from orrery_core.server import ServerConfig, create_app
+from orrery_core.serving.server import ServerConfig, create_app
 
 plugins = default_plugins(enable_auth=True)
 app = create_app(

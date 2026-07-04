@@ -22,7 +22,7 @@ The decorator just attaches metadata — it doesn't change tool behavior at impo
 
 ```python
 from orrery_core import confirm, destructive, with_retry
-from orrery_core.validation import validate_string
+from orrery_core.security.validation import validate_string
 
 @with_retry(max_retries=3)
 async def list_topics() -> dict:

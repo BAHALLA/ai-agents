@@ -72,7 +72,7 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
 
 ## Implementation
 
-- `core/orrery_core/rbac.py` — `Role` enum, `RolePolicy`, `authorize()`, `@requires_role`, `infer_minimum_role()`
+- `core/orrery_core/security/rbac.py` — `Role` enum, `RolePolicy`, `authorize()`, `@requires_role`, `infer_minimum_role()`
 - `core/tests/test_rbac.py` — 25 test cases
 
 ### Plugin-based enforcement (replaces per-agent callbacks)
