@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
-| **Priority** | P2 |
+| **Status** | <span class="badge badge--red">proposed</span> |
+| **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | Medium (3-4 days) |
 | **Impact** | Medium |
 | **Dependencies** | AEP-011 (completed), AEP-010 (tracing — optional but useful) |

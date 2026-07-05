@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
-| **Priority** | P3 |
+| **Status** | <span class="badge badge--red">proposed</span> |
+| **Priority** | <span class="badge badge--grey">P3</span> |
 | **Effort** | Medium (3-5 days) |
 | **Impact** | Medium |
 | **Dependencies** | AEP-004 (LoopAgent) |

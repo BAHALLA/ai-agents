@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | proposed |
-| **Priority** | P1 |
+| **Status** | <span class="badge badge--red">proposed</span> |
+| **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | Medium (4-5 days) |
 | **Impact** | High |
 | **Dependencies** | AEP-010 (tracing) — soft, can ship independently |

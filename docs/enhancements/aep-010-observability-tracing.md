@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | **completed** *(2026-06-21)* |
-| **Priority** | P2 |
+| **Status** | <span class="badge badge--green">completed</span> *(2026-06-21)* |
+| **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | Medium (3-4 days) |
 | **Impact** | High |
 | **Dependencies** | None |

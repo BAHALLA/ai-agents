@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | in-progress (auth layer landed; PII redaction + injection screening + Gemini safety filters remaining) |
-| **Priority** | P0 |
+| **Status** | <span class="badge badge--blue">in-progress</span> (auth layer landed; PII redaction + injection screening + Gemini safety filters remaining) |
+| **Priority** | <span class="badge badge--red">P0</span> |
 | **Effort** | High (7-10 days) |
 | **Impact** | Critical |
 | **Dependencies** | AEP-011 (deployment hardening) |

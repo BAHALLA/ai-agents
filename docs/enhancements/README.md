@@ -9,24 +9,24 @@ enterprise-grade requirements for autonomous DevOps systems.
 
 | Priority | AEP | Title | Status | Effort | Impact |
 |----------|-----|-------|--------|--------|--------|
-| P0 | [AEP-001](aep-001-adk-native-confirmation.md) | ADK-Native Tool Confirmation | **completed** | Medium | High |
-| P0 | [AEP-002](aep-002-agent-evaluation.md) | Agent Evaluation Framework | **completed** | High | Critical |
-| P0 | [AEP-003](aep-003-memory-service.md) | Cross-Session Memory Service | **completed** | Medium | High |
-| P0 | [AEP-011](aep-011-deployment-hardening.md) | Production Deployment Hardening | **completed** | High | Critical |
-| P0 | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | in-progress | High | Critical |
-| P0 | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | proposed | Medium | High |
-| P1 | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | **completed** | Medium | High |
-| P1 | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | **completed** | Low | High |
-| P1 | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | **completed** | Medium | High |
-| P1 | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | proposed | Medium | High |
-| P1 | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | proposed | Low | High |
-| P2 | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | proposed | High | High |
-| P2 | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | proposed | Low | Medium |
-| P2 | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | proposed | Medium | Medium |
-| P2 | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | proposed | High | Medium |
-| P2 | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | proposed | Medium | Medium |
-| P3 | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | proposed | Medium | Medium |
-| P0 | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | **completed** | Medium | High |
+| <span class="badge badge--red">P0</span> | [AEP-001](aep-001-adk-native-confirmation.md) | ADK-Native Tool Confirmation | <span class="badge badge--green">completed</span> | Medium | High |
+| <span class="badge badge--red">P0</span> | [AEP-002](aep-002-agent-evaluation.md) | Agent Evaluation Framework | <span class="badge badge--green">completed</span> | High | Critical |
+| <span class="badge badge--red">P0</span> | [AEP-003](aep-003-memory-service.md) | Cross-Session Memory Service | <span class="badge badge--green">completed</span> | Medium | High |
+| <span class="badge badge--red">P0</span> | [AEP-011](aep-011-deployment-hardening.md) | Production Deployment Hardening | <span class="badge badge--green">completed</span> | High | Critical |
+| <span class="badge badge--red">P0</span> | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | <span class="badge badge--blue">in-progress</span> | High | Critical |
+| <span class="badge badge--red">P0</span> | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | <span class="badge badge--red">proposed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | <span class="badge badge--green">completed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | <span class="badge badge--green">completed</span> | Low | High |
+| <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--red">proposed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--red">proposed</span> | Low | High |
+| <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--red">proposed</span> | High | High |
+| <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--red">proposed</span> | Low | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--red">proposed</span> | Medium | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | <span class="badge badge--red">proposed</span> | High | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | <span class="badge badge--red">proposed</span> | Medium | Medium |
+| <span class="badge badge--grey">P3</span> | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | <span class="badge badge--red">proposed</span> | Medium | Medium |
+| <span class="badge badge--red">P0</span> | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | <span class="badge badge--green">completed</span> | Medium | High |
 
 ## How to Read These Proposals
 

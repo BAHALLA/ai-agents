@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | completed |
-| **Priority** | P0 |
+| **Status** | <span class="badge badge--green">completed</span> |
+| **Priority** | <span class="badge badge--red">P0</span> |
 | **Effort** | High (5-7 days) |
 | **Impact** | Critical |
 | **Dependencies** | None |
