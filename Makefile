@@ -34,19 +34,12 @@ lint: ## Run linter checks (ruff check + format check)
 	uv run ruff check .
 	uv run ruff format --check .
 
+# Derived from the workspace members (core + every agents/* with a pyproject),
+# so a newly added agent is picked up automatically — no manual edit needed.
+TY_SEARCH_PATHS := $(addprefix --extra-search-path ,core $(patsubst %/,%,$(dir $(wildcard agents/*/pyproject.toml))))
+
 type-check: ## Run type checks (ty)
-	uv run ty check \
-		--extra-search-path core \
-		--extra-search-path agents/docker-agent \
-		--extra-search-path agents/kafka-health \
-		--extra-search-path agents/k8s-health \
-		--extra-search-path agents/observability \
-		--extra-search-path agents/elasticsearch \
-		--extra-search-path agents/orrery-assistant \
-		--extra-search-path agents/ops-journal \
-		--extra-search-path agents/slack-bot \
-		--extra-search-path agents/google-chat-bot \
-		.
+	uv run ty check $(TY_SEARCH_PATHS) .
 
 ty: type-check ## Alias for type-check
 
@@ -54,14 +47,16 @@ fmt: ## Auto-fix lint and format issues
 	uv run ruff check --fix .
 	uv run ruff format .
 
-check: fmt lint ty test ## Run the full quality gate (fmt + lint + ty + test)
+check: lint ty test ## Run the full quality gate, verify-only (lint + ty + test — mirrors CI; run `make fmt` first to auto-fix)
 
 clean: ## Remove Python caches, tool caches, and build artifacts (keeps .venv)
 	@echo "▶ Cleaning build artifacts and caches…"
 	find . -type d -name '__pycache__' -not -path './.venv/*' -prune -exec rm -rf {} +
 	find . -type d -name '*.egg-info' -not -path './.venv/*' -prune -exec rm -rf {} +
+	find . -type d -name 'build' -not -path './.venv/*' -prune -exec rm -rf {} +
+	find . -type d -name '.adk' -not -path './.venv/*' -prune -exec rm -rf {} +
 	find . -type f -name '*.py[co]' -not -path './.venv/*' -delete
-	rm -rf .pytest_cache .ruff_cache .hypothesis .mypy_cache .coverage htmlcov build dist site
+	rm -rf .pytest_cache .ruff_cache .hypothesis .mypy_cache .coverage htmlcov dist site
 	@echo "▶ Clean. (.venv preserved — use 'rm -rf .venv' for a full reset.)"
 
 # ── Infrastructure ─────────────────────────────────────

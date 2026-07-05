@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-make install          # Install all workspace packages (uv sync)
-make test             # Run all 806 unit tests across all packages
+make install          # Install all workspace packages (uv sync --all-extras)
+make test             # Run all 869 unit tests across all packages
 make eval             # Run 33 agent eval scenarios (requires LLM credentials)
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
