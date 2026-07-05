@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--red">proposed</span> |
+| **Status** | <span class="badge badge--amber">proposed</span> |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | Medium (2-3 days) |
 | **Impact** | Medium |
