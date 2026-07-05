@@ -48,15 +48,13 @@ The `reason` string surfaces in the confirmation prompt and in the RBAC denial m
 
 Two independent callbacks fire before every tool call:
 
-```
-1. GuardrailsPlugin.before_tool_callback
-     └─ authorize()              ← reads user_role from session state
-                                    returns "access_denied" if role < required
-
-2. Agent's before_tool_callback
-     └─ require_confirmation()   ← reads args-hash + invocation-id
-                                    returns "confirmation_required" until the
-                                    same (tool, args, invocation) is approved
+```mermaid
+graph TD
+    CALL([Tool call]) --> RBAC["1 · GuardrailsPlugin.before_tool_callback<br/>authorize() reads user_role"]
+    RBAC -->|role too low| DENY["access_denied"]
+    RBAC -->|authorized| CONF["2 · Agent before_tool_callback<br/>require_confirmation()<br/>args-hash + invocation-id"]
+    CONF -->|not yet approved| WAIT["confirmation_required"]
+    CONF -->|approved| RUN(["Tool executes"])
 ```
 
 RBAC runs first by design. A viewer asking for `delete_kafka_topic` is denied before they ever see a confirmation prompt — there's no "will you confirm? oh wait, you can't do this anyway" round-trip.

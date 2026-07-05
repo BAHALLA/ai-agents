@@ -38,18 +38,29 @@ We maintain two separate entry points that reuse the same underlying node agents
 1. **The Interactive Root (`orrery_chat_agent`)**: An `LlmAgent` acting as the conversational orchestrator. It uses `AgentTool`s to route requests to specialists, and exposes a single-turn `incident_triage_agent` for broad health sweeps.
 2. **The Deterministic Graph (`orrery_triage_workflow`)**: A standalone ADK 2.0 `Workflow` graph used for batch or scheduled incident responses (via `make run-triage`).
 
-```text
-    orrery_chat_agent (chat-mode LlmAgent, ROOT)
-      ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
-      ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
-      └─ PreloadMemoryTool
+```mermaid
+graph TD
+    subgraph root["Interactive root — adk web / CLI / Slack / Chat"]
+        CHAT["orrery_chat_agent<br/>chat-mode LlmAgent"]
+        CHAT -->|AgentTool| SPEC["kafka · k8s · observability<br/>elasticsearch · docker · ops_journal"]
+        CHAT -->|AgentTool| TRIAGE_T["incident_triage_agent<br/>single-turn health sweep"]
+        CHAT --> MEM["PreloadMemoryTool"]
+    end
 
-    orrery_triage_workflow (Workflow, separate entrypoint)
-      START ─▶ [parallel] 5 health checkers ─▶ health_join (JoinNode)
-            ─▶ triage_summarizer ─▶ journal_writer ─▶ triage_route
-                  ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
-                  │                    └▶ verify_route ─("done")▶ summarizer ─▶ final_report
-                  └─("resolved")▶ final_report
+    subgraph wf["Batch workflow — make run-triage"]
+        START([START]) --> HC["parallel: 5 health checkers"]
+        HC --> HJ["health_join<br/>JoinNode"]
+        HJ --> SUM["triage_summarizer"]
+        SUM --> JW["journal_writer"]
+        JW --> TR{"triage_route"}
+        TR -->|remediate| ACT["remediation_actor"]
+        ACT <--> VER["remediation_verifier"]
+        VER --> VR{"verify_route"}
+        VR -->|retry| ACT
+        VR -->|done| RSUM["summarizer"]
+        RSUM --> FR["final_report"]
+        TR -->|resolved| FR
+    end
 ```
 
 ### Mapping from the deprecated agents
