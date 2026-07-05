@@ -2,8 +2,34 @@
 /* Material's default content column is 61rem, which shrinks wide schemas,
    tables, and code to the point of being hard to read. Give them room. */
 .md-grid {
-  max-width: 72rem;
+  max-width: 76rem;
 }
+
+/* ── Status / priority badges (AEPs) ─────────────────────────────── */
+.md-typeset .badge {
+  display: inline-block;
+  padding: 0.1em 0.62em;
+  border-radius: 1em;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: baseline;
+  border: 1px solid transparent;
+}
+.md-typeset .badge--green { background: #e6f4ea; color: #1b7a37; border-color: #b6e0c2; }
+.md-typeset .badge--blue  { background: #e6effc; color: #1a5fb4; border-color: #b9d1f5; }
+.md-typeset .badge--red   { background: #fdecea; color: #c0341d; border-color: #f6c4bc; }
+.md-typeset .badge--amber { background: #fdf1dd; color: #9a6209; border-color: #f2d9a8; }
+.md-typeset .badge--grey  { background: #eceff1; color: #55606a; border-color: #d3dade; }
+
+[data-md-color-scheme="slate"] .md-typeset .badge--green { background: rgba(46,160,67,.18); color: #7ee2a1; border-color: rgba(46,160,67,.4); }
+[data-md-color-scheme="slate"] .md-typeset .badge--blue  { background: rgba(56,132,232,.18); color: #8fbcff; border-color: rgba(56,132,232,.4); }
+[data-md-color-scheme="slate"] .md-typeset .badge--red   { background: rgba(224,72,45,.18); color: #ff9d8a; border-color: rgba(224,72,45,.4); }
+[data-md-color-scheme="slate"] .md-typeset .badge--amber { background: rgba(219,150,32,.18); color: #f2c66b; border-color: rgba(219,150,32,.4); }
+[data-md-color-scheme="slate"] .md-typeset .badge--grey  { background: rgba(140,150,160,.2); color: #b9c2ca; border-color: rgba(140,150,160,.4); }
 
 /* ── Homepage Grid Cards ─────────────────────────────────────────── */
 .grid.cards > ul {
@@ -84,11 +110,18 @@
   overflow-x: auto;
 }
 
-/* Hold a legible minimum size: on narrow screens the diagram keeps ~640px
-   and the container scrolls, rather than scaling the labels down to nothing.
-   On wide screens it fills the (now roomier) content column. */
+/* Hold a legible minimum size: below this the container scrolls rather than
+   scaling the labels down to nothing. On wide screens the diagram fills the
+   (now roomier) content column, so dense graphs read clearly without zooming. */
 .mermaid svg {
-  min-width: 640px;
+  min-width: 760px;
   max-width: 100%;
   height: auto;
+}
+
+/* Nudge Mermaid label text up a touch for readability on dense graphs. */
+.mermaid .nodeLabel,
+.mermaid .edgeLabel,
+.mermaid span.edgeLabel {
+  font-size: 15px;
 }
