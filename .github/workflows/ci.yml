@@ -23,26 +23,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Ruff check
-        run: uv run ruff check .
-
-      - name: Ruff format check
-        run: uv run ruff format --check .
+      - name: Lint (ruff check + format check)
+        run: make lint
 
       - name: Type check (ty)
-        run: |
-          uv run ty check \
-            --extra-search-path core \
-            --extra-search-path agents/docker-agent \
-            --extra-search-path agents/elasticsearch \
-            --extra-search-path agents/kafka-health \
-            --extra-search-path agents/k8s-health \
-            --extra-search-path agents/observability \
-            --extra-search-path agents/orrery-assistant \
-            --extra-search-path agents/ops-journal \
-            --extra-search-path agents/slack-bot \
-            --extra-search-path agents/google-chat-bot \
-            .
+        # Search paths are derived from the workspace members in the Makefile,
+        # so a new agent is picked up automatically — no CI edit needed.
+        run: make type-check
 
   security:
     name: Security Scan
@@ -90,7 +77,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run tests
-        run: uv run pytest -v
+        run: make test
 
   eval:
     name: Agent Evaluation

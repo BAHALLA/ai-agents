@@ -19,6 +19,9 @@ jobs:
   ci:
     name: CI Checks
     runs-on: ubuntu-latest
+    # Only gate releases here (tag pushes). Pushes to main are already covered
+    # by ci.yml, so running this on every main commit would duplicate the gate.
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v7
 
@@ -31,28 +34,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Lint
-        run: |
-          uv run ruff check .
-          uv run ruff format --check .
-
-      - name: Type check
-        run: |
-          uv run ty check \
-            --extra-search-path core \
-            --extra-search-path agents/docker-agent \
-            --extra-search-path agents/elasticsearch \
-            --extra-search-path agents/kafka-health \
-            --extra-search-path agents/k8s-health \
-            --extra-search-path agents/observability \
-            --extra-search-path agents/orrery-assistant \
-            --extra-search-path agents/ops-journal \
-            --extra-search-path agents/slack-bot \
-            --extra-search-path agents/google-chat-bot \
-            .
+      # Reuse the Makefile targets so the quality gate stays defined in one place
+      # (matches ci.yml; ty search paths are derived from the workspace members).
+      - name: Lint & type check
+        run: make lint type-check
 
       - name: Test
-        run: uv run pytest -v
+        run: make test
 
   build-and-push:
     name: Build & push multi-arch image
@@ -143,9 +131,18 @@ jobs:
         run: helm template test deploy/helm/orrery-assistant > /tmp/rendered.yaml
 
       - name: Validate rendered manifests (kubeconform)
+        env:
+          KUBECONFORM_VERSION: v0.8.0
+          # SHA256 of kubeconform-linux-amd64.tar.gz for the pinned version
+          # (from the release CHECKSUMS). Bump both together on upgrade.
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
         run: |
-          curl -sL "https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin kubeconform
+          set -euo pipefail
+          tarball=kubeconform.tar.gz
+          curl -sL --fail -o "$tarball" \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  ${tarball}" | sha256sum -c -
+          sudo tar -xz -C /usr/local/bin -f "$tarball" kubeconform
           kubeconform -summary -strict -ignore-missing-schemas \
             -kubernetes-version 1.28.0 /tmp/rendered.yaml
 
