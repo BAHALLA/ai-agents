@@ -23,3 +23,7 @@ orrery-assistant = { workspace = true }
 
 [tool.setuptools.packages.find]
 include = ["google_chat_bot*"]
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"

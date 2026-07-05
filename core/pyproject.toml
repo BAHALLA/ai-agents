@@ -10,7 +10,7 @@ dependencies = [
     # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
     # google-cloud-aiplatform[evaluation]). Floor stays at 1.83.14, which
     # already closes the CVEs patched in 709abb1.
-    "litellm>=1.89.3",
+    "litellm>=1.91.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "prometheus-client>=0.25.0",
@@ -36,8 +36,8 @@ auth = [
 # (orrery_core.server). Includes the auth dependencies transitively.
 server = [
     "pyjwt[crypto]>=2.13.0",
-    "fastapi>=0.138.0",
-    "uvicorn[standard]>=0.32.0",
+    "fastapi>=0.139.0",
+    "uvicorn[standard]>=0.50.0",
 ]
 # Install with: uv sync --extra otel
 # OpenTelemetry tracing: configure_tracing() + TracingPlugin export ADK's
@@ -50,3 +50,7 @@ otel = [
 
 [tool.setuptools.packages.find]
 include = ["orrery_core*"]
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"

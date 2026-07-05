@@ -26,3 +26,7 @@ kafka-health-agent = { workspace = true }
 k8s-health-agent = { workspace = true }
 observability-agent = { workspace = true }
 ops-journal = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"

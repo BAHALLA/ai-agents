@@ -10,3 +10,10 @@ dependencies = [
 
 [tool.uv.sources]
 orrery-core = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["docker_agent*"]

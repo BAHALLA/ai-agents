@@ -71,6 +71,8 @@ dev = [
 members = ["core", "agents/*"]
 
 [tool.uv]
+# The workspace root is an aggregator, not a distributable package.
+package = false
 environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
 # google-adk[eval] -> google-cloud-aiplatform[evaluation] hard-caps
 # litellm at <1.86.0, which is incompatible with our litellm>=1.89.3 floor
