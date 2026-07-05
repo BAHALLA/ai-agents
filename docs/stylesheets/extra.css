@@ -1,3 +1,10 @@
+/* ── Layout width ────────────────────────────────────────────────── */
+/* Material's default content column is 61rem, which shrinks wide schemas,
+   tables, and code to the point of being hard to read. Give them room. */
+.md-grid {
+  max-width: 72rem;
+}
+
 /* ── Homepage Grid Cards ─────────────────────────────────────────── */
 .grid.cards > ul {
   display: grid;
@@ -70,7 +77,18 @@
   padding: 1.5rem;
   border-radius: 0.4rem;
   margin: 1.5rem 0;
-  display: flex;
-  justify-content: center;
   border: 1px solid var(--md-default-fg-color--lightest);
+  /* Center the diagram, but let a wide one scroll horizontally instead of
+     being squashed to fit — a flex row would force it to shrink. */
+  text-align: center;
+  overflow-x: auto;
+}
+
+/* Hold a legible minimum size: on narrow screens the diagram keeps ~640px
+   and the container scrolls, rather than scaling the labels down to nothing.
+   On wide screens it fills the (now roomier) content column. */
+.mermaid svg {
+  min-width: 640px;
+  max-width: 100%;
+  height: auto;
 }
