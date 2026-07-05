@@ -17,7 +17,10 @@ metadata:
   labels:
     {{- include "orrery-assistant.pubsubWorker.labels" . | nindent 4 }}
 spec:
+  {{- /* Omit replicas when the HPA owns it, else every upgrade resets scale and fights the HPA. */}}
+  {{- if not .Values.pubsubWorker.autoscaling.enabled }}
   replicas: {{ .Values.pubsubWorker.replicaCount }}
+  {{- end }}
   revisionHistoryLimit: 5
   strategy:
     type: RollingUpdate
