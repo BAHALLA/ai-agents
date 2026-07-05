@@ -42,7 +42,7 @@ the two roots are separate entrypoints that reuse the same node agents. For
 interactive "run a triage" requests, the coordinator delegates to the single-turn
 `incident_triage_agent` `AgentTool` instead.
 
-![DevOps Assistant — agent graph and container inspection](assets/orrery-assistant-graph.png)
+![DevOps Assistant — agent graph and container inspection](../../docs/images/orrery-assistant-graph.png)
 
 ## Specialist Agents (AgentTool)
 

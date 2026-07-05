@@ -49,29 +49,15 @@ for agent_path in agents_dir.iterdir():
                 with mkdocs_gen_files.open(f"agents/{agent_path.name}.md", "w") as fd:
                     fd.write(content)
 
-            # Copy assets if they exist
-            assets_src = agent_path / "assets"
-            if assets_src.exists():
-                for asset in assets_src.iterdir():
-                    asset_dst = pathlib.Path("agents/assets") / asset.name
-                    with open(asset, "rb") as f, mkdocs_gen_files.open(asset_dst, "wb") as fd:
-                        fd.write(f.read())
-
 # Generate page for core
 core_readme = pathlib.Path("core/README.md")
 if core_readme.exists():
     with open(core_readme) as f:
         content = f.read()
-        # Fix links
+        # Rewrite repo-relative doc/image links (e.g. ../docs/images/foo.png)
+        # to site-relative ones (../images/foo.png). Images live under docs/images
+        # and are served natively by mkdocs — no per-asset copy needed here.
         content = content.replace("../docs/", "../")
 
         with mkdocs_gen_files.open("core/README.md", "w") as fd:
             fd.write(content)
-
-    # Copy core assets
-    core_assets_src = pathlib.Path("core/assets")
-    if core_assets_src.exists():
-        for asset in core_assets_src.iterdir():
-            asset_dst = pathlib.Path("core/assets") / asset.name
-            with open(asset, "rb") as f, mkdocs_gen_files.open(asset_dst, "wb") as fd:
-                fd.write(f.read())

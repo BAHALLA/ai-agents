@@ -363,7 +363,7 @@ The `@destructive()` decorator marks the function with metadata. The `Guardrails
 4. LLM receives the message and asks the user to confirm
 5. User confirms → LLM calls the tool again → plugin allows it
 
-![Guardrails in action — destructive operation confirmation flow](assets/guardrails-confirmation.png)
+![Guardrails in action — destructive operation confirmation flow](../docs/images/guardrails-confirmation.png)
 
 *The guardrail intercepts `delete_kafka_topic` (#12-#13), asks the user to confirm (#14), and only executes after explicit confirmation (#15-#18).*
 
