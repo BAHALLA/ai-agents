@@ -17,6 +17,7 @@ from google_chat_bot.idempotency import (
     create_idempotency_store,
     extract_event_id,
 )
+from sqlalchemy.exc import OperationalError
 
 # ── extract_event_id ─────────────────────────────────────────────────
 
@@ -125,9 +126,16 @@ _PG_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
 def pg_store():
     if not _PG_URL:
         pytest.skip("No PostgreSQL TEST_DATABASE_URL/DATABASE_URL configured")
-    store = PostgresIdempotencyStore(db_url=_PG_URL)
-    # Isolate each test from prior rows.
-    store.purge_expired()
+    # The constructor connects (schema create) and purge isolates each test
+    # from prior rows — together they are also the reachability probe: a
+    # configured-but-down database (e.g. the local compose postgres not
+    # running while .env sets DATABASE_URL) must skip like an unconfigured
+    # one, not error the suite.
+    try:
+        store = PostgresIdempotencyStore(db_url=_PG_URL)
+        store.purge_expired()
+    except OperationalError:
+        pytest.skip(f"PostgreSQL configured but unreachable ({_PG_URL.split('@')[-1]})")
     return store
 
 
