@@ -40,6 +40,12 @@ class GoogleChatBotConfig(AgentConfig):
     # ``gcloud auth application-default login``).
     google_chat_service_account_file: str | None = None
 
+    # Confirmation store backend: 'memory' (single replica only — pendings
+    # are process-local and die with the pod) or 'postgres' (shared across
+    # replicas + survives restarts, via DATABASE_URL). Must be 'postgres'
+    # whenever the Pub/Sub worker can run more than one replica.
+    google_chat_confirmation_backend: str = "memory"
+
     # Render clickable Approve/Deny (and Run-remediation) buttons on cards.
     # A button click is a CARD_CLICKED interaction that Google's add-ons
     # runtime resolves with a *synchronous* HTTPS round-trip — which only the

@@ -10,6 +10,16 @@
 {{- fail "pubsubWorker.idempotency.backend=memory cannot run with more than one replica (replicaCount > 1 or autoscaling.enabled). Set idempotency.backend=postgres for multi-replica dedup." }}
 {{- end }}
 {{- end }}
+{{- /*
+  Same rule for the confirmation store: an in-memory pending raised on pod A is
+  invisible to pod B, so the Approve decision (or the LLM retry that consumes
+  it) breaks across replicas.
+*/}}
+{{- if eq .Values.pubsubWorker.confirmation.backend "memory" }}
+{{- if or (gt (int .Values.pubsubWorker.replicaCount) 1) .Values.pubsubWorker.autoscaling.enabled }}
+{{- fail "pubsubWorker.confirmation.backend=memory cannot run with more than one replica (replicaCount > 1 or autoscaling.enabled). Set confirmation.backend=postgres so the approval handshake is shared across replicas." }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,6 +79,10 @@ spec:
               value: {{ .Values.pubsubWorker.idempotency.backend | quote }}
             - name: GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_TTL_SECONDS
               value: {{ .Values.pubsubWorker.idempotency.ttlSeconds | quote }}
+            # Confirmation store (pending approvals). Same replica rule as the
+            # idempotency guard; postgres reuses DATABASE_URL from the secret.
+            - name: GOOGLE_CHAT_CONFIRMATION_BACKEND
+              value: {{ .Values.pubsubWorker.confirmation.backend | quote }}
           ports:
             - name: health
               containerPort: {{ .Values.pubsubWorker.healthPort }}

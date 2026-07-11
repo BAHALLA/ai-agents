@@ -28,7 +28,7 @@ from orrery_core.plugins import default_plugins
 from .auth import verify_google_chat_token
 from .chat_client import ChatClient
 from .config import GoogleChatBotConfig
-from .confirmation import ConfirmationStore, apply_chat_confirmation
+from .confirmation import apply_chat_confirmation, create_confirmation_store
 from .handler import GoogleChatHandler, wrap_for_addons
 
 # Initialize logging and load environment
@@ -40,7 +40,9 @@ config = GoogleChatBotConfig()
 # Module-level shared state. The ConfirmationStore is process-wide so that
 # both transports (HTTP and Pub/Sub) share the same pending-action map.
 _handler: GoogleChatHandler | None = None
-_store = ConfirmationStore()
+# Backend from config: 'memory' pins the bot to one replica; 'postgres'
+# shares pendings across replicas and survives restarts (DATABASE_URL).
+_store = create_confirmation_store(backend=config.google_chat_confirmation_backend)
 
 
 def _build_chat_client(cfg: GoogleChatBotConfig) -> ChatClient | None:

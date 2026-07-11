@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any
 
 from orrery_core import AgentGateway, classify_decision, set_user_role
@@ -13,6 +12,7 @@ from .cards import build_error_card, build_progress_card, build_triage_result_ca
 from .chat_client import ChatClient
 from .config import GoogleChatBotConfig
 from .confirmation import (
+    AnyConfirmationStore,
     ConfirmationStore,
     end_request_buffer,
     start_request_buffer,
@@ -58,7 +58,7 @@ class GoogleChatHandler:
         self,
         gateway: AgentGateway,
         config: GoogleChatBotConfig,
-        store: ConfirmationStore | None = None,
+        store: AnyConfirmationStore | None = None,
         chat_client: ChatClient | None = None,
     ):
         self.gateway = gateway
@@ -807,8 +807,11 @@ class GoogleChatHandler:
                 return None, "This action has expired or was already processed."
             if refusal := self._refuse_non_requester(pending, clicker):
                 return None, refusal
-            pending.approved = True
-            pending.approved_at = time.time()
+            # Through the store (not in-place mutation) so a database-backed
+            # store persists the approval.
+            pending = self.store.mark_approved(action_id)
+            if pending is None:
+                return None, "This action has expired or was already processed."
             return pending, None
         if method == "deny_action":
             pending = self.store.pop(action_id)

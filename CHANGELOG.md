@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Postgres-backed confirmation store** (`agents/google-chat-bot/google_chat_bot/confirmation.py`): the pending-approval handshake for guarded tools was process-local, which quietly contradicted AEP-018's backlog HPA — scale the Pub/Sub worker past one replica and a pending raised on pod A is invisible to the pod that pulls the operator's `approve` reply (or the LLM's consuming retry), so the flow dies. New `PostgresConfirmationStore` shares the handshake across replicas over the platform's existing `DATABASE_URL` (no new infrastructure) with the same synchronous surface as the in-memory store; one-shot guarantees ride the database (`FOR UPDATE` + delete in one transaction, so racing replicas can't both consume an approval). Durability is a bonus: pendings now survive worker restarts. Selected via `GOOGLE_CHAT_CONFIRMATION_BACKEND` (`memory` | `postgres`, Helm `pubsubWorker.confirmation.backend`); the chart refuses to render a multi-replica worker while the backend is `memory`, mirroring the idempotency guard. Approval writes now go through the store (`mark_approved`) instead of mutating a fetched entry in place — required for any database-backed store to persist the decision.
+
 ## [0.2.0] - 2026-07-11
 
 ### Added

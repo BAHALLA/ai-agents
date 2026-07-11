@@ -98,6 +98,7 @@ Sessions are persisted in the shared Postgres store (same as Slack).
 |----------|---------|-------------|
 | `GOOGLE_CHAT_AUDIENCE` | — | JWT audience — must match the public URL byte-for-byte (HTTP mode only) |
 | `GOOGLE_CHAT_ASYNC_RESPONSE` | `true` | Enable async Chat REST API replies |
+| `GOOGLE_CHAT_CONFIRMATION_BACKEND` | `memory` | Pending-approval store — `postgres` (shared `DATABASE_URL`) required for multi-replica, survives restarts |
 | `GOOGLE_CHAT_INTERACTIVE_BUTTONS` | `false` | Approve/Deny buttons on cards — HTTP endpoint only; keep `false` on Pub/Sub (clicks can't complete there) |
 | `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` | — | SA key for async replies (required locally, uses ADC on GKE) |
 | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated admin emails |

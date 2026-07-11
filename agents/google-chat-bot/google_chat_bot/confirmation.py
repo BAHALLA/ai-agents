@@ -14,6 +14,14 @@ parent session.
 
 This mirrors the Slack bot's confirmation pattern so operators see a
 consistent UX across transports.
+
+Two store backends (``GOOGLE_CHAT_CONFIRMATION_BACKEND``): the in-memory
+:class:`ConfirmationStore` is correct only for a **single-replica** bot — a
+pending raised by pod A is invisible to pod B, so the decision (or the LLM's
+consuming retry) breaks the moment the worker scales out. The
+:class:`PostgresConfirmationStore` shares the handshake across replicas (and
+survives restarts) via the platform's existing ``DATABASE_URL`` — required
+whenever the AEP-018 HPA can take the worker beyond one replica.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -29,10 +38,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import sqlalchemy as sa
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from orrery_core import get_guard_level, get_guard_reason
+from orrery_core.persistence.db import to_sync_url as _to_sync_url
 
 from .cards import build_confirmation_card
 
@@ -93,6 +105,21 @@ class ConfirmationStore:
     def get(self, action_id: str) -> PendingConfirmation | None:
         with self._lock:
             return self._pending.get(action_id)
+
+    def mark_approved(self, action_id: str) -> PendingConfirmation | None:
+        """Mark one pending approved by id; returns it (or ``None`` if gone).
+
+        The store is the single writer — callers must not mutate a fetched
+        entry in place, because a database-backed store would silently drop
+        the change.
+        """
+        with self._lock:
+            pending = self._pending.get(action_id)
+            if pending is None:
+                return None
+            pending.approved = True
+            pending.approved_at = time.time()
+            return pending
 
     def latest_for_thread(self, thread_or_space_key: str) -> PendingConfirmation | None:
         """Peek at the most-recently-added pending for this thread/space.
@@ -177,6 +204,281 @@ class ConfirmationStore:
             self._pending.pop(action_id, None)
 
 
+# ── Postgres backend ─────────────────────────────────────────────────
+#
+# The in-memory store pins the bot to a single replica: a pending raised by
+# pod A is invisible to pod B, so the Approve reply/click (or the LLM retry
+# that consumes the approval) breaks the moment the Pub/Sub worker scales out
+# — the very thing the AEP-018 backlog HPA enables. This backend shares the
+# handshake through the PostgreSQL the platform already runs for sessions,
+# memory, and idempotency (same DATABASE_URL, no new infrastructure).
+#
+# Traffic is human-scale — a handful of ~1 ms single-row statements around a
+# decision that takes seconds — so the move off memory has no measurable
+# latency cost, and durability is a feature: a pending now survives a worker
+# restart instead of dying with the pod.
+
+_confirmation_metadata = sa.MetaData()
+
+_pending_confirmations = sa.Table(
+    "orrery_gchat_confirmations",
+    _confirmation_metadata,
+    sa.Column("action_id", sa.String(64), primary_key=True),
+    sa.Column("tool_name", sa.String(256), nullable=False),
+    sa.Column("user_id", sa.String(320), nullable=False),
+    sa.Column("session_id", sa.String(512), nullable=False),
+    sa.Column("space_name", sa.String(512), nullable=False, index=True),
+    sa.Column("thread_name", sa.String(512), nullable=True, index=True),
+    sa.Column("level", sa.String(32), nullable=False),
+    sa.Column("args", sa.JSON, nullable=False),
+    sa.Column("args_hash", sa.String(64), nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False, index=True),
+    sa.Column("approved", sa.Boolean, nullable=False, default=False),
+    sa.Column("approved_at", sa.Float, nullable=True),
+)
+
+
+def _row_to_pending(row: Any) -> PendingConfirmation:
+    return PendingConfirmation(
+        action_id=row.action_id,
+        tool_name=row.tool_name,
+        user_id=row.user_id,
+        session_id=row.session_id,
+        space_name=row.space_name,
+        thread_name=row.thread_name,
+        level=row.level,
+        args=dict(row.args or {}),
+        args_hash=row.args_hash,
+        created_at=row.created_at,
+        approved=row.approved,
+        approved_at=row.approved_at,
+    )
+
+
+class PostgresConfirmationStore:
+    """Cross-replica pending-confirmation store backed by PostgreSQL.
+
+    Same synchronous surface as :class:`ConfirmationStore` (the callback and
+    handler paths call it inline; every statement is a single indexed row op).
+    The one-shot guarantees ride the database: ``consume_approved`` and the
+    ``pop``/``mark`` variants resolve their target with ``FOR UPDATE`` inside
+    one transaction, so two racing replicas cannot both consume the same
+    approval.
+    """
+
+    def __init__(self, *, db_url: str, connect_timeout: int = 5) -> None:
+        self._engine = sa.create_engine(
+            _to_sync_url(db_url),
+            future=True,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": connect_timeout},
+        )
+        _confirmation_metadata.create_all(self._engine)
+        logger.info("Chat confirmation store ready (PostgreSQL)")
+
+    # ── same surface as the in-memory store ──────────────────────────
+
+    def add(self, confirmation: PendingConfirmation) -> None:
+        with self._engine.begin() as conn:
+            self._prune_expired(conn)
+            conn.execute(
+                pg_insert(_pending_confirmations)
+                .values(
+                    action_id=confirmation.action_id,
+                    tool_name=confirmation.tool_name,
+                    user_id=confirmation.user_id,
+                    session_id=confirmation.session_id,
+                    space_name=confirmation.space_name,
+                    thread_name=confirmation.thread_name,
+                    level=confirmation.level,
+                    args=confirmation.args,
+                    args_hash=confirmation.args_hash,
+                    created_at=confirmation.created_at,
+                    approved=confirmation.approved,
+                    approved_at=confirmation.approved_at,
+                )
+                # action_id is a fresh uuid per card; a conflict only happens on
+                # a redelivered event that slipped past the idempotency guard —
+                # keeping the existing row is the safe outcome.
+                .on_conflict_do_nothing(index_elements=["action_id"])
+            )
+
+    def pop(self, action_id: str) -> PendingConfirmation | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.delete(_pending_confirmations)
+                .where(_pending_confirmations.c.action_id == action_id)
+                .returning(*_pending_confirmations.c)
+            ).first()
+            return _row_to_pending(row) if row else None
+
+    def get(self, action_id: str) -> PendingConfirmation | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.select(_pending_confirmations).where(
+                    _pending_confirmations.c.action_id == action_id
+                )
+            ).first()
+            return _row_to_pending(row) if row else None
+
+    def mark_approved(self, action_id: str) -> PendingConfirmation | None:
+        """Mark one pending approved by id; returns it (or ``None`` if gone)."""
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.update(_pending_confirmations)
+                .where(_pending_confirmations.c.action_id == action_id)
+                .values(approved=True, approved_at=time.time())
+                .returning(*_pending_confirmations.c)
+            ).first()
+            return _row_to_pending(row) if row else None
+
+    def latest_for_thread(self, thread_or_space_key: str) -> PendingConfirmation | None:
+        """Peek at the most-recently-added live pending for this thread/space."""
+        with self._engine.connect() as conn:
+            row = conn.execute(self._latest_select(thread_or_space_key)).first()
+            return _row_to_pending(row) if row else None
+
+    def pop_latest_for_thread(self, thread_or_space_key: str) -> PendingConfirmation | None:
+        """Pop the most-recently-added live pending matching this thread/space."""
+        with self._engine.begin() as conn:
+            row = conn.execute(self._latest_select(thread_or_space_key).with_for_update()).first()
+            if row is None:
+                return None
+            conn.execute(
+                sa.delete(_pending_confirmations).where(
+                    _pending_confirmations.c.action_id == row.action_id
+                )
+            )
+            return _row_to_pending(row)
+
+    def mark_latest_approved_for_thread(
+        self, thread_or_space_key: str
+    ) -> PendingConfirmation | None:
+        """Find the latest live pending for this thread/space and mark approved.
+
+        Does NOT delete — the row stays until :meth:`consume_approved` pops it
+        on the LLM's retry (the handshake that survives ``AgentTool``
+        sub-sessions).
+        """
+        with self._engine.begin() as conn:
+            row = conn.execute(self._latest_select(thread_or_space_key).with_for_update()).first()
+            if row is None:
+                return None
+            updated = conn.execute(
+                sa.update(_pending_confirmations)
+                .where(_pending_confirmations.c.action_id == row.action_id)
+                .values(approved=True, approved_at=time.time())
+                .returning(*_pending_confirmations.c)
+            ).first()
+            return _row_to_pending(updated) if updated else None
+
+    def consume_approved(
+        self, thread_or_space_key: str, tool_name: str, args_hash: str
+    ) -> PendingConfirmation | None:
+        """Pop an approved pending matching ``(thread, tool, args_hash)``.
+
+        Single transaction with ``FOR UPDATE``: exactly one replica wins a
+        race, and stale approvals (outside ``_APPROVAL_VALIDITY``) are ignored
+        so a lingering entry can't auto-execute a fresh request later.
+        """
+        cutoff = time.time() - _APPROVAL_VALIDITY
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.select(_pending_confirmations)
+                .where(
+                    _pending_confirmations.c.approved.is_(True),
+                    _pending_confirmations.c.tool_name == tool_name,
+                    _pending_confirmations.c.args_hash == args_hash,
+                    _pending_confirmations.c.approved_at >= cutoff,
+                    self._thread_clause(thread_or_space_key),
+                )
+                .order_by(_pending_confirmations.c.created_at.desc())
+                .limit(1)
+                .with_for_update()
+            ).first()
+            if row is None:
+                return None
+            conn.execute(
+                sa.delete(_pending_confirmations).where(
+                    _pending_confirmations.c.action_id == row.action_id
+                )
+            )
+            return _row_to_pending(row)
+
+    def purge_expired(self) -> int:
+        """Delete expired rows; returns the count (also the reachability probe)."""
+        with self._engine.begin() as conn:
+            result = self._prune_expired(conn)
+        return result
+
+    # ── internals ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _thread_clause(key: str) -> Any:
+        return sa.or_(
+            _pending_confirmations.c.thread_name == key,
+            _pending_confirmations.c.space_name == key,
+        )
+
+    def _latest_select(self, key: str) -> Any:
+        cutoff = time.time() - _CONFIRMATION_TTL
+        return (
+            sa.select(_pending_confirmations)
+            .where(
+                self._thread_clause(key),
+                _pending_confirmations.c.created_at > cutoff,
+            )
+            .order_by(_pending_confirmations.c.created_at.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    def _prune_expired(conn: Any) -> int:
+        result = conn.execute(
+            sa.delete(_pending_confirmations).where(
+                _pending_confirmations.c.created_at <= time.time() - _CONFIRMATION_TTL
+            )
+        )
+        return int(result.rowcount or 0)
+
+
+# ── Factory ──────────────────────────────────────────────────────────
+
+
+# Either backend — same synchronous surface; handlers accept both.
+AnyConfirmationStore = ConfirmationStore | PostgresConfirmationStore
+
+
+def create_confirmation_store(
+    *,
+    backend: str,
+    db_url: str | None = None,
+) -> ConfirmationStore | PostgresConfirmationStore:
+    """Build the configured confirmation store.
+
+    Args:
+        backend: ``"memory"`` (single-replica) or ``"postgres"`` (multi-replica,
+            durable across restarts).
+        db_url: PostgreSQL URL for the ``postgres`` backend. Falls back to the
+            shared ``DATABASE_URL`` when omitted.
+
+    Raises:
+        ValueError: unknown backend, or ``postgres`` selected with no DB URL.
+    """
+    backend = (backend or "memory").strip().lower()
+    if backend == "memory":
+        return ConfirmationStore()
+    if backend == "postgres":
+        resolved = db_url or os.getenv("DATABASE_URL")
+        if not resolved:
+            raise ValueError(
+                "Confirmation backend 'postgres' requires a database URL "
+                "(set DATABASE_URL). Use backend 'memory' only for a single replica."
+            )
+        return PostgresConfirmationStore(db_url=resolved)
+    raise ValueError(f"Unknown confirmation backend {backend!r} (expected 'memory' or 'postgres')")
+
+
 def start_request_buffer() -> tuple[list[dict[str, Any]], contextvars.Token]:
     """Begin a fresh card buffer for the current request context."""
     buf: list[dict[str, Any]] = []
@@ -199,7 +501,7 @@ def _push_card(card: dict[str, Any]) -> bool:
 
 
 def apply_chat_confirmation(
-    agent: Any, store: ConfirmationStore, *, interactive_buttons: bool = False
+    agent: Any, store: AnyConfirmationStore, *, interactive_buttons: bool = False
 ) -> int:
     """Apply :func:`google_chat_confirmation` to every LlmAgent in the tree.
 
@@ -279,7 +581,7 @@ def _resolve_parent_session_id(tool_context: Context) -> str:
 
 
 def google_chat_confirmation(
-    store: ConfirmationStore, *, interactive_buttons: bool = False
+    store: AnyConfirmationStore, *, interactive_buttons: bool = False
 ) -> Callable:
     """Create a ``before_tool_callback`` that emits approval cards.
 

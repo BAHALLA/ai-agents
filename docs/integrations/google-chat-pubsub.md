@@ -138,13 +138,23 @@ A single worker is a SPOF during incidents — Chat traffic spikes exactly when
 things are on fire, and one pod serializes those turns behind `max_messages`.
 To run more than one replica:
 
-1. **Switch to the shared idempotency backend** so redeliveries are deduped
-   across pods:
+1. **Switch both process-local stores to the shared backend** so redeliveries
+   are deduped — and pending approvals are visible — across pods:
    ```yaml
    pubsubWorker:
      idempotency:
        backend: postgres     # reuses the platform DATABASE_URL
+     confirmation:
+       backend: postgres     # same DATABASE_URL — approval handshake shared
    ```
+   The confirmation store matters as much as the dedup guard: with the
+   in-memory backend, the pending raised by pod A is invisible to pod B, so the
+   operator's `approve` reply (or the LLM retry that consumes the approval)
+   lands on a pod that knows nothing about it and the flow silently dies. The
+   Postgres store also survives worker restarts — an in-memory pending dies
+   with the pod. The chart refuses to render a multi-replica worker while
+   either backend is `memory`. Traffic is human-scale (a handful of ~1 ms row
+   operations per confirmation), so there is no measurable latency cost.
 2. **Enable backlog-based autoscaling.** CPU/memory are poor signals here (the
    worker is I/O-bound on LLM calls); scale on the subscription's undelivered
    message count instead:

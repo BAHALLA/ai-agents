@@ -232,6 +232,14 @@ pubsubWorker:
   ## The chart refuses to render a multi-replica worker on the memory backend.
   idempotency:
     backend: memory
+
+  ## Confirmation store (pending human approvals for guarded tools). Same rule
+  ## as idempotency: "memory" is process-local (single replica only — and the
+  ## pending dies with the pod); "postgres" shares the approval handshake across
+  ## replicas via DATABASE_URL and survives restarts. The chart refuses to
+  ## render a multi-replica worker on the memory backend.
+  confirmation:
+    backend: memory
     ttlSeconds: 3600
   ## Backlog-based autoscaling. CPU/memory HPAs are useless here (the worker is
   ## I/O-bound on LLM calls); the meaningful signal is the subscription's
