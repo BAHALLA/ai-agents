@@ -81,7 +81,7 @@ graph LR
 - **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
 
 ### 🔌 Integration & Observability
-- **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (with interactive buttons / Cards v2).
+- **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
 - **Observability** — Built-in Prometheus metrics for tool latency, error rates, and circuit breaker states.
 - **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
 
@@ -109,7 +109,7 @@ The web UI boots with in-memory session state and whichever LLM provider you
 configured. Tools that need Kafka, Postgres, or Prometheus (the full stack) are
 covered below.
 
-### Full stack (Kafka + Postgres + Prometheus + Grafana)
+### Full stack (Kafka + Postgres + Prometheus + Loki + Alertmanager)
 ```bash
 # 1. Grab the compose file (still no clone required)
 curl -O https://raw.githubusercontent.com/BAHALLA/orrery/main/docker-compose.yml
