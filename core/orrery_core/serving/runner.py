@@ -125,6 +125,9 @@ async def run_persistent(
         session_service=session_service,
         memory_service=memory_service,
         context_cache_config=context_cache_config,
+        # Guarded tools need an explicit 'approve'/'deny' from the same
+        # verified user who triggered them (requester-verified confirmation).
+        verified_confirmation=True,
     )
 
     # Start health probe server

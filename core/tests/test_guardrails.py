@@ -9,7 +9,11 @@ from hypothesis import strategies as st
 
 from orrery_core.security.guardrails import (
     _CONFIRMATION_TTL,
+    ACTOR_STATE_KEY,
+    CONFIRMATION_DECISION_STATE_KEY,
+    CONFIRMATION_STRICT_STATE_KEY,
     _hash_args,
+    classify_decision,
     confirm,
     destructive,
     dry_run,
@@ -357,6 +361,175 @@ def test_require_confirmation_handles_legacy_boolean_pending(fake_tool, fake_ctx
 
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result["status"] == "confirmation_required"
+
+
+# ── classify_decision ─────────────────────────────────────────────────
+
+
+def test_classify_decision_approve_needs_deliberate_word():
+    assert classify_decision("approve") == "approve"
+    assert classify_decision("Approve!") == "approve"
+    assert classify_decision("CONFIRM") == "approve"
+    assert classify_decision("go ahead") == "approve"
+    # Casual assent must NOT authorize.
+    assert classify_decision("ok") is None
+    assert classify_decision("yes") is None
+    assert classify_decision("sure, sounds good") is None
+    # A decision word embedded in a longer request is not a decision.
+    assert classify_decision("approve the MR after tests pass") is None
+
+
+def test_classify_decision_deny_is_broad():
+    for text in ("no", "No way", "cancel", "stop it", "abort", "don't do that"):
+        assert classify_decision(text) == "deny", text
+    assert classify_decision("delete the topic") is None
+    assert classify_decision("") is None
+
+
+# ── Requester-verified (strict) confirmation ──────────────────────────
+
+
+def _strict_ctx(fake_ctx, actor="alice@example.com", invocation_id="inv-1"):
+    return fake_ctx(
+        state={CONFIRMATION_STRICT_STATE_KEY: True, ACTOR_STATE_KEY: actor},
+        invocation_id=invocation_id,
+    )
+
+
+def _stamp_decision(ctx, decision, by, ts=None):
+    ctx.state[CONFIRMATION_DECISION_STATE_KEY] = {
+        "decision": decision,
+        "by": by,
+        "timestamp": ts if ts is not None else time.time(),
+    }
+
+
+def _danger(fake_tool):
+    @destructive("destroys data")
+    def danger_tool():
+        pass
+
+    return fake_tool(name="danger_tool", func=danger_tool)
+
+
+def test_strict_records_requester_on_pending(fake_tool, fake_ctx):
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+
+    result = callback(tool=_danger(fake_tool), args={}, tool_context=ctx)
+    assert result["status"] == "confirmation_required"
+    assert "'approve'" in result["message"]
+    assert ctx.state["_guardrail_pending_danger_tool"]["requester"] == "alice@example.com"
+
+
+def test_strict_recall_without_decision_stays_blocked(fake_tool, fake_ctx):
+    """A model re-call alone (new invocation, same args) must NOT pass in strict mode."""
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    ctx._invocation_context.invocation_id = "inv-2"  # new invocation, no human decision
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
+def test_strict_requester_approval_passes_and_consumes(fake_tool, fake_ctx):
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    _stamp_decision(ctx, "approve", by="alice@example.com")
+    ctx._invocation_context.invocation_id = "inv-2"
+
+    assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
+    assert ctx.state["_guardrail_pending_danger_tool"] is None
+    assert ctx.state[CONFIRMATION_DECISION_STATE_KEY] is None  # consumed
+
+
+def test_strict_second_person_approval_refused(fake_tool, fake_ctx):
+    """Only the verified actor who triggered the action may approve it."""
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx, actor="alice@example.com")
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    _stamp_decision(ctx, "approve", by="mallory@example.com")
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+    assert "not given by the person" in result["message"]
+    # The pending survives so the real requester can still decide.
+    assert isinstance(ctx.state["_guardrail_pending_danger_tool"], dict)
+
+
+def test_strict_unknown_requester_fails_closed(fake_tool, fake_ctx):
+    """No verified actor at request time → nobody can approve."""
+    callback = require_confirmation()
+    ctx = fake_ctx(state={CONFIRMATION_STRICT_STATE_KEY: True})  # no actor
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    assert ctx.state["_guardrail_pending_danger_tool"]["requester"] is None
+    _stamp_decision(ctx, "approve", by="anyone@example.com")
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None  # still blocked
+
+
+def test_strict_deny_clears_pending(fake_tool, fake_ctx):
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    _stamp_decision(ctx, "deny", by="alice@example.com")
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result["status"] == "denied"
+    assert ctx.state["_guardrail_pending_danger_tool"] is None
+
+
+def test_strict_stale_approval_refused(fake_tool, fake_ctx):
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    _stamp_decision(ctx, "approve", by="alice@example.com", ts=time.time() - _CONFIRMATION_TTL - 10)
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
+def test_strict_approval_wrong_args_reprompts(fake_tool, fake_ctx):
+    """An approval must authorize exactly the pending args, nothing else."""
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={"name": "topic-a"}, tool_context=ctx)
+    _stamp_decision(ctx, "approve", by="alice@example.com")
+
+    result = callback(tool=tool, args={"name": "topic-b"}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
+def test_non_strict_flow_unchanged_by_new_fields(fake_tool, fake_ctx):
+    """Without the strict flag, the model-mediated flow behaves as before."""
+    callback = require_confirmation()
+    ctx = fake_ctx(invocation_id="inv-1")
+    tool = _danger(fake_tool)
+
+    assert callback(tool=tool, args={}, tool_context=ctx)["status"] == "confirmation_required"
+    ctx._invocation_context.invocation_id = "inv-2"
+    assert callback(tool=tool, args={}, tool_context=ctx) is None
 
 
 # ── Hypothesis Property-Based Tests ────────────────────────────────────

@@ -1,12 +1,15 @@
 from google.adk.tools.agent_tool import AgentTool as AgentTool
 
+from .agent.base import base_instruction as base_instruction
 from .agent.base import create_agent as create_agent
+from .agent.base import identity_aware_instruction as identity_aware_instruction
 from .agent.base import load_agent_env as load_agent_env
 from .agent.base import resolve_model as resolve_model
 from .agent.base import resolve_planner as resolve_planner
 from .agent.config import AgentConfig as AgentConfig
 from .agent.config import load_config as load_config
 from .observability.activity import activity_tracker as activity_tracker
+from .observability.audit import attempt_logger as attempt_logger
 from .observability.audit import audit_logger as audit_logger
 from .observability.log import JSONFormatter as JSONFormatter
 from .observability.log import mask_dsn as mask_dsn
@@ -20,13 +23,17 @@ from .persistence.db import database_reachable as database_reachable
 from .persistence.memory import DatabaseMemoryService as DatabaseMemoryService
 from .persistence.memory import SecureMemoryService as SecureMemoryService
 from .persistence.memory import create_memory_service as create_memory_service
+from .plugins import AUTONOMY_LEVEL_STATE_KEY as AUTONOMY_LEVEL_STATE_KEY
+from .plugins import DEFAULT_MAX_TOOL_RESULT_BYTES as DEFAULT_MAX_TOOL_RESULT_BYTES
 from .plugins import ActivityPlugin as ActivityPlugin
 from .plugins import AuditPlugin as AuditPlugin
+from .plugins import AutonomyPlugin as AutonomyPlugin
 from .plugins import ErrorHandlerPlugin as ErrorHandlerPlugin
 from .plugins import GuardrailsPlugin as GuardrailsPlugin
 from .plugins import MemoryPlugin as MemoryPlugin
 from .plugins import MetricsPlugin as MetricsPlugin
 from .plugins import ResiliencePlugin as ResiliencePlugin
+from .plugins import ToolOutputCapPlugin as ToolOutputCapPlugin
 from .plugins import default_plugins as default_plugins
 from .reliability.error_handlers import graceful_model_error as graceful_model_error
 from .reliability.error_handlers import graceful_tool_error as graceful_tool_error
@@ -40,8 +47,14 @@ from .security.auth import AuthPlugin as AuthPlugin
 from .security.auth import JWTConfig as JWTConfig
 from .security.auth import extract_role as extract_role
 from .security.auth import verify_token as verify_token
+from .security.guardrails import ACTOR_STATE_KEY as ACTOR_STATE_KEY
+from .security.guardrails import (
+    CONFIRMATION_DECISION_STATE_KEY as CONFIRMATION_DECISION_STATE_KEY,
+)
+from .security.guardrails import CONFIRMATION_STRICT_STATE_KEY as CONFIRMATION_STRICT_STATE_KEY
 from .security.guardrails import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .security.guardrails import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
+from .security.guardrails import classify_decision as classify_decision
 from .security.guardrails import confirm as confirm
 from .security.guardrails import destructive as destructive
 from .security.guardrails import dry_run as dry_run

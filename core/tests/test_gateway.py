@@ -69,7 +69,8 @@ async def test_run_in_session_collects_reply_and_forwards_state_delta():
     assert isinstance(reply, OutboundReply)
     assert reply.text == "Hello world"
     assert reply.session_id == "s1"
-    assert captured["state_delta"] == {"user_role": "admin"}
+    # The caller's delta is forwarded; the gateway stamps the turn's actor too.
+    assert captured["state_delta"] == {"user_role": "admin", "actor": "u1"}
     assert captured["text"] == "hi"
 
 
@@ -114,7 +115,62 @@ async def test_run_resolves_session_then_runs():
     resolver.resolve.assert_awaited_once()
     assert reply.session_id == "resolved-sid"
     assert captured["session_id"] == "resolved-sid"
-    assert captured["state_delta"] == {"user_role": "operator"}
+    # The adapter's delta is passed through; the gateway stamps the verified
+    # sender as the turn's actor on top.
+    assert captured["state_delta"] == {"user_role": "operator", "actor": "u1"}
+
+
+@pytest.mark.asyncio
+async def test_run_verified_confirmation_stamps_decision():
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="sid")
+    gw, captured = _make_gateway(resolver=resolver)
+    gw.verified_confirmation = True
+
+    msg = InboundMessage(text="approve", user_id="alice", conversation_key="k", channel="slack")
+    await gw.run(msg)
+
+    delta = captured["state_delta"]
+    assert delta["actor"] == "alice"
+    assert delta["_confirmation_strict"] is True
+    assert delta["_confirmation_decision"]["decision"] == "approve"
+    assert delta["_confirmation_decision"]["by"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_run_verified_confirmation_ignores_non_decisions():
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="sid")
+    gw, captured = _make_gateway(resolver=resolver)
+    gw.verified_confirmation = True
+
+    msg = InboundMessage(
+        text="what pods are failing?", user_id="alice", conversation_key="k", channel="slack"
+    )
+    await gw.run(msg)
+
+    delta = captured["state_delta"]
+    assert delta["_confirmation_strict"] is True
+    assert "_confirmation_decision" not in delta
+
+
+@pytest.mark.asyncio
+async def test_run_adapter_supplied_actor_wins():
+    """A transport that resolves a richer identity keeps it — the gateway only fills gaps."""
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="sid")
+    gw, captured = _make_gateway(resolver=resolver)
+
+    msg = InboundMessage(
+        text="hi",
+        user_id="U123",
+        conversation_key="k",
+        channel="slack",
+        state_delta={"actor": "alice@example.com"},
+    )
+    await gw.run(msg)
+
+    assert captured["state_delta"]["actor"] == "alice@example.com"
 
 
 # ── dispatch (parse → run → deliver) ─────────────────────────────────

@@ -25,6 +25,7 @@ pass an ``on_event`` callback to observe each runner event as it arrives.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -41,6 +42,12 @@ from google.adk.workflow import Workflow
 from google.genai import types
 
 from ..persistence.db import create_session_service
+from ..security.guardrails import (
+    ACTOR_STATE_KEY,
+    CONFIRMATION_DECISION_STATE_KEY,
+    CONFIRMATION_STRICT_STATE_KEY,
+    classify_decision,
+)
 from .events import extract_reply_text
 
 # An async callback invoked once per runner event (e.g. to render progress).
@@ -182,6 +189,12 @@ class AgentGateway:
         context_cache_config: Optional Gemini context-cache config.
         session_resolver: Strategy mapping conversation keys to sessions.
             Defaults to :class:`MappedSessionResolver`.
+        verified_confirmation: Arm requester-verified confirmation for guarded
+            tools: the gateway stamps the verified sender as the turn's actor,
+            classifies deliberate approve/deny replies, and the confirmation
+            gate (``require_confirmation``) only passes when the approval came
+            from the same person who triggered the pending action (fail-closed).
+            Off by default — the model-mediated flow is kept for dev surfaces.
     """
 
     def __init__(
@@ -195,10 +208,12 @@ class AgentGateway:
         memory_service: BaseMemoryService | None = None,
         context_cache_config: ContextCacheConfig | None = None,
         session_resolver: SessionResolver | None = None,
+        verified_confirmation: bool = False,
     ) -> None:
         self.app_name = app_name
         self.session_service = session_service or create_session_service(db_url)
         self.resolver: SessionResolver = session_resolver or MappedSessionResolver()
+        self.verified_confirmation = verified_confirmation
         app = App(
             name=app_name,
             root_agent=root_agent,
@@ -217,6 +232,7 @@ class AgentGateway:
         app_name: str = "orrery",
         session_service: BaseSessionService | None = None,
         session_resolver: SessionResolver | None = None,
+        verified_confirmation: bool = False,
     ) -> AgentGateway:
         """Wrap an already-built ``Runner`` (rather than constructing one).
 
@@ -229,6 +245,7 @@ class AgentGateway:
         self.runner = runner
         self.session_service = session_service  # type: ignore[assignment]
         self.resolver = session_resolver or MappedSessionResolver()
+        self.verified_confirmation = verified_confirmation
         return self
 
     async def run_in_session(
@@ -246,17 +263,44 @@ class AgentGateway:
         lifecycle (e.g. the CLI, or transports with bespoke session mapping).
         """
         message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
+        delta = self._turn_state_delta(text=text, user_id=user_id, state_delta=state_delta)
         reply = ""
         async for event in self.runner.run_async(
             user_id=user_id,
             session_id=session_id,
             new_message=message,
-            state_delta=state_delta or None,
+            state_delta=delta or None,
         ):
             if on_event is not None:
                 await on_event(event)
             reply += extract_reply_text(event)
         return OutboundReply(text=reply, session_id=session_id)
+
+    def _turn_state_delta(
+        self, *, text: str, user_id: str, state_delta: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """The per-turn state delta: caller-supplied context + identity stamps.
+
+        The transport's verified user id is stamped as the turn's ``actor``
+        (powering the identity-aware instruction and confirmation attribution).
+        With :attr:`verified_confirmation` on, the strict-confirmation flag is
+        armed and a deliberate approve/deny reply is recorded as a decision by
+        this sender — the confirmation gate matches it against the pending
+        action's requester. Applied in :meth:`run_in_session` so every surface
+        (``run``, and transports that call ``run_in_session`` directly) gets
+        the same stamps.
+        """
+        delta = dict(state_delta or {})
+        delta.setdefault(ACTOR_STATE_KEY, user_id)
+        if self.verified_confirmation:
+            delta[CONFIRMATION_STRICT_STATE_KEY] = True
+            if decision := classify_decision(text):
+                delta[CONFIRMATION_DECISION_STATE_KEY] = {
+                    "decision": decision,
+                    "by": user_id,
+                    "timestamp": time.time(),
+                }
+        return delta
 
     async def run(self, msg: InboundMessage, *, on_event: EventHook | None = None) -> OutboundReply:
         """Resolve *msg*'s conversation to a session and run one turn."""

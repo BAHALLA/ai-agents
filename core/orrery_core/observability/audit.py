@@ -1,9 +1,16 @@
 """Structured audit logging for tool calls.
 
-Provides an after_tool_callback that logs every tool invocation as
-structured JSON via Python's logging module. In containerised environments
-this goes to stdout (when ``setup_logging()`` is configured); for local
-dev an optional file fallback is available.
+Provides callback factories that log tool invocations as structured JSON via
+Python's logging module. In containerised environments this goes to stdout
+(when ``setup_logging()`` is configured); for local dev an optional file
+fallback is available.
+
+Two events per call: :func:`attempt_logger` (before_tool) records the attempt
+*before* execution — so a call that crashes mid-tool, or is blocked by a gate
+further down the chain, still leaves a record — and :func:`audit_logger`
+(after_tool) records the outcome. A gate may short-circuit the call with a
+deny dict; that dict flows through the after-tool chain as the result, so its
+``status`` (``access_denied``, ``confirmation_required``, …) is audited too.
 
 ADK calls after_tool_callback with keyword args:
     callback(tool=..., args=..., tool_context=..., tool_response=...)
@@ -22,6 +29,69 @@ from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
 
 logger = logging.getLogger("orrery.audit")
+
+
+def _resolve_log_path(log_path: str | Path | None) -> Path | None:
+    if log_path is None:
+        return None
+    resolved = Path(log_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def _write_file_entry(resolved_path: Path | None, entry: dict[str, Any]) -> None:
+    if resolved_path is None:
+        return
+    try:
+        with open(resolved_path, "a") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except OSError as e:
+        logger.warning("Failed to write audit log file: %s", e)
+
+
+def attempt_logger(log_path: str | Path | None = None) -> Callable:
+    """Create a before_tool_callback that records every tool call *attempt*.
+
+    Emitted before execution and before any downstream gate can block the
+    call, so the audit trail always shows what was attempted — even when the
+    tool later crashes or a guardrail denies it. Always returns ``None`` so
+    the rest of the callback chain (gates, resilience) still runs.
+
+    Args:
+        log_path: Optional path to *also* write a local .jsonl file.
+    """
+    resolved_path = _resolve_log_path(log_path)
+
+    def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> None:
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": "tool_attempt",
+            "agent": tool_context.agent_name if hasattr(tool_context, "agent_name") else "unknown",
+            "tool": tool.name,
+            "args": _sanitize(args),
+            "user_id": tool_context.user_id if hasattr(tool_context, "user_id") else "unknown",
+            "session_id": tool_context.session.id
+            if hasattr(tool_context, "session") and tool_context.session
+            else "unknown",
+        }
+
+        logger.info(
+            "tool_attempt: %s.%s",
+            entry["agent"],
+            entry["tool"],
+            extra={
+                "event": entry["event"],
+                "agent": entry["agent"],
+                "tool": entry["tool"],
+                "tool_args": entry["args"],
+                "user_id": entry["user_id"],
+                "session_id": entry["session_id"],
+            },
+        )
+        _write_file_entry(resolved_path, entry)
+        return None
+
+    return callback
 
 
 def audit_logger(log_path: str | Path | None = None) -> Callable:
@@ -46,10 +116,7 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
             # after_tool_callback=audit_logger("audit.jsonl"),  # stdout + file
         )
     """
-    resolved_path: Path | None = None
-    if log_path is not None:
-        resolved_path = Path(log_path)
-        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_path = _resolve_log_path(log_path)
 
     def callback(
         *,
@@ -92,12 +159,7 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         )
 
         # Optional file fallback for local dev
-        if resolved_path is not None:
-            try:
-                with open(resolved_path, "a") as f:
-                    f.write(json.dumps(entry, default=str) + "\n")
-            except OSError as e:
-                logger.warning("Failed to write audit log file: %s", e)
+        _write_file_entry(resolved_path, entry)
 
         return None  # don't modify the result
 

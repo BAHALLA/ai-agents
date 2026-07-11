@@ -14,8 +14,80 @@ from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 
 from ..observability.log import setup_logging
+from ..security.guardrails import ACTOR_STATE_KEY
 
 logger = logging.getLogger("orrery.base")
+
+# Appended to the system instruction each turn when the caller is known, so the
+# model always knows *who* is asking. Critical in a shared channel thread where
+# the caller changes per message and the model would otherwise conflate the
+# human with a tool's service account.
+_IDENTITY_BLOCK = """
+
+## Who you are talking to (this turn)
+The person making THIS request is **__CALLER__**. A shared thread's caller can
+change with every message — so act for THIS person on THIS turn. "me", "my",
+"mine", "I" mean **__CALLER__**, never you. Your integrations authenticate as
+*service accounts* — those are NOT the caller and must never be reported as the
+user's own identity. For "my …" / "assigned to me" queries, resolve THIS
+caller's own account and filter by it; never use a tool's service identity as
+if it were the human."""
+
+
+def _caller_identity(ctx: Any) -> str | None:
+    """Best-effort caller for the current run, from session state.
+
+    Prefers the gateway-stamped ``actor``; falls back to the verified JWT
+    subject the HTTP front door stores under ``_auth``.
+    """
+    state = getattr(ctx, "state", None)
+    get = getattr(state, "get", None)
+    if not callable(get):
+        return None
+    actor = get(ACTOR_STATE_KEY)
+    if actor:
+        return str(actor)
+    auth = get("_auth")
+    subject = auth.get("subject") if isinstance(auth, dict) else None
+    return str(subject) if subject else None
+
+
+class _IdentityAwareInstruction:
+    """An ADK ``InstructionProvider`` appending the caller's identity per turn."""
+
+    def __init__(self, instruction: str) -> None:
+        self.base_instruction = instruction
+
+    def __call__(self, ctx: Any) -> str:
+        caller = _caller_identity(ctx)
+        if not caller:
+            return self.base_instruction
+        return self.base_instruction + _IDENTITY_BLOCK.replace("__CALLER__", caller)
+
+
+def identity_aware_instruction(instruction: str) -> _IdentityAwareInstruction:
+    """Wrap a prompt so it appends the current caller's identity each turn.
+
+    Returns an ADK ``InstructionProvider`` (a callable). Passing a callable
+    also makes ADK use the text **verbatim** — no ``{var}`` state templating —
+    so prompts may safely contain literal braces (JSON examples, label
+    placeholders). When no caller is bound (e.g. ``adk web`` with no transport
+    identity), the base instruction is returned unchanged.
+
+    The original text stays reachable via :func:`base_instruction` (the
+    provider carries a ``base_instruction`` attribute).
+    """
+    return _IdentityAwareInstruction(instruction)
+
+
+def base_instruction(agent_or_instruction: Any) -> str:
+    """Return the raw instruction text of an agent or instruction value.
+
+    Unwraps the ``identity_aware_instruction`` provider; a plain string is
+    returned as-is. Useful in tests that assert on prompt content.
+    """
+    value = getattr(agent_or_instruction, "instruction", agent_or_instruction)
+    return getattr(value, "base_instruction", value)
 
 
 def load_agent_env(agent_file: str | None = None) -> None:
@@ -200,7 +272,11 @@ def create_agent(
         "name": name,
         "model": resolved_model,
         "description": description,
-        "instruction": instruction,
+        # Passed as an InstructionProvider so ADK uses the prompt verbatim (no
+        # {var} state templating — literal braces are safe) AND so the current
+        # caller's identity is appended each turn when a transport stamped one.
+        # See identity_aware_instruction.
+        "instruction": identity_aware_instruction(instruction),
         "tools": list(tools),
     }
 

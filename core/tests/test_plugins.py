@@ -310,7 +310,17 @@ def test_default_plugins_composition():
     # the canonical default set, independent of the ambient environment.
     plugins = default_plugins(enable_tracing=False)
 
-    expected_names = ["guardrails", "resilience", "metrics", "audit", "activity", "error_handler"]
+    # Audit sits BEFORE the gates so a denied call still leaves an attempt
+    # record; the output cap runs last among the after-tool observers.
+    expected_names = [
+        "audit",
+        "guardrails",
+        "resilience",
+        "metrics",
+        "activity",
+        "tool_output_cap",
+        "error_handler",
+    ]
 
     # ADK BasePlugin has a .name property
     plugin_names = [p.name for p in plugins]
@@ -321,21 +331,44 @@ def test_default_plugins_composition():
 
 
 def test_default_plugins_with_memory():
-    """Verify enable_memory adds MemoryPlugin before ErrorHandlerPlugin."""
+    """Verify enable_memory adds MemoryPlugin before the cap + ErrorHandlerPlugin."""
     plugins = default_plugins(enable_memory=True, enable_tracing=False)
 
     expected_names = [
+        "audit",
         "guardrails",
         "resilience",
         "metrics",
-        "audit",
         "activity",
         "memory",
+        "tool_output_cap",
         "error_handler",
     ]
     plugin_names = [p.name for p in plugins]
     assert plugin_names == expected_names
 
     # MemoryPlugin is present and ErrorHandlerPlugin is still last
-    assert isinstance(plugins[-2], MemoryPlugin)
+    assert isinstance(plugins[-3], MemoryPlugin)
+    assert isinstance(plugins[-1], ErrorHandlerPlugin)
+
+
+def test_default_plugins_autonomy_opt_in():
+    """AutonomyPlugin registers only when a level is configured, after guardrails."""
+    plugins = default_plugins(enable_tracing=False, autonomy_level="L2")
+    plugin_names = [p.name for p in plugins]
+    assert "autonomy" in plugin_names
+    assert plugin_names.index("autonomy") == plugin_names.index("guardrails") + 1
+    # audit still records attempts ahead of both gates
+    assert plugin_names.index("audit") < plugin_names.index("guardrails")
+
+    for off in ("off", "none", ""):
+        assert "autonomy" not in [
+            p.name for p in default_plugins(enable_tracing=False, autonomy_level=off)
+        ]
+
+
+def test_default_plugins_output_cap_disabled():
+    """max_tool_result_bytes=0 drops the cap plugin."""
+    plugins = default_plugins(enable_tracing=False, max_tool_result_bytes=0)
+    assert "tool_output_cap" not in [p.name for p in plugins]
     assert isinstance(plugins[-1], ErrorHandlerPlugin)

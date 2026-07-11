@@ -153,6 +153,9 @@ def create_app(
         memory_service=memory_service,
         context_cache_config=context_cache_config,
         session_resolver=ExplicitSessionResolver(),
+        # Guarded tools need an explicit 'approve'/'deny' from the same
+        # verified user who triggered them (requester-verified confirmation).
+        verified_confirmation=True,
     )
 
     api = FastAPI(title=f"{app_name} (orrery)", docs_url="/docs", redoc_url=None)
