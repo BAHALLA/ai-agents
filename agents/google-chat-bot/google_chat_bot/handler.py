@@ -609,16 +609,42 @@ class GoogleChatHandler:
 
     # ── APP_COMMAND ───────────────────────────────────────────────────
 
-    def _resolve_pending_for_click(self, method: str, key: str) -> tuple[Any, str | None]:
+    @staticmethod
+    def _refuse_non_requester(pending: Any, clicker: str | None) -> str | None:
+        """Requester-only approval: the error text, or ``None`` when allowed.
+
+        Fail-closed — an unidentifiable clicker or one who isn't the verified
+        actor that triggered the action is refused, and the pending survives so
+        the real requester can still decide. Deny is deliberately broad (anyone
+        may stop an action; an accidental deny is harmless).
+        """
+        requester = getattr(pending, "user_id", None)
+        clicker_norm = (clicker or "").strip().lower()
+        if not clicker_norm or not requester or clicker_norm != str(requester).lower():
+            return (
+                f"Approval refused: only the requester ({requester or 'unknown'}) may "
+                f"approve `{pending.tool_name}`. Ask them to click Approve, or Deny it."
+            )
+        return None
+
+    def _resolve_pending_for_click(
+        self, method: str, key: str, clicker: str | None
+    ) -> tuple[Any, str | None]:
         """Look up the pending entry for a click and route by ``method``.
 
-        Returns ``(pending, error_msg)``. For the Approve path we mark
-        the latest matching pending as approved (so the callback can
-        consume it on the LLM retry); for Deny we just pop it. ``error_msg``
-        is non-None when no pending matched and the caller should surface
-        that text to the user.
+        Returns ``(pending, error_msg)``. For the Approve path we verify the
+        clicker is the pending's requester, then mark the latest matching
+        pending as approved (so the callback can consume it on the LLM retry);
+        for Deny we just pop it (anyone may deny). ``error_msg`` is non-None
+        when no pending matched — or the approval was refused — and the caller
+        should surface that text to the user.
         """
         if method == "confirm_action":
+            pending = self.store.latest_for_thread(key)
+            if pending is None:
+                return None, "No pending action found in this thread."
+            if refusal := self._refuse_non_requester(pending, clicker):
+                return None, refusal
             pending = self.store.mark_latest_approved_for_thread(key)
         elif method == "deny_action":
             pending = self.store.pop_latest_for_thread(key)
@@ -661,7 +687,7 @@ class GoogleChatHandler:
                 "APP_COMMAND has no thread name; matching latest pending in space=%s",
                 space_name,
             )
-        pending, error = self._resolve_pending_for_click(method, key)
+        pending, error = self._resolve_pending_for_click(method, key, user_email)
         if pending is None:
             return self._wrap_for_addons(error or "No pending action found in this thread.")
 
@@ -714,7 +740,7 @@ class GoogleChatHandler:
                 "APP_COMMAND has no thread name; matching latest pending in space=%s",
                 space_name,
             )
-        pending, error = self._resolve_pending_for_click(method, key)
+        pending, error = self._resolve_pending_for_click(method, key, user_email)
         if pending is None:
             await self._post_async_reply(
                 space_name=space_name,
@@ -771,8 +797,10 @@ class GoogleChatHandler:
 
     # ── CARD_CLICKED ──────────────────────────────────────────────────
 
-    def _parse_card_click_event(self, event: dict[str, Any]) -> tuple[str | None, str | None, str]:
-        """Return ``(action_id, method, display_name)`` from a click event."""
+    def _parse_card_click_event(
+        self, event: dict[str, Any]
+    ) -> tuple[str | None, str | None, str, str | None]:
+        """Return ``(action_id, method, display_name, clicker_email)`` from a click event."""
         common = event.get("common") or event.get("commonEventObject") or {}
         action = event.get("action") or {}
 
@@ -786,8 +814,9 @@ class GoogleChatHandler:
         chat = event.get("chat") or {}
         user = event.get("user") or chat.get("user") or {}
         display_name = user.get("displayName") or user.get("email") or "unknown"
+        clicker_email = (user.get("email") or "").lower() or None
 
-        return action_id, method, display_name
+        return action_id, method, display_name, clicker_email
 
     def _build_click_synthetic(
         self, pending: Any, method: str, display_name: str
@@ -823,17 +852,22 @@ class GoogleChatHandler:
             )
         return None
 
-    def _resolve_card_click_pending(self, action_id: str, method: str) -> tuple[Any, str | None]:
+    def _resolve_card_click_pending(
+        self, action_id: str, method: str, clicker: str | None
+    ) -> tuple[Any, str | None]:
         """Look up + route the pending entry for a CARD_CLICKED event.
 
         Mirrors :meth:`_resolve_pending_for_click` for the legacy button
-        path: Approve marks the entry approved (so the callback consumes
-        it on retry); Deny pops it.
+        path: Approve verifies the clicker is the requester, then marks the
+        entry approved (so the callback consumes it on retry); Deny pops it
+        (anyone may deny).
         """
         if method == "confirm_action":
             pending = self.store.get(action_id)
             if pending is None:
                 return None, "This action has expired or was already processed."
+            if refusal := self._refuse_non_requester(pending, clicker):
+                return None, refusal
             pending.approved = True
             pending.approved_at = time.time()
             return pending, None
@@ -846,7 +880,7 @@ class GoogleChatHandler:
 
     async def _handle_card_click(self, event: dict[str, Any]) -> dict[str, Any]:
         """Handle Approve/Deny/Run-Remediation button clicks."""
-        action_id, method, display_name = self._parse_card_click_event(event)
+        action_id, method, display_name, clicker_email = self._parse_card_click_event(event)
 
         # Run-Remediation is a standalone action — no pending-confirmation
         # lookup needed because it just dispatches a new agent turn.
@@ -857,7 +891,7 @@ class GoogleChatHandler:
             logger.warning("CARD_CLICKED missing action_id or method")
             return self._wrap_for_addons("This card action is not recognized.")
 
-        pending, error = self._resolve_card_click_pending(action_id, method)
+        pending, error = self._resolve_card_click_pending(action_id, method, clicker_email)
         if pending is None:
             return self._wrap_for_addons(
                 error or "This action has expired or was already processed."
@@ -885,7 +919,7 @@ class GoogleChatHandler:
 
     async def _handle_card_click_async(self, event: dict[str, Any]) -> None:
         """Background-task counterpart to ``_handle_card_click``."""
-        action_id, method, display_name = self._parse_card_click_event(event)
+        action_id, method, display_name, clicker_email = self._parse_card_click_event(event)
 
         # Run-Remediation bypasses the pending-confirmation lookup.
         if method == "run_remediation":
@@ -898,7 +932,7 @@ class GoogleChatHandler:
             # handler returned an ack already, so the UI is consistent.
             return
 
-        pending, error = self._resolve_card_click_pending(action_id, method)
+        pending, error = self._resolve_card_click_pending(action_id, method, clicker_email)
         if pending is None:
             space_name = self._extract_space_name(event)
             if space_name:

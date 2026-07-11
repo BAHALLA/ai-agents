@@ -1,6 +1,7 @@
 """Tests for the Google Chat bot handler."""
 
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -198,7 +199,7 @@ class TestHandleAppCommand:
                     "appCommandMetadata": {"appCommandId": 1},
                     "appCommandType": "QUICK_COMMAND",
                 },
-                "user": {"email": "ops@example.com", "displayName": "Ops User"},
+                "user": {"email": "user@example.com", "displayName": "Ops User"},
                 "space": {"name": "spaces/xyz"},
             },
             "message": {"thread": {"name": "threads/1"}},
@@ -318,7 +319,7 @@ class TestHandleCardClick:
                 "invokedFunction": "confirm_action",
                 "parameters": [{"key": "action_id", "value": "abc123"}],
             },
-            "user": {"email": "ops@example.com", "displayName": "Ops User"},
+            "user": {"email": "user@example.com", "displayName": "Ops User"},
         }
         response = await handler.handle_event(event)
 
@@ -393,7 +394,7 @@ class TestHandleCardClick:
                 "invokedFunction": "confirm_action",
                 "parameters": [{"key": "action_id", "value": "addon1"}],
             },
-            "chat": {"user": {"email": "ops@example.com", "displayName": "Ops User"}},
+            "chat": {"user": {"email": "user@example.com", "displayName": "Ops User"}},
         }
         response = await handler.handle_event(event)
         message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
@@ -423,7 +424,7 @@ class TestHandleCardClick:
                 "parameters": [{"key": "action_id", "value": "space1"}],
             },
             "chat": {
-                "user": {"email": "ops@example.com", "displayName": "Ops User"},
+                "user": {"email": "user@example.com", "displayName": "Ops User"},
                 "space": {"name": "spaces/abc", "type": "DM"},
             },
         }
@@ -454,7 +455,7 @@ class TestHandleCardClick:
                 "actionMethodName": "confirm_action",
                 "parameters": [{"key": "action_id", "value": "leg1"}],
             },
-            "user": {"email": "ops@example.com"},
+            "user": {"email": "user@example.com"},
         }
         response = await handler.handle_event(event)
         message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
@@ -990,3 +991,91 @@ class TestProgressiveUpdates:
         dispatched = call_kwargs["new_message"].parts[0].text
         assert "Remediate" in dispatched
         assert "k8s_health_agent" in dispatched
+
+
+class TestRequesterOnlyApproval:
+    """Approve is requester-only and fail-closed; deny stays open to anyone."""
+
+    def _pending(self, **overrides):
+        defaults: dict[str, Any] = dict(
+            action_id="act-1",
+            tool_name="delete_topic",
+            user_id="alice@example.com",
+            session_id="gchat:threads/42",
+            space_name="spaces/abc",
+            thread_name="threads/42",
+            level="destructive",
+            args={"topic": "events"},
+            args_hash="deadbeef",
+        )
+        defaults.update(overrides)
+        return PendingConfirmation(**defaults)
+
+    def test_card_click_requester_may_approve(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_card_click_pending(
+            "act-1", "confirm_action", "alice@example.com"
+        )
+        assert error is None
+        assert pending is not None and pending.approved is True
+
+    def test_card_click_second_person_refused(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_card_click_pending(
+            "act-1", "confirm_action", "mallory@example.com"
+        )
+        assert pending is None
+        assert error is not None and "only the requester" in error
+        # Pending survives, unapproved, so the requester can still decide.
+        survivor = store.get("act-1")
+        assert survivor is not None and survivor.approved is False
+
+    def test_card_click_unknown_clicker_fails_closed(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_card_click_pending("act-1", "confirm_action", None)
+        assert pending is None
+        assert error is not None
+
+    def test_card_click_clicker_case_insensitive(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_card_click_pending(
+            "act-1", "confirm_action", "Alice@Example.COM".lower()
+        )
+        assert error is None
+        assert pending is not None
+
+    def test_card_click_anyone_may_deny(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_card_click_pending(
+            "act-1", "deny_action", "mallory@example.com"
+        )
+        assert error is None
+        assert pending is not None
+        assert store.get("act-1") is None  # popped
+
+    def test_app_command_second_person_refused(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_pending_for_click(
+            "confirm_action", "threads/42", "mallory@example.com"
+        )
+        assert pending is None
+        assert error is not None and "only the requester" in error
+        survivor = store.get("act-1")
+        assert survivor is not None and survivor.approved is False
+
+    def test_app_command_requester_may_approve(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_pending_for_click(
+            "confirm_action", "threads/42", "alice@example.com"
+        )
+        assert error is None
+        assert pending is not None and pending.approved is True
+
+    def test_app_command_anyone_may_deny(self, handler, store):
+        store.add(self._pending())
+        pending, error = handler._resolve_pending_for_click(
+            "deny_action", "threads/42", "mallory@example.com"
+        )
+        assert error is None
+        assert pending is not None
+        assert store.get("act-1") is None  # popped

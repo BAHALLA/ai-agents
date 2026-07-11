@@ -130,7 +130,12 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
     )
     # Wrap the Runner (with its auto_create_session config) in the shared
     # gateway pipeline; Chat uses deterministic session ids via run_in_session.
-    gateway = AgentGateway.from_runner(runner, session_service=session_service)
+    # Chat's own gate is the Approve/Deny cards (google_chat_confirmation), so
+    # verified_confirmation mainly stamps the strict flag + actor; the
+    # requester-only check lives in the click handlers.
+    gateway = AgentGateway.from_runner(
+        runner, session_service=session_service, verified_confirmation=True
+    )
 
     chat_client = _build_chat_client(config)
     if require_chat_client and chat_client is None:

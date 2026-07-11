@@ -94,6 +94,20 @@ class ConfirmationStore:
         with self._lock:
             return self._pending.get(action_id)
 
+    def latest_for_thread(self, thread_or_space_key: str) -> PendingConfirmation | None:
+        """Peek at the most-recently-added pending for this thread/space.
+
+        No mutation — used to check *who* may decide before the Approve
+        path marks the entry approved.
+        """
+        with self._lock:
+            self._prune_expired_locked()
+            for action_id in reversed(list(self._pending.keys())):
+                pending = self._pending[action_id]
+                if self._matches_thread_locked(pending, thread_or_space_key):
+                    return pending
+            return None
+
     def pop_latest_for_thread(self, thread_or_space_key: str) -> PendingConfirmation | None:
         """Pop the most-recently-added pending matching this thread/space.
 

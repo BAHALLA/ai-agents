@@ -58,6 +58,22 @@ class ConfirmationStore:
             return self._pending.get(action_id)
 
 
+def approval_refusal(confirmation: PendingConfirmation, clicker: str | None) -> str | None:
+    """Requester-only approval: the refusal message, or ``None`` when allowed.
+
+    Fail-closed — an unidentifiable clicker, or one who is not the verified
+    user that triggered the action, may not approve it. Deny is deliberately
+    left open to anyone (an accidental deny is harmless; anyone should be able
+    to stop a destructive action).
+    """
+    if not clicker or clicker != confirmation.user_id:
+        return (
+            f":no_entry: Approval refused: only the requester "
+            f"(<@{confirmation.user_id}>) may approve `{confirmation.tool_name}`."
+        )
+    return None
+
+
 def build_confirmation_blocks(
     tool_name: str,
     args: dict[str, Any],

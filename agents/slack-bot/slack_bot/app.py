@@ -27,7 +27,12 @@ from orrery_core import (
 )
 
 from .config import SlackBotConfig
-from .confirmation import ConfirmationStore, slack_confirmation, wire_tool_callbacks
+from .confirmation import (
+    ConfirmationStore,
+    approval_refusal,
+    slack_confirmation,
+    wire_tool_callbacks,
+)
 from .handler import APP_NAME, SlackAgentHandler
 from .session_map import SessionMap
 
@@ -126,6 +131,10 @@ async def lifespan(app: FastAPI):
         root_agent=root_agent,
         plugins=plugins,
         session_service=session_service,
+        # Slack's own gate is the interactive buttons (slack_confirmation), so
+        # this mainly stamps the strict flag + actor; the requester-only check
+        # lives in the Approve handler below.
+        verified_confirmation=True,
     )
 
     _handler = SlackAgentHandler(
@@ -215,14 +224,30 @@ async def handle_mention(event: dict, say):
 
 @bolt_app.action(re.compile(r"^confirm_"))
 async def handle_approve(ack, action, say, body):
-    """User clicked Approve on a guarded tool."""
+    """User clicked Approve on a guarded tool.
+
+    Requester-only, fail-closed: only the verified user who triggered the
+    action may approve it — a second person's click is refused and the pending
+    survives so the requester can still decide. (Deny stays open to anyone:
+    an accidental deny is harmless.)
+    """
     await ack()
 
     action_id = action["value"]
-    confirmation = store.pop(action_id)
+    confirmation = store.get(action_id)
     if confirmation is None:
         return
 
+    clicker = body.get("user", {}).get("id", "")
+    if refusal := approval_refusal(confirmation, clicker):
+        await say(
+            text=refusal,
+            thread_ts=confirmation.thread_ts,
+            channel=confirmation.channel,
+        )
+        return
+
+    store.pop(action_id)
     approver = body.get("user", {}).get("username", "unknown")
     await say(
         text=f":white_check_mark: *Approved* by @{approver} — executing `{confirmation.tool_name}`",

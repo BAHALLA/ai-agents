@@ -138,3 +138,40 @@ class TestBuildConfirmationBlocks:
         assert len(actions) == 2
         assert actions[0]["action_id"] == "confirm_xyz"
         assert actions[1]["action_id"] == "deny_xyz"
+
+
+class TestApprovalRefusal:
+    """Approve is requester-only and fail-closed (deny stays open to anyone)."""
+
+    def _confirmation(self):
+        from slack_bot.confirmation import PendingConfirmation
+
+        return PendingConfirmation(
+            action_id="abc123",
+            tool_name="delete_topic",
+            args={"topic": "events"},
+            channel="C1",
+            thread_ts="171.1",
+            session_id="s1",
+            user_id="U_REQUESTER",
+            level="destructive",
+        )
+
+    def test_requester_may_approve(self):
+        from slack_bot.confirmation import approval_refusal
+
+        assert approval_refusal(self._confirmation(), "U_REQUESTER") is None
+
+    def test_second_person_refused(self):
+        from slack_bot.confirmation import approval_refusal
+
+        refusal = approval_refusal(self._confirmation(), "U_MALLORY")
+        assert refusal is not None
+        assert "only the requester" in refusal
+        assert "U_REQUESTER" in refusal
+
+    def test_unknown_clicker_fails_closed(self):
+        from slack_bot.confirmation import approval_refusal
+
+        assert approval_refusal(self._confirmation(), "") is not None
+        assert approval_refusal(self._confirmation(), None) is not None
