@@ -7,7 +7,10 @@ Welcome! This guide will help you set up the AI Agents platform and perform your
 To try Orrery you only need:
 
 *   [Docker](https://docs.docker.com/get-docker/)
-*   An LLM API Key (Google Gemini is recommended for the best experience)
+*   An LLM API key. The examples below use **Google Gemini** because it has a
+    free tier and is the quickest to start with, but Orrery is provider-agnostic
+    — **Anthropic Claude, OpenAI, and local Ollama models work too** with no code
+    changes. See [Using a different LLM provider](#using-a-different-llm-provider).
 
 For local development (modifying agents or the core library) you'll additionally want [Python 3.14+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) — see [Local Development Setup](#local-development-setup) below.
 
@@ -31,6 +34,11 @@ docker run --rm -p 8000:8000 \
 ```
 
 Open [http://localhost:8000](http://localhost:8000).
+
+!!! tip "Not using Gemini?"
+    Swap the `GOOGLE_API_KEY` line for your provider's variables — e.g.
+    `-e MODEL_PROVIDER=anthropic -e MODEL_NAME=anthropic/claude-sonnet-4-20250514 -e ANTHROPIC_API_KEY=sk-ant-...`.
+    Full matrix in [Using a different LLM provider](#using-a-different-llm-provider).
 
 !!! info "What you get"
     The UI boots with in-memory session state. Tools that need external systems
@@ -71,6 +79,76 @@ Open [http://localhost:8000](http://localhost:8000).
 
 ---
 
+## 🤖 Using a different LLM provider
+
+Orrery routes every agent through [LiteLLM](https://docs.litellm.ai/), so you can
+switch backends with **two environment variables — no code changes**:
+
+| Variable | Purpose |
+| --- | --- |
+| `MODEL_PROVIDER` | Backend: `gemini` (default), `anthropic`, `openai`, `ollama`, … |
+| `MODEL_NAME` | Model identifier (the provider prefix is auto-added if you omit it) |
+
+Set those plus the matching API key for your provider. Whichever way you run
+Orrery, it's the same three variables:
+
+=== "Google Gemini (default)"
+
+    ```bash
+    MODEL_PROVIDER=gemini
+    MODEL_NAME=gemini-2.0-flash
+    GOOGLE_API_KEY=your-api-key   # aistudio.google.com/apikey
+    ```
+
+=== "Anthropic Claude"
+
+    ```bash
+    MODEL_PROVIDER=anthropic
+    MODEL_NAME=anthropic/claude-sonnet-4-20250514
+    ANTHROPIC_API_KEY=sk-ant-api03-...   # console.anthropic.com
+    ```
+
+=== "OpenAI"
+
+    ```bash
+    MODEL_PROVIDER=openai
+    MODEL_NAME=openai/gpt-4o
+    OPENAI_API_KEY=sk-...   # platform.openai.com
+    ```
+
+=== "Ollama (local, no key)"
+
+    ```bash
+    MODEL_PROVIDER=ollama
+    MODEL_NAME=ollama/llama3
+    OLLAMA_API_BASE=http://localhost:11434   # ollama pull llama3 first
+    ```
+
+**Apply them wherever you launch Orrery:**
+
+*   **Single container** — pass each as `-e`:
+    ```bash
+    docker run --rm -p 8000:8000 \
+      -e MODEL_PROVIDER=anthropic \
+      -e MODEL_NAME=anthropic/claude-sonnet-4-20250514 \
+      -e ANTHROPIC_API_KEY=sk-ant-api03-... \
+      ghcr.io/bahalla/orrery:latest
+    ```
+*   **Full stack / Compose** — put the same lines in your `.env` (Compose reads it
+    automatically) or export them before `docker compose --profile demo up -d`.
+*   **Local development** — add them to the root `.env` (see next section).
+
+!!! info "Planner note for non-Gemini backends"
+    Planning is off by default (`ORRERY_PLANNER=none`). The `builtin` planner is
+    the only Gemini-specific option — it uses Gemini's native thinking tokens and
+    falls back to no planner (with a warning) on other providers. For a
+    provider-agnostic reasoning trace, set `ORRERY_PLANNER=plan_react`.
+
+For the complete provider matrix, key sourcing, context-caching caveats, and
+planner options, see **[General configuration → LLM Provider](config/general.md#llm-provider)**.
+
+---
+
 ## 🛠️ Local Development Setup
 
 Follow these steps if you want to modify agents or contribute to the core library.
@@ -84,7 +162,9 @@ Follow these steps if you want to modify agents or contribute to the core librar
     We use a centralized environment file at the root of the workspace.
     ```bash
     cp .env.example .env
-    # Edit .env and add your GOOGLE_API_KEY
+    # Edit .env: set MODEL_PROVIDER / MODEL_NAME and the matching API key.
+    # Defaults to Gemini (GOOGLE_API_KEY); see "Using a different LLM provider"
+    # above for Anthropic / OpenAI / Ollama.
     ```
 
 3.  **Start Infrastructure**:
