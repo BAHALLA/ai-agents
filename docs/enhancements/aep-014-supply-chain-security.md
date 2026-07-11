@@ -114,7 +114,7 @@ Verify from the command line:
 cosign verify \
   --certificate-identity-regexp "https://github.com/BAHALLA/orrery/.*" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/bahalla/orrery:v0.2.0
+  ghcr.io/bahalla/orrery:0.2.0
 ```
 
 ### Step 4: Scan images with Trivy as a CI gate

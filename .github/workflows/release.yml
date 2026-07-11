@@ -161,10 +161,14 @@ jobs:
       - name: Build release notes
         env:
           DIGEST: ${{ needs.build-and-push.outputs.digest }}
-          TAG: ${{ github.ref_name }}
         run: |
           version="${{ steps.version.outputs.version }}"
-          IMAGE_URL="ghcr.io/${{ github.repository }}"
+          # GHCR requires a lowercase repository path (the GitHub owner may be
+          # mixed-case; docker/metadata-action lowercases it when tagging, so
+          # the published image lives at the lowercase path). The image tags
+          # carry the bare semver — metadata-action's `pattern={{version}}`
+          # strips the tag's leading `v` — so reference `:X.Y.Z`, not `:vX.Y.Z`.
+          IMAGE_URL="$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
 
           # Extract this version's section from the changelog.
           awk -v ver="$version" '
@@ -182,15 +186,19 @@ jobs:
             echo "## 🐳 Docker Images"
             echo ""
             echo "Available on GitHub Container Registry:"
-            echo "- \`${IMAGE_URL}:${TAG}\`"
+            echo "- \`${IMAGE_URL}:${version}\`"
             echo "- \`${IMAGE_URL}:latest\`"
+            echo ""
+            echo "\`\`\`bash"
+            echo "docker pull ${IMAGE_URL}:${version}"
+            echo "\`\`\`"
             echo ""
             echo "### Multi-arch digest"
             echo "\`${DIGEST}\`"
           } >> release_notes.md
 
           # Asset file with the pinned digests.
-          echo "${IMAGE_URL}:${TAG}@${DIGEST}" > docker-images.txt
+          echo "${IMAGE_URL}:${version}@${DIGEST}" > docker-images.txt
           echo "${IMAGE_URL}:latest@${DIGEST}" >> docker-images.txt
 
       - name: Create GitHub Release

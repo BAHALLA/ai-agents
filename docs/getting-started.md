@@ -65,7 +65,7 @@ Open [http://localhost:8000](http://localhost:8000).
 !!! tip "Pinning a specific version"
     Override the image tag to pin to a release (e.g. `v0.1.9`):
     ```bash
-    ORRERY_IMAGE=ghcr.io/bahalla/orrery:v0.1.9 \
+    ORRERY_IMAGE=ghcr.io/bahalla/orrery:0.2.0 \
       docker compose --profile demo up -d
     ```
 

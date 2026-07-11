@@ -43,7 +43,7 @@ CI publishes multi-arch images to GHCR automatically via
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f Dockerfile \
-  -t ghcr.io/bahalla/orrery:v0.1.9 \
+  -t ghcr.io/bahalla/orrery:0.2.0 \
   --push .
 ```
 
