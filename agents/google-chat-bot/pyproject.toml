@@ -11,7 +11,7 @@ dependencies = [
     "orrery-assistant",
     "fastapi>=0.138.0",
     "uvicorn>=0.49.0",
-    "google-auth>=2.55.0",
+    "google-auth>=2.55.2",
     "google-cloud-pubsub>=2.39.0",
     "pydantic-settings>=2.14.2",
     "httpx>=0.27.0",

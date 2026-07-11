@@ -17,7 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.4.0",
-    "litellm>=1.85.4",
+    "litellm>=1.91.2",
 ]
 
 [project.optional-dependencies]
@@ -55,12 +55,12 @@ google-chat-bot = { workspace = true }
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "hypothesis>=6.156.1",
-    "ruff>=0.15.20",
-    "ty>=0.0.56",
+    "hypothesis>=6.156.6",
+    "ruff>=0.15.21",
+    "ty>=0.0.58",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
-    "mkdocstrings[python]>=1.0.4",
+    "mkdocstrings[python]>=1.0.6",
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocs-git-revision-date-localized-plugin>=1.5.3",
     "mkdocs-gen-files>=0.6.1",
@@ -75,12 +75,15 @@ members = ["core", "agents/*"]
 package = false
 environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
 # google-adk[eval] -> google-cloud-aiplatform[evaluation] hard-caps
-# litellm at <1.86.0, which is incompatible with our litellm>=1.89.3 floor
+# litellm at <1.86.0, which is incompatible with our litellm>=1.91.2 floor
 # (no version pair satisfies both). aiplatform's cap is conservative — its
 # evaluation path is only exercised by `make eval`. Override it so the
 # workspace resolves; re-run `make eval` after litellm bumps to confirm the
-# AgentEvaluator path still works.
-override-dependencies = ["litellm>=1.89.3"]
+# AgentEvaluator path still works. Keep this floor in lockstep with the
+# litellm requirement in core/pyproject.toml and the root dependency above —
+# an override replaces every other litellm constraint, so a stale value here
+# silently caps resolution below the declared floor.
+override-dependencies = ["litellm>=1.91.2"]
 
 [tool.ruff]
 target-version = "py314"

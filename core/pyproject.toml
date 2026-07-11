@@ -8,9 +8,10 @@ dependencies = [
     # an extra; runner.py imports DatabaseSessionService unconditionally.
     "google-adk[eval,db]>=2.4.0",
     # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
-    # google-cloud-aiplatform[evaluation]). Floor stays at 1.83.14, which
-    # already closes the CVEs patched in 709abb1.
-    "litellm>=1.91.0",
+    # google-cloud-aiplatform[evaluation]); the workspace-root
+    # override-dependencies in pyproject.toml lifts that cap. Keep this floor
+    # in lockstep with that override.
+    "litellm>=1.91.2",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "prometheus-client>=0.25.0",
@@ -37,7 +38,7 @@ auth = [
 server = [
     "pyjwt[crypto]>=2.13.0",
     "fastapi>=0.139.0",
-    "uvicorn[standard]>=0.50.0",
+    "uvicorn[standard]>=0.51.0",
 ]
 # Install with: uv sync --extra otel
 # OpenTelemetry tracing: configure_tracing() + TracingPlugin export ADK's
