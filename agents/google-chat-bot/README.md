@@ -65,21 +65,21 @@ Google Chat enforces a ~30 s synchronous budget. The bot returns `200 OK` immedi
 
 ### Confirmation Cards
 
-When the agent invokes a tool marked `@confirm` or `@destructive`, a Card v2 is posted to the thread describing the action (level, reason, exact arguments). The card asks the operator to send one of two **Quick Commands** configured in the Chat API console:
+When the agent invokes a tool marked `@confirm` or `@destructive`, a Card v2 is posted to the thread describing the action (level, reason, exact arguments). The decision channel depends on `GOOGLE_CHAT_INTERACTIVE_BUTTONS` (default `false`):
 
-1. **Approve** (`appCommandId=1`) → bot marks the pending action approved, re-runs the agent in the same gchat session with a synthetic prompt that embeds the original arguments, and the LLM re-issues the tool call. The `before_tool_callback` consults the `ConfirmationStore`, sees the matching `(thread, tool_name, args_hash)` flagged `approved=True`, consumes it (one-shot), and lets the call through.
-2. **Deny** (`appCommandId=2`) → bot pops the pending entry and re-runs with a synthetic *do-not-proceed* prompt; the agent acknowledges and stops.
+- **Reply-in-thread (default; required on the Pub/Sub transport).** The card asks the operator to reply **approve** or **deny** in the card's thread. Replies are plain `MESSAGE` events — the one interaction Pub/Sub reliably delivers, thread attached. Approve needs a deliberate word (a casual "ok"/"yes" flows to the agent as normal text); deny is broad.
+- **Inline buttons (`true`; HTTP endpoint deployments only).** ✅ Approve / ❌ Deny buttons whose `CARD_CLICKED` event carries the exact `action_id`. Do **not** enable over Pub/Sub: Google's add-ons runtime resolves clicks with a synchronous HTTPS round-trip a pull worker can't answer, so clicks fail with *"The Chat app didn't respond or its response was invalid"* (error code 3 in the `gsuiteaddons` logs).
+
+Either way the semantics are identical:
+
+1. **Approve** → the bot verifies the decider **is the requester** (requester-only, fail-closed — anyone else's approval is refused in-thread and the pending survives), marks the pending action approved, re-runs the agent in the same gchat session with a synthetic prompt that embeds the original arguments, and the LLM re-issues the tool call. The `before_tool_callback` consults the `ConfirmationStore`, sees the matching `(thread, tool_name, args_hash)` flagged `approved=True`, consumes it (one-shot), and lets the call through.
+2. **Deny** → bot pops the pending entry (anyone may deny) and re-runs with a synthetic *do-not-proceed* prompt; the agent acknowledges and stops.
+
+No commands need to be configured in the Chat API console.
 
 Destructive tools render with a warning banner; confirm tools render with an info banner. Approvals are valid for **120 seconds** after the click, after which the bot re-prompts with a fresh card; pending entries themselves expire after 300 s. If the LLM retries with arguments that differ from those shown on the card (different `args_hash`), the bot re-prompts — operators authorize specific arguments, not just a tool name.
 
 The handshake lives on the bot's `ConfirmationStore` rather than per-context session state so it survives across `AgentTool` sub-agents (whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session). See [`google_chat_bot/confirmation.py`](https://github.com/BAHALLA/orrery/blob/main/agents/google-chat-bot/google_chat_bot/confirmation.py) for the full callback.
-
-**Console setup (one-time).** Add the two Quick Commands under *App Configuration → Commands* in the Chat API console:
-
-| Command ID | Type          | Name      |
-|------------|---------------|-----------|
-| `1`        | Quick command | `Approve` |
-| `2`        | Quick command | `Deny`    |
 
 ### Session Management
 
@@ -98,6 +98,7 @@ Sessions are persisted in the shared Postgres store (same as Slack).
 |----------|---------|-------------|
 | `GOOGLE_CHAT_AUDIENCE` | — | JWT audience — must match the public URL byte-for-byte (HTTP mode only) |
 | `GOOGLE_CHAT_ASYNC_RESPONSE` | `true` | Enable async Chat REST API replies |
+| `GOOGLE_CHAT_INTERACTIVE_BUTTONS` | `false` | Approve/Deny buttons on cards — HTTP endpoint only; keep `false` on Pub/Sub (clicks can't complete there) |
 | `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` | — | SA key for async replies (required locally, uses ADC on GKE) |
 | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated admin emails |
 | `GOOGLE_CHAT_OPERATOR_EMAILS` | — | Comma-separated operator emails |

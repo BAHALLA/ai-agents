@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any
 
-from orrery_core import AgentGateway, set_user_role
+from orrery_core import AgentGateway, classify_decision, set_user_role
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
 from .chat_client import ChatClient
@@ -24,7 +24,7 @@ logger = logging.getLogger("google_chat_bot.handler")
 # Events that trigger a full agent run. These may exceed Google Chat's
 # ~30 second synchronous budget and should be deferred to a background
 # task when a ``ChatClient`` is available.
-_LONG_RUNNING_EVENTS = {"MESSAGE", "CARD_CLICKED", "APP_COMMAND"}
+_LONG_RUNNING_EVENTS = {"MESSAGE", "CARD_CLICKED"}
 
 
 def wrap_for_addons(text: str, cards: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -94,15 +94,6 @@ class GoogleChatHandler:
         chat = event.get("chat") or {}
         common = event.get("commonEventObject") or {}
 
-        # Detect APP_COMMAND (Quick Commands / Slash Commands)
-        if chat.get("appCommandPayload"):
-            logger.info("Detected APP_COMMAND event")
-            if self._should_defer("APP_COMMAND"):
-                logger.info("Deferring APP_COMMAND to background task")
-                self._spawn_background(self._handle_app_command_async(event))
-                return empty_ack()
-            return await self._handle_app_command(event)
-
         # Detect MESSAGE
         if event_type == "MESSAGE" or chat.get("messagePayload"):
             logger.info("Detected MESSAGE event")
@@ -157,17 +148,13 @@ class GoogleChatHandler:
         """Robustly extract the space resource name from any event shape."""
         # Exhaustive priority list of where 'space' might be.
         chat = event.get("chat") or {}
-        app_payload = chat.get("appCommandPayload") or {}
         msg_payload = chat.get("messagePayload") or {}
-        message = (
-            event.get("message") or msg_payload.get("message") or app_payload.get("message") or {}
-        )
+        message = event.get("message") or msg_payload.get("message") or {}
 
         # Search path
         candidates = [
             event.get("space"),
             chat.get("space"),
-            app_payload.get("space"),
             msg_payload.get("space"),
             message.get("space"),
         ]
@@ -199,17 +186,13 @@ class GoogleChatHandler:
     def _extract_thread_name(event: dict[str, Any]) -> str | None:
         """Robustly extract the thread resource name from any event shape."""
         chat = event.get("chat") or {}
-        app_payload = chat.get("appCommandPayload") or {}
         msg_payload = chat.get("messagePayload") or {}
-        message = (
-            event.get("message") or msg_payload.get("message") or app_payload.get("message") or {}
-        )
+        message = event.get("message") or msg_payload.get("message") or {}
 
         # Priority 1: standard thread object.
         # Priority 2: sibling of metadata.
         candidates = [
             message.get("thread"),
-            app_payload.get("thread"),
             msg_payload.get("thread"),
             event.get("thread"),
             chat.get("thread"),
@@ -384,6 +367,91 @@ class GoogleChatHandler:
         except Exception:
             logger.exception("Failed to post async error notification")
 
+    def _resolve_thread_decision(
+        self,
+        user_text: str,
+        user_email: str,
+        space_name: str,
+        thread_name: str | None,
+    ) -> dict[str, Any] | None:
+        """Interpret a message as an approve/deny decision for this thread's pending.
+
+        Replies are the Pub/Sub-safe decision channel: a button click needs a
+        synchronous HTTPS round-trip Google's add-ons runtime can't get from a
+        pull transport, but a reply is a plain MESSAGE event that always
+        arrives with the thread attached. Approve needs a deliberate word
+        (``classify_decision``) from the *requester* (fail-closed); deny is
+        broad and open to anyone.
+
+        Returns ``None`` when the text isn't a decision or nothing is pending
+        (the message flows to the agent unchanged); ``{"reply": ...}`` for an
+        immediate refusal reply; else ``{"pending", "synthetic_text",
+        "ack_text"}`` ready to execute.
+        """
+        decision = classify_decision(user_text)
+        if decision is None:
+            return None
+        key = thread_name or space_name
+        pending = self.store.latest_for_thread(key)
+        if pending is None:
+            return None  # bare "approve"/"no" with nothing pending → normal turn
+
+        if decision == "approve":
+            if refusal := self._refuse_non_requester(pending, user_email):
+                return {"reply": refusal}
+            self.store.mark_latest_approved_for_thread(key)
+            method = "confirm_action"
+        else:
+            self.store.pop_latest_for_thread(key)
+            method = "deny_action"
+
+        synthetic = self._build_click_synthetic(pending, method, user_email or "operator")
+        if synthetic is None:  # pragma: no cover - methods above are always known
+            return None
+        synthetic_text, ack_text = synthetic
+        return {"pending": pending, "synthetic_text": synthetic_text, "ack_text": ack_text}
+
+    async def _execute_pending_decision_async(
+        self, pending: Any, synthetic_text: str, ack_text: str
+    ) -> None:
+        """Run the post-decision agent turn and post the result via REST."""
+        progress_message_name: str | None = None
+        try:
+            progress_message_name = await self._post_initial_progress(
+                space_name=pending.space_name, thread_name=pending.thread_name
+            )
+            tracker = self._make_tracker(progress_message_name)
+
+            try:
+                result = await self._run_agent(
+                    session_id=pending.session_id,
+                    user_id=pending.user_id,
+                    user_text=synthetic_text,
+                    user_role=self.resolve_role(pending.user_id),
+                    space_name=pending.space_name,
+                    thread_name=pending.thread_name,
+                    tracker=tracker,
+                )
+            finally:
+                if tracker is not None:
+                    await tracker.flush_final()
+
+            combined_text = ack_text
+            if result.get("text"):
+                combined_text = f"{ack_text}\n\n{result['text']}"
+
+            await self._update_or_post(
+                space_name=pending.space_name,
+                thread_name=pending.thread_name,
+                message_name=progress_message_name,
+                reply={"text": combined_text, "cardsV2": result.get("cardsV2")},
+            )
+        except Exception:
+            logger.exception("Async decision processing failed")
+            await self._post_async_error(
+                pending.space_name, pending.thread_name, message_name=progress_message_name
+            )
+
     # ── MESSAGE ───────────────────────────────────────────────────────
 
     async def _handle_message(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -391,6 +459,27 @@ class GoogleChatHandler:
 
         if not user_text:
             return self._wrap_for_addons("How can I help you today?")
+
+        # A reply of "approve"/"deny" in a thread with a pending confirmation
+        # is the decision, not a new request for the agent.
+        if decision := self._resolve_thread_decision(
+            user_text, user_email, space_name, thread_name
+        ):
+            if refusal := decision.get("reply"):
+                return self._wrap_for_addons(refusal)
+            pending = decision["pending"]
+            result = await self._run_agent(
+                session_id=pending.session_id,
+                user_id=pending.user_id,
+                user_text=decision["synthetic_text"],
+                user_role=self.resolve_role(pending.user_id),
+                space_name=pending.space_name,
+                thread_name=pending.thread_name,
+            )
+            combined = decision["ack_text"]
+            if result.get("text"):
+                combined = f"{combined}\n\n{result['text']}"
+            return self._wrap_for_addons(combined, result.get("cardsV2"))
 
         session_id = f"gchat:{thread_name or space_name}"
 
@@ -423,6 +512,23 @@ class GoogleChatHandler:
                     space_name=space_name,
                     thread_name=thread_name,
                     reply={"text": "How can I help you today?"},
+                )
+                return
+
+            # Decision replies resolve the thread's pending confirmation
+            # instead of starting a new agent turn.
+            if decision := self._resolve_thread_decision(
+                user_text, user_email, space_name, thread_name
+            ):
+                if refusal := decision.get("reply"):
+                    await self._post_async_reply(
+                        space_name=space_name,
+                        thread_name=thread_name,
+                        reply={"text": refusal},
+                    )
+                    return
+                await self._execute_pending_decision_async(
+                    decision["pending"], decision["synthetic_text"], decision["ack_text"]
                 )
                 return
 
@@ -541,6 +647,7 @@ class GoogleChatHandler:
                 subsystem_chips=tracker.subsystem_chips,
                 triage_report=tracker.triage_report or reply.get("text"),
                 user_role=user_role,
+                interactive_buttons=self.config.google_chat_interactive_buttons,
             )
             final_cards: list[dict[str, Any]] = [triage_card]
             # Any buffered confirmation cards from guarded tools must
@@ -607,7 +714,7 @@ class GoogleChatHandler:
             reply={"text": text, "cardsV2": cards_v2} if cards_v2 else {"text": text},
         )
 
-    # ── APP_COMMAND ───────────────────────────────────────────────────
+    # ── Requester gate (shared by the click paths) ───────────────────────────────────────────────────
 
     @staticmethod
     def _refuse_non_requester(pending: Any, clicker: str | None) -> str | None:
@@ -626,174 +733,6 @@ class GoogleChatHandler:
                 f"approve `{pending.tool_name}`. Ask them to click Approve, or Deny it."
             )
         return None
-
-    def _resolve_pending_for_click(
-        self, method: str, key: str, clicker: str | None
-    ) -> tuple[Any, str | None]:
-        """Look up the pending entry for a click and route by ``method``.
-
-        Returns ``(pending, error_msg)``. For the Approve path we verify the
-        clicker is the pending's requester, then mark the latest matching
-        pending as approved (so the callback can consume it on the LLM retry);
-        for Deny we just pop it (anyone may deny). ``error_msg`` is non-None
-        when no pending matched — or the approval was refused — and the caller
-        should surface that text to the user.
-        """
-        if method == "confirm_action":
-            pending = self.store.latest_for_thread(key)
-            if pending is None:
-                return None, "No pending action found in this thread."
-            if refusal := self._refuse_non_requester(pending, clicker):
-                return None, refusal
-            pending = self.store.mark_latest_approved_for_thread(key)
-        elif method == "deny_action":
-            pending = self.store.pop_latest_for_thread(key)
-        else:
-            return None, f"Unknown action: {method}"
-        if pending is None:
-            return None, "No pending action found in this thread."
-        return pending, None
-
-    async def _handle_app_command(self, event: dict[str, Any]) -> dict[str, Any]:
-        """Process a Quick Command (Approve/Deny) synchronously."""
-        chat = event.get("chat") or {}
-        payload = chat.get("appCommandPayload") or {}
-        metadata = payload.get("appCommandMetadata") or {}
-        command_id = metadata.get("appCommandId")
-
-        # 1. Resolve identity, space and thread
-        user = chat.get("user") or {}
-        user_email = (user.get("email") or "unknown").lower()
-        space_name = self._extract_space_name(event)
-        thread_name = self._extract_thread_name(event)
-
-        # 2. Map command ID to method
-        method = None
-        if command_id == 1:
-            method = "confirm_action"
-        elif command_id == 2:
-            method = "deny_action"
-
-        if not method:
-            return self._wrap_for_addons("Unknown command ID.")
-
-        # 3. Resolve the matching pending entry. Quick-command payloads
-        #    don't carry a thread, so we fall back to the space — which
-        #    can match the wrong pending if multiple destructive actions
-        #    are awaiting approval in the same shared space.
-        key = thread_name or space_name
-        if not thread_name:
-            logger.warning(
-                "APP_COMMAND has no thread name; matching latest pending in space=%s",
-                space_name,
-            )
-        pending, error = self._resolve_pending_for_click(method, key, user_email)
-        if pending is None:
-            return self._wrap_for_addons(error or "No pending action found in this thread.")
-
-        display_name = user.get("displayName") or user_email
-        synthetic = self._build_click_synthetic(pending, method, display_name)
-        if synthetic is None:
-            return self._wrap_for_addons(f"Unknown action: {method}")
-
-        synthetic_text, ack_text = synthetic
-
-        result = await self._run_agent(
-            session_id=pending.session_id,
-            user_id=pending.user_id,
-            user_text=synthetic_text,
-            user_role=self.resolve_role(pending.user_id),
-            space_name=pending.space_name,
-            thread_name=pending.thread_name,
-        )
-
-        combined_text = ack_text
-        if result.get("text"):
-            combined_text = f"{ack_text}\n\n{result['text']}"
-
-        return self._wrap_for_addons(combined_text, result.get("cardsV2"))
-
-    async def _handle_app_command_async(self, event: dict[str, Any]) -> None:
-        """Background-task counterpart to ``_handle_app_command``."""
-        chat = event.get("chat") or {}
-        payload = chat.get("appCommandPayload") or {}
-        metadata = payload.get("appCommandMetadata") or {}
-        command_id = metadata.get("appCommandId")
-
-        user = chat.get("user") or {}
-        user_email = (user.get("email") or "unknown").lower()
-        space_name = self._extract_space_name(event)
-        thread_name = self._extract_thread_name(event)
-
-        method = None
-        if command_id == 1:
-            method = "confirm_action"
-        elif command_id == 2:
-            method = "deny_action"
-
-        if not method:
-            return
-
-        key = thread_name or space_name
-        if not thread_name:
-            logger.warning(
-                "APP_COMMAND has no thread name; matching latest pending in space=%s",
-                space_name,
-            )
-        pending, error = self._resolve_pending_for_click(method, key, user_email)
-        if pending is None:
-            await self._post_async_reply(
-                space_name=space_name,
-                thread_name=thread_name,
-                reply={"text": error or "No pending action found in this thread."},
-            )
-            return
-
-        display_name = user.get("displayName") or user_email
-        synthetic = self._build_click_synthetic(pending, method, display_name)
-        if synthetic is None:
-            return
-        synthetic_text, ack_text = synthetic
-
-        progress_message_name: str | None = None
-        try:
-            # Show an in-thread progress card so the user has feedback
-            # during the post-approve LLM run instead of staring at a
-            # silent thread for ~30 seconds.
-            progress_message_name = await self._post_initial_progress(
-                space_name=pending.space_name, thread_name=pending.thread_name
-            )
-            tracker = self._make_tracker(progress_message_name)
-
-            try:
-                result = await self._run_agent(
-                    session_id=pending.session_id,
-                    user_id=pending.user_id,
-                    user_text=synthetic_text,
-                    user_role=self.resolve_role(pending.user_id),
-                    space_name=pending.space_name,
-                    thread_name=pending.thread_name,
-                    tracker=tracker,
-                )
-            finally:
-                if tracker is not None:
-                    await tracker.flush_final()
-
-            combined_text = ack_text
-            if result.get("text"):
-                combined_text = f"{ack_text}\n\n{result['text']}"
-
-            await self._update_or_post(
-                space_name=pending.space_name,
-                thread_name=pending.thread_name,
-                message_name=progress_message_name,
-                reply={"text": combined_text, "cardsV2": result.get("cardsV2")},
-            )
-        except Exception:
-            logger.exception("Async app command processing failed")
-            await self._post_async_error(
-                pending.space_name, pending.thread_name, message_name=progress_message_name
-            )
 
     # ── CARD_CLICKED ──────────────────────────────────────────────────
 
@@ -953,42 +892,7 @@ class GoogleChatHandler:
             return
         synthetic_text, ack_text = synthetic
 
-        progress_message_name: str | None = None
-        try:
-            progress_message_name = await self._post_initial_progress(
-                space_name=pending.space_name, thread_name=pending.thread_name
-            )
-            tracker = self._make_tracker(progress_message_name)
-
-            try:
-                result = await self._run_agent(
-                    session_id=pending.session_id,
-                    user_id=pending.user_id,
-                    user_text=synthetic_text,
-                    user_role=self.resolve_role(pending.user_id),
-                    space_name=pending.space_name,
-                    thread_name=pending.thread_name,
-                    tracker=tracker,
-                )
-            finally:
-                if tracker is not None:
-                    await tracker.flush_final()
-
-            combined_text = ack_text
-            if result.get("text"):
-                combined_text = f"{ack_text}\n\n{result['text']}"
-
-            await self._update_or_post(
-                space_name=pending.space_name,
-                thread_name=pending.thread_name,
-                message_name=progress_message_name,
-                reply={"text": combined_text, "cardsV2": result.get("cardsV2")},
-            )
-        except Exception:
-            logger.exception("Async card click processing failed")
-            await self._post_async_error(
-                pending.space_name, pending.thread_name, message_name=progress_message_name
-            )
+        await self._execute_pending_decision_async(pending, synthetic_text, ack_text)
 
     # ── Run Remediation click ────────────────────────────────────────
 

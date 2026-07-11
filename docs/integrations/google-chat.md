@@ -2,7 +2,7 @@
 
 ![Google Chat Demo](../images/google-chat-demo.png){ align=right width="400" }
 
-The Orrery platform ships a Google Chat integration that supports **thread-based session isolation**, **email-based RBAC**, and **Quick Command-driven Approve/Deny flows** for guarded tools.
+The Orrery platform ships a Google Chat integration that supports **thread-based session isolation**, **email-based RBAC**, and **human Approve/Deny flows for guarded tools** for guarded tools.
 
 Google Chat supports two ways of connecting to your bot. Choose the one that best fits your infrastructure:
 
@@ -74,7 +74,7 @@ When the run writes `kafka_status` / `k8s_status` / `docker_status` / `observabi
 -   **Header** — overall severity badge: 🟢 *All systems healthy* / 🟡 *Degraded* / 🔴 *Critical*.
 -   **Subsystem sections** — one section per subsystem with an icon and short summary.
 -   **Summary** — the `triage_summarizer` output.
--   **"Remediate" Quick Command instruction** — when overall severity is `warn` or `fail` **and** the viewer is an `operator` or `admin`, the card invites the user to send the **Remediate** Quick Command, which fires the remediation subgraph in the same session and reuses the triage report already in state. RBAC is still enforced server-side at tool time — the prompt is just a UI hint.
+-   **Remediation shortcut** — when overall severity is `warn` or `fail` **and** the viewer is an `operator` or `admin`, the card offers remediation: a 🔧 button (`CARD_CLICKED` → `run_remediation`) when `GOOGLE_CHAT_INTERACTIVE_BUTTONS=true`, else an invitation to reply **remediate** in the thread (Pub/Sub-safe). Either fires the remediation flow in the same session, reusing the triage report already in state. RBAC is still enforced server-side at tool time — this is just a UI shortcut.
 
 For non-triage queries (e.g. *"what's the Kafka lag?"*), no subsystem chips land, so the progress card falls back to a plain text/markdown final reply and the remediation hint is not shown.
 
@@ -108,7 +108,10 @@ Identity is resolved from the user's verified email address.
 
 ### Interactive Guardrails
 
-When an agent attempts a tool marked `@confirm` or `@destructive`, the bot posts a **Card v2** describing the action (level, reason, arguments) and instructs the operator to send the **Approve** or **Deny** Quick Command. The agent run is paused until a human responds.
+When an agent attempts a tool marked `@confirm` or `@destructive`, the bot posts a **Card v2** describing the action (level, reason, arguments). The agent run is paused until a human decides. How the decision travels depends on the transport (`GOOGLE_CHAT_INTERACTIVE_BUTTONS`, default `false`):
+
+- **Reply-in-thread (default — the only mode that works over Pub/Sub).** The card asks the operator to **reply `approve` or `deny` in the card's thread**. A reply is a plain `MESSAGE` event, which the Pub/Sub connection always delivers with the thread attached; the handler matches it against the thread's pending confirmation. Approve requires a deliberate word (`approve`, `confirm`, `proceed`, `go ahead` — a casual "ok"/"yes" is treated as normal conversation, not authorization); deny is broad (`no`, `cancel`, `stop`, `abort`, …).
+- **Inline buttons (`true` — HTTP endpoint deployments only).** Real ✅ Approve / ❌ Deny buttons whose `CARD_CLICKED` event carries the exact `action_id`.
 
 ```mermaid
 sequenceDiagram
@@ -119,9 +122,9 @@ sequenceDiagram
 
     LLM->>T: patch_deployment(args)
     T->>B: confirmation_required (callback short-circuit)
-    B->>U: Card v2 — DESTRUCTIVE: patch_deployment<br/>Send `Approve` or `Deny`
-    U->>B: /Approve  (Quick Command, appCommandId=1)
-    B->>B: mark_latest_approved_for_thread<br/>(args + args_hash + thread)
+    B->>U: Card v2 — DESTRUCTIVE: patch_deployment<br/>Reply `approve` or `deny`
+    U->>B: "approve"  (MESSAGE in the card's thread)
+    B->>B: requester check → mark pending approved<br/>(latest pending in thread + args_hash)
     B->>LLM: synthetic prompt with original args
     LLM->>T: patch_deployment(args)
     T->>B: callback consults store →<br/>consume_approved(thread, tool, args_hash)
@@ -129,16 +132,9 @@ sequenceDiagram
     LLM->>U: "Patch was successful."
 ```
 
-**Why Quick Commands instead of inline buttons?** Quick Commands ride the standard MESSAGE delivery path, so the bot receives a normal `appCommandPayload` event regardless of whether it's deployed as a standard Chat app or a Workspace Add-on. Inline `invokedFunction` buttons proved fragile across Add-on configurations.
+**Approval is requester-only and fail-closed**: the decision (reply or click) carries the sender's verified email, and only the user who triggered the guarded action may approve it — anyone else's approval is refused in-thread and the pending survives. Deny is open to anyone (an accidental deny is harmless; anyone should be able to stop a destructive action).
 
-**Two Quick Commands must be configured in the Chat API console** (one-time setup):
-
-| Command ID | Name | Description |
-|------------|------|-------------|
-| `1` | `Approve` | Approve user action with orrery chat agent |
-| `2` | `Deny` | Deny user action with orrery chat agent |
-
-Both must be of type **Quick command**.
+**Why buttons can't work over Pub/Sub.** A button click is resolved by Google's Workspace add-ons runtime with a **synchronous HTTPS round-trip**: Chat invokes the app's deployment function (`deploymentFunction: confirm_action` in the `gsuiteaddons` logs) and must receive a valid response within the interaction window. A Pub/Sub pull app has no synchronous channel to answer on, so the click fails on Google's side — error code 3, *"The Chat app didn't respond or its response was invalid"* — before the worker can help it, and Chat posts *"&lt;bot&gt; is unable to process your request"* into the space. Google's own [Pub/Sub quickstarts](https://developers.google.com/workspace/chat/quickstart/pub-sub) demonstrate only `MESSAGE`/`ADDED_TO_SPACE`/`REMOVED_FROM_SPACE` and note that dialogs and synchronous card updates are unavailable on this transport. Thread replies are immune: they are ordinary messages, delivered to the topic with the thread attached, answered asynchronously via the Chat REST API.
 
 **How the handshake survives across sub-agents.** Many guarded tools (`patch_deployment`, `restart_deployment`, …) live on specialist `AgentTool`-wrapped agents. ADK gives those AgentTool invocations their own ephemeral session, so any per-context retry flag the callback might write would be invisible to the next invocation. The bot keeps the approval handshake on its own `ConfirmationStore` instead, matching `(thread_or_space, tool_name, args_hash)` against entries the click handler has flipped to `approved=True`. The match is one-shot (consumed on retry) and is only valid for **120 seconds** after the Approve click — a stale approval can't auto-execute a later request.
 

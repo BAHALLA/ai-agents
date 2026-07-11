@@ -198,7 +198,9 @@ def _push_card(card: dict[str, Any]) -> bool:
     return True
 
 
-def apply_chat_confirmation(agent: Any, store: ConfirmationStore) -> int:
+def apply_chat_confirmation(
+    agent: Any, store: ConfirmationStore, *, interactive_buttons: bool = False
+) -> int:
     """Apply :func:`google_chat_confirmation` to every LlmAgent in the tree.
 
     Walks ``agent``'s descendants — both ``sub_agents`` and ADK
@@ -216,7 +218,7 @@ def apply_chat_confirmation(agent: Any, store: ConfirmationStore) -> int:
 
     Returns the number of agents that were wired, for logging.
     """
-    callback = google_chat_confirmation(store)
+    callback = google_chat_confirmation(store, interactive_buttons=interactive_buttons)
     seen: set[int] = set()
     wired = 0
 
@@ -276,7 +278,9 @@ def _resolve_parent_session_id(tool_context: Context) -> str:
     return "unknown"
 
 
-def google_chat_confirmation(store: ConfirmationStore) -> Callable:
+def google_chat_confirmation(
+    store: ConfirmationStore, *, interactive_buttons: bool = False
+) -> Callable:
     """Create a ``before_tool_callback`` that emits approval cards.
 
     Args:
@@ -335,12 +339,21 @@ def google_chat_confirmation(store: ConfirmationStore) -> Callable:
             )
         )
 
-        card = build_confirmation_card(tool.name, args, reason, level, action_id)
+        card = build_confirmation_card(
+            tool.name, args, reason, level, action_id, interactive_buttons=interactive_buttons
+        )
         buffered = _push_card(card)
 
         reason_msg = f" This action {reason}." if reason else ""
         notice = (
-            "An approval card has been posted — click Approve or Deny."
+            (
+                "An approval card has been posted — click Approve or Deny."
+                if interactive_buttons
+                else (
+                    "An approval card has been posted — the user must reply "
+                    "'approve' or 'deny' in this thread."
+                )
+            )
             if buffered
             else "Approval is required from an operator."
         )

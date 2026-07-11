@@ -50,12 +50,26 @@ def build_confirmation_card(
     reason: str,
     level: str,
     action_id: str,
+    interactive_buttons: bool = False,
 ) -> dict[str, Any]:
     """Build a single Google Chat Card v2 entry for a tool confirmation.
 
     Returns a ``{"cardId", "card"}`` dict suitable for inclusion in a
     ``cardsV2`` array. The handler merges multiple entries into the final
-    synchronous webhook response.
+    reply (synchronous webhook response, or a REST-posted message on the
+    Pub/Sub transport).
+
+    Two decision affordances, chosen by ``interactive_buttons``:
+
+    * ``False`` (default, Pub/Sub-safe) — the card asks the operator to
+      **reply** ``approve`` / ``deny`` in the card's thread. Replies are plain
+      MESSAGE events, which the Pub/Sub transport always delivers with the
+      thread attached; the handler resolves them against the thread's pending.
+    * ``True`` (HTTP endpoint only) — real Approve/Deny **buttons** whose
+      ``CARD_CLICKED`` event carries the exact ``action_id``. Do not enable on
+      Pub/Sub: Google's add-ons runtime resolves a click with a synchronous
+      HTTPS round-trip, which a pull transport cannot answer — the click fails
+      on Google's side with "the Chat app didn't respond" (error code 3).
     """
     emoji = "⚠️" if level == LEVEL_DESTRUCTIVE else "\U0001f535"
     level_label = "DESTRUCTIVE" if level == LEVEL_DESTRUCTIVE else "Confirmation Required"
@@ -67,20 +81,48 @@ def build_confirmation_card(
     if reason:
         widgets.append({"textParagraph": {"text": f"<b>Reason:</b> {reason}"}})
     widgets.append({"textParagraph": {"text": f"<b>Arguments:</b> {args_text}"}})
-
-    # Quick commands reuse the regular MESSAGE delivery path, so we
-    # instruct the operator to send the ``Approve`` / ``Deny`` quick
-    # command and resolve the action_id by picking the latest pending
-    # confirmation in this thread. This avoids issues with invokedFunction
-    # buttons in some configurations.
-    widgets.append(
-        {
-            "textParagraph": {
-                "text": (
-                    "👉 Send the <b>Approve</b> quick command to proceed, or <b>Deny</b> to cancel."
-                )
+    if interactive_buttons:
+        widgets.append(
+            {
+                "buttonList": {
+                    "buttons": [
+                        {
+                            "text": "✅ Approve",
+                            "onClick": {
+                                "action": {
+                                    "function": "confirm_action",
+                                    "parameters": [{"key": "action_id", "value": action_id}],
+                                }
+                            },
+                        },
+                        {
+                            "text": "❌ Deny",
+                            "onClick": {
+                                "action": {
+                                    "function": "deny_action",
+                                    "parameters": [{"key": "action_id", "value": action_id}],
+                                }
+                            },
+                        },
+                    ]
+                }
             }
-        }
+        )
+    else:
+        widgets.append(
+            {
+                "textParagraph": {
+                    "text": (
+                        "👉 Reply <b>approve</b> in this thread to proceed, "
+                        "or <b>deny</b> to cancel."
+                    )
+                }
+            }
+        )
+    # Requester-only approval is enforced server-side; the hint keeps a
+    # teammate's refused decision from being a surprise.
+    widgets.append(
+        {"textParagraph": {"text": "<i>Only the requester can approve. Anyone can deny.</i>"}}
     )
 
     return {
@@ -254,11 +296,14 @@ def build_triage_result_card(
     subsystem_chips: dict[str, dict[str, str]],
     triage_report: str | None,
     user_role: str,
+    interactive_buttons: bool = False,
 ) -> dict[str, Any]:
     """Render the final incident triage report as a structured card.
 
-    Includes instructions to run remediation when overall status is not
-    healthy and the user has operator+ permissions.
+    Offers remediation when overall status is not healthy and the user has
+    operator+ permissions — as a clickable button when ``interactive_buttons``
+    (HTTP endpoint only; see :func:`build_confirmation_card`), else as a
+    reply-in-thread instruction that rides the Pub/Sub-safe MESSAGE path.
     """
     overall = _overall_status(subsystem_chips)
     overall_icon = _status_icon(overall)
@@ -299,19 +344,31 @@ def build_triage_result_card(
             }
         )
 
-    # Remediation instruction, operator+ only, only when something is wrong.
+    # Remediation affordance, operator+ only, only when something is wrong.
+    # RBAC is still enforced server-side at tool time — this is a UI shortcut.
     if overall in ("warn", "fail") and user_role in ("operator", "admin"):
-        sections.append(
-            {
-                "widgets": [
-                    {
-                        "textParagraph": {
-                            "text": "👉 To remediate this incident, use the <b>Remediate</b> quick command."
+        if interactive_buttons:
+            # CARD_CLICKED (function ``run_remediation``) dispatches the
+            # remediation prompt in the same session — HTTP endpoint only.
+            remediation_widget: dict[str, Any] = {
+                "buttonList": {
+                    "buttons": [
+                        {
+                            "text": "🔧 Run remediation",
+                            "onClick": {"action": {"function": "run_remediation"}},
                         }
-                    }
-                ]
+                    ]
+                }
             }
-        )
+        else:
+            # Pub/Sub-safe: a reply is a MESSAGE event the LLM routes to the
+            # remediation flow like any other operator request.
+            remediation_widget = {
+                "textParagraph": {
+                    "text": "👉 To remediate this incident, reply <b>remediate</b> in this thread."
+                }
+            }
+        sections.append({"widgets": [remediation_widget]})
 
     if not sections:
         sections.append(

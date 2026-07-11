@@ -115,8 +115,14 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
     # because the Google Chat bot owns its own process, but it would
     # interfere with any hypothetical single process that also hosted
     # another transport (e.g. Slack + Chat).
-    wired = apply_chat_confirmation(root_agent, _store)
-    logger.info("Chat confirmation callback wired on %d LlmAgents", wired)
+    wired = apply_chat_confirmation(
+        root_agent, _store, interactive_buttons=config.google_chat_interactive_buttons
+    )
+    logger.info(
+        "Chat confirmation callback wired on %d LlmAgents (interactive_buttons=%s)",
+        wired,
+        config.google_chat_interactive_buttons,
+    )
 
     agent_app = App(
         name="orrery_assistant_gchat",

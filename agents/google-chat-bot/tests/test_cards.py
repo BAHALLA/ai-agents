@@ -18,6 +18,7 @@ def test_confirmation_card_structure():
         reason="restarts a pod",
         level=LEVEL_CONFIRM,
         action_id="abc123",
+        interactive_buttons=True,
     )
     assert card["cardId"] == "abc123"
 
@@ -37,13 +38,41 @@ def test_confirmation_card_structure():
     assert "name=api" in args_widget["textParagraph"]["text"]
     assert "ns=prod" in args_widget["textParagraph"]["text"]
 
-    # Verify quick command instructions are present
-    instruction_widget = next(
-        w
+    # Verify the Approve/Deny buttons carry the exact action_id so the click
+    # resolves precisely this pending action.
+    button_widget = next(w for w in widgets if "buttonList" in w)
+    buttons = button_widget["buttonList"]["buttons"]
+    assert len(buttons) == 2
+    approve, deny = buttons
+    assert "Approve" in approve["text"]
+    assert approve["onClick"]["action"]["function"] == "confirm_action"
+    assert approve["onClick"]["action"]["parameters"] == [{"key": "action_id", "value": "abc123"}]
+    assert "Deny" in deny["text"]
+    assert deny["onClick"]["action"]["function"] == "deny_action"
+    assert deny["onClick"]["action"]["parameters"] == [{"key": "action_id", "value": "abc123"}]
+
+    # Requester-only hint is present.
+    assert any(
+        "Only the requester can approve" in w.get("textParagraph", {}).get("text", "")
         for w in widgets
-        if "Send the <b>Approve</b> quick command" in w.get("textParagraph", {}).get("text", "")
     )
-    assert instruction_widget is not None
+
+
+def test_confirmation_card_default_mode_uses_reply_instructions():
+    """Pub/Sub-safe default: no buttons (clicks can't round-trip on a pull
+    transport); the card asks for a reply in the thread instead."""
+    card = build_confirmation_card(
+        tool_name="restart_pod",
+        args={"name": "api"},
+        reason="restarts a pod",
+        level=LEVEL_CONFIRM,
+        action_id="abc123",
+    )
+    widgets = card["card"]["sections"][0]["widgets"]
+    assert not any("buttonList" in w for w in widgets)
+    texts = [w.get("textParagraph", {}).get("text", "") for w in widgets]
+    assert any("Reply <b>approve</b>" in t for t in texts)
+    assert any("Only the requester can approve" in t for t in texts)
 
 
 def test_destructive_card_uses_warning_emoji():
@@ -157,6 +186,17 @@ class TestProgressCard:
         assert "restarting api deployment" in text
 
 
+def _remediation_buttons(card):
+    """Collect run_remediation buttons anywhere in the card."""
+    found = []
+    for section in card["card"]["sections"]:
+        for widget in section.get("widgets", []):
+            for button in widget.get("buttonList", {}).get("buttons", []):
+                if button.get("onClick", {}).get("action", {}).get("function") == "run_remediation":
+                    found.append(button)
+    return found
+
+
 class TestTriageResultCard:
     def _chips(self):
         return {
@@ -185,25 +225,35 @@ class TestTriageResultCard:
         )
         assert "healthy" in card["card"]["header"]["subtitle"].lower()
 
-    def test_remediate_instruction_visible_for_operator_on_fail(self):
+    def test_remediate_button_visible_for_operator_on_fail(self):
+        card = build_triage_result_card(
+            subsystem_chips=self._chips(),
+            triage_report="bad",
+            user_role="operator",
+            interactive_buttons=True,
+        )
+        buttons = _remediation_buttons(card)
+        assert len(buttons) == 1
+        assert "remediation" in buttons[0]["text"].lower()
+
+    def test_remediate_default_mode_uses_reply_instruction(self):
         card = build_triage_result_card(
             subsystem_chips=self._chips(),
             triage_report="bad",
             user_role="operator",
         )
-        text = _all_widget_text(card)
-        assert "<b>Remediate</b> quick command" in text
+        assert _remediation_buttons(card) == []
+        assert "reply <b>remediate</b>" in _all_widget_text(card).lower()
 
-    def test_remediate_instruction_hidden_for_viewer(self):
+    def test_remediate_button_hidden_for_viewer(self):
         card = build_triage_result_card(
             subsystem_chips=self._chips(),
             triage_report="bad",
             user_role="viewer",
         )
-        text = _all_widget_text(card)
-        assert "<b>Remediate</b> quick command" not in text
+        assert _remediation_buttons(card) == []
 
-    def test_remediate_instruction_hidden_when_healthy(self):
+    def test_remediate_button_hidden_when_healthy(self):
         chips = {
             "kafka_status": {"status": "ok", "summary": "ok"},
             "k8s_status": {"status": "ok", "summary": "ok"},
@@ -211,8 +261,7 @@ class TestTriageResultCard:
         card = build_triage_result_card(
             subsystem_chips=chips, triage_report="fine", user_role="admin"
         )
-        text = _all_widget_text(card)
-        assert "<b>Remediate</b> quick command" not in text
+        assert _remediation_buttons(card) == []
 
     def test_subsystem_sections_present(self):
         card = build_triage_result_card(

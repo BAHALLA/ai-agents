@@ -177,101 +177,6 @@ class TestHandleEvent:
         assert call_kwargs["session_id"] == "gchat:spaces/abc"
 
 
-class TestHandleAppCommand:
-    @pytest.mark.asyncio
-    async def test_approve_command_runs_agent(self, handler, store, mock_runner):
-        store.add(
-            PendingConfirmation(
-                action_id="abc",
-                tool_name="restart",
-                user_id="user@example.com",
-                session_id="gchat:threads/1",
-                space_name="spaces/xyz",
-                thread_name="threads/1",
-                level="destructive",
-                args={"name": "frontend", "namespace": "default"},
-                args_hash="cafebabe",
-            )
-        )
-        event = {
-            "chat": {
-                "appCommandPayload": {
-                    "appCommandMetadata": {"appCommandId": 1},
-                    "appCommandType": "QUICK_COMMAND",
-                },
-                "user": {"email": "user@example.com", "displayName": "Ops User"},
-                "space": {"name": "spaces/xyz"},
-            },
-            "message": {"thread": {"name": "threads/1"}},
-        }
-        response = await handler.handle_event(event)
-        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
-        assert "Approved" in message["text"]
-        assert "Hello from agent" in message["text"]
-
-        call_kwargs = mock_runner.run_async.call_args.kwargs
-        synthetic_text = call_kwargs["new_message"].parts[0].text
-        assert "approved" in synthetic_text.lower()
-        # Args must be embedded so the LLM can re-issue the call without
-        # reconstructing them from chat history.
-        assert "name='frontend'" in synthetic_text
-        assert "namespace='default'" in synthetic_text
-
-        # The pending must have been marked approved (not popped) so the
-        # before_tool callback can consume it on the LLM's retry.
-        approved = next(iter(store._pending.values()))
-        assert approved.approved is True
-        assert approved.approved_at is not None
-
-    @pytest.mark.asyncio
-    async def test_deny_command_runs_agent(self, handler, store, mock_runner):
-        store.add(
-            PendingConfirmation(
-                action_id="def",
-                tool_name="drop",
-                user_id="user@example.com",
-                session_id="gchat:threads/2",
-                space_name="spaces/xyz",
-                thread_name="threads/2",
-                level="destructive",
-                args={"topic": "events"},
-                args_hash="deadbeef",
-            )
-        )
-        event = {
-            "chat": {
-                "appCommandPayload": {
-                    "appCommandMetadata": {"appCommandId": 2},
-                    "appCommandType": "QUICK_COMMAND",
-                },
-                "user": {"email": "ops@example.com"},
-            },
-            "message": {"thread": {"name": "threads/2"}},
-        }
-        response = await handler.handle_event(event)
-        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
-        assert "Denied" in message["text"]
-        call_kwargs = mock_runner.run_async.call_args.kwargs
-        synthetic_text = call_kwargs["new_message"].parts[0].text
-        assert "denied" in synthetic_text.lower()
-        # Deny removes the pending entirely.
-        assert len(store._pending) == 0
-
-    @pytest.mark.asyncio
-    async def test_app_command_no_pending(self, handler):
-        event = {
-            "chat": {
-                "appCommandPayload": {
-                    "appCommandMetadata": {"appCommandId": 1},
-                },
-                "space": {"name": "spaces/empty"},
-            }
-        }
-        response = await handler.handle_event(event)
-        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
-        assert "No pending action" in message["text"]
-
-
 class TestHandleCardClick:
     @pytest.mark.asyncio
     async def test_unknown_action_id(self, handler):
@@ -1053,29 +958,94 @@ class TestRequesterOnlyApproval:
         assert pending is not None
         assert store.get("act-1") is None  # popped
 
-    def test_app_command_second_person_refused(self, handler, store):
-        store.add(self._pending())
-        pending, error = handler._resolve_pending_for_click(
-            "confirm_action", "threads/42", "mallory@example.com"
-        )
-        assert pending is None
-        assert error is not None and "only the requester" in error
-        survivor = store.get("act-1")
-        assert survivor is not None and survivor.approved is False
 
-    def test_app_command_requester_may_approve(self, handler, store):
-        store.add(self._pending())
-        pending, error = handler._resolve_pending_for_click(
-            "confirm_action", "threads/42", "alice@example.com"
-        )
-        assert error is None
-        assert pending is not None and pending.approved is True
+class TestThreadReplyDecisions:
+    """Approve/deny replies in a pending's thread decide it (Pub/Sub-safe path)."""
 
-    def test_app_command_anyone_may_deny(self, handler, store):
-        store.add(self._pending())
-        pending, error = handler._resolve_pending_for_click(
-            "deny_action", "threads/42", "mallory@example.com"
+    def _add_pending(self, store, requester="alice@example.com"):
+        store.add(
+            PendingConfirmation(
+                action_id="dec-1",
+                tool_name="remove_image",
+                user_id=requester,
+                session_id="gchat:threads/9",
+                space_name="spaces/abc",
+                thread_name="threads/9",
+                level="destructive",
+                args={"image_name": "kafka-exporter:v1.9.0"},
+                args_hash="feedface",
+            )
         )
-        assert error is None
-        assert pending is not None
-        assert store.get("act-1") is None  # popped
+
+    def _message_event(self, text, email="alice@example.com"):
+        return {
+            "type": "MESSAGE",
+            "message": {
+                "argumentText": text,
+                "thread": {"name": "threads/9"},
+                "space": {"name": "spaces/abc"},
+            },
+            "user": {"email": email},
+            "space": {"name": "spaces/abc"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_requester_reply_approve_executes(self, handler, store, mock_runner):
+        self._add_pending(store)
+        response = await handler.handle_event(self._message_event("approve"))
+
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert "Approved" in message["text"]
+        # Pending marked approved (consumed by the callback on the LLM retry).
+        assert store.get("dec-1").approved is True
+        # The synthetic prompt embeds the original arguments and runs in the
+        # pending's own session.
+        call_kwargs = mock_runner.run_async.call_args.kwargs
+        assert call_kwargs["session_id"] == "gchat:threads/9"
+        synthetic = call_kwargs["new_message"].parts[0].text
+        assert "approved" in synthetic.lower()
+        assert "kafka-exporter:v1.9.0" in synthetic
+
+    @pytest.mark.asyncio
+    async def test_second_person_reply_approve_refused(self, handler, store, mock_runner):
+        self._add_pending(store)
+        response = await handler.handle_event(
+            self._message_event("approve", email="mallory@example.com")
+        )
+
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert "only the requester" in message["text"]
+        # Pending survives, unapproved; no agent run happened.
+        assert store.get("dec-1").approved is False
+        mock_runner.run_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_anyone_may_reply_deny(self, handler, store, mock_runner):
+        self._add_pending(store)
+        response = await handler.handle_event(
+            self._message_event("deny", email="mallory@example.com")
+        )
+
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert "Denied" in message["text"]
+        assert store.get("dec-1") is None  # popped
+
+    @pytest.mark.asyncio
+    async def test_casual_yes_is_not_a_decision(self, handler, store, mock_runner):
+        """A casual 'yes' must not authorize — it flows to the agent as text."""
+        self._add_pending(store)
+        await handler.handle_event(self._message_event("yes"))
+
+        assert store.get("dec-1").approved is False
+        # Normal agent turn with the literal text, in the thread session.
+        call_kwargs = mock_runner.run_async.call_args.kwargs
+        assert call_kwargs["new_message"].parts[0].text == "yes"
+
+    @pytest.mark.asyncio
+    async def test_decision_word_without_pending_is_normal_turn(self, handler, store, mock_runner):
+        response = await handler.handle_event(self._message_event("approve"))
+
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert "Hello from agent" in message["text"]
+        call_kwargs = mock_runner.run_async.call_args.kwargs
+        assert call_kwargs["new_message"].parts[0].text == "approve"

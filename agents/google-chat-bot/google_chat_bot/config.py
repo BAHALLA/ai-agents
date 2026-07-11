@@ -40,6 +40,18 @@ class GoogleChatBotConfig(AgentConfig):
     # ``gcloud auth application-default login``).
     google_chat_service_account_file: str | None = None
 
+    # Render clickable Approve/Deny (and Run-remediation) buttons on cards.
+    # A button click is a CARD_CLICKED interaction that Google's add-ons
+    # runtime resolves with a *synchronous* HTTPS round-trip — which only the
+    # HTTP-endpoint transport can provide. On the Pub/Sub transport there is
+    # no synchronous channel, so a click fails on Google's side with
+    # "the Chat app didn't respond or its response was invalid" (error code 3)
+    # before the worker can help it. Default False (Pub/Sub-safe): cards ask
+    # the operator to *reply* "approve" / "deny" in the card's thread instead —
+    # replies are plain MESSAGE events, which Pub/Sub always delivers with the
+    # thread attached. Set True only for HTTP-endpoint deployments.
+    google_chat_interactive_buttons: bool = False
+
     # ── Pub/Sub transport ─────────────────────────────────────────────
     # When the bot lives in a private network (e.g. private GKE) that
     # Google Chat cannot reach over HTTP, configure the Chat app to
