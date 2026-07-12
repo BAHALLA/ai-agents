@@ -79,6 +79,26 @@ jobs:
       - name: Run tests
         run: make test
 
+  web:
+    name: Web Console
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: make web-install
+
+      - name: Check (lint + format + typecheck + test + build)
+        # Same target contributors run locally — the web gate is defined once.
+        run: make web-check
+
   eval:
     name: Agent Evaluation
     runs-on: ubuntu-latest

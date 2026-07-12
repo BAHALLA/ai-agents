@@ -25,6 +25,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | <span class="badge badge--amber">proposed</span> | High | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | <span class="badge badge--amber">proposed</span> | Medium | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-019](aep-019-web-console.md) | Web Console for Onboarding & Operator Usage | <span class="badge badge--blue">in-progress</span> | High | Medium-High |
 | <span class="badge badge--grey">P3</span> | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--red">P0</span> | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | <span class="badge badge--green">completed</span> | Medium | High |
 
@@ -74,6 +75,7 @@ tool organization, and load/chaos coverage:
 - **AEP-008**: Skills-based tool grouping for cleaner agent composition
 - **AEP-009**: Streaming responses for real-time agent output
 - **AEP-016**: Load and chaos testing harness (Locust, LLM flakiness, circuit breaker exercises)
+- **AEP-019**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter
 
 ### Phase 4 - Advanced Patterns (P3)
 
@@ -96,3 +98,5 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-04-11 | AEP-016 added (P2) | Load/chaos testing gap identified during AEP-011 review. |
 | 2026-04-11 | AEP-017 added (P1) | Runbooks are required before on-call rotation; gap in existing docs. |
 | 2026-04-18 | AEP-018 added (P0) | Pub/Sub at-least-once delivery means redelivered events can double-act on `@destructive` tools; single-replica worker is a SPOF during incidents. Split out of Google Chat Pub/Sub transport work. |
+| 2026-07-12 | AEP-019 added (P2) | Onboarding/usage gap: the only browser surface today is ADK's developer Dev UI. A product web console accelerates adoption but is UX, not a production blocker — sequenced behind the AEP-013/014 security perimeter it would amplify, and alongside streaming (AEP-009). |
+| 2026-07-12 | AEP-019: proposed → in-progress | Milestone 1 (authenticated chat console) shipped: Vite + React SPA under web/, served by the FastAPI front door behind ORRERY_WEB_CONSOLE_ENABLED, with two-stage Docker build and a dedicated web CI job. |

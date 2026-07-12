@@ -1,4 +1,5 @@
 .PHONY: help install test eval lint type-check ty fmt check clean \
+       web-install web-dev web-build web-check web-fmt run-console \
        infra-up infra-down infra-reset tracing-up tracing-down \
        docs-serve docs-build docs-deploy \
        run-assistant run-assistant-api run-assistant-cli run-assistant-persistent run-triage \
@@ -48,6 +49,32 @@ fmt: ## Auto-fix lint and format issues
 	uv run ruff format .
 
 check: lint ty test ## Run the full quality gate, verify-only (lint + ty + test — mirrors CI; run `make fmt` first to auto-fix)
+
+# ── Web console (AEP-019) ──────────────────────────────
+# Isolated Node toolchain under web/ (not a uv workspace member). These wrap
+# npm so the console has the same one-command ergonomics as the Python side;
+# `make check` stays Node-free — run `make web-check` for the web gate.
+WEB_DIR        := web
+WEB_STATIC_DIR := core/orrery_core/serving/static
+
+web-install: ## Install web console dependencies (npm ci)
+	cd $(WEB_DIR) && npm ci
+
+web-dev: ## Run the web console dev server (Vite on :5173, proxies /chat to :8000)
+	cd $(WEB_DIR) && npm run dev
+
+web-build: ## Build the console and install it into serving/static for local serving
+	cd $(WEB_DIR) && npm run build
+	rm -rf $(WEB_STATIC_DIR)
+	mkdir -p $(WEB_STATIC_DIR)
+	cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/
+	@echo "▶ Console built into $(WEB_STATIC_DIR)"
+
+web-check: ## Run the full web console gate (lint + format + typecheck + test + build — mirrors CI)
+	cd $(WEB_DIR) && npm run check
+
+web-fmt: ## Auto-fix web console formatting (prettier --write)
+	cd $(WEB_DIR) && npm run format
 
 clean: ## Remove Python caches, tool caches, and build artifacts (keeps .venv)
 	@echo "▶ Cleaning build artifacts and caches…"
@@ -112,8 +139,9 @@ _ensure-dev-jwt-secret:
 		echo "▶ Generated dev JWT secret at $(DEV_JWT_SECRET_FILE)"; \
 	fi
 
-run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front door (auth ON, dev secret)
+run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front door (auth ON, dev secret; serves the web console at / when built)
 	@echo "▶ Auth enabled — mint a token in another terminal with: make dev-token"
+	@echo "▶ Web console served at http://localhost:8000/ when built (run: make web-build, or one-shot: make run-console)"
 	cd agents/orrery-assistant && \
 		AUTH_ENABLED=true \
 		JWT_ALGORITHM=HS256 \
@@ -121,7 +149,10 @@ run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front 
 		JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
 		JWT_ISSUER=$(DEV_JWT_ISSUER) \
 		ENABLE_METRICS_SERVER=true \
+		ORRERY_WEB_CONSOLE_ENABLED=true \
 		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
+
+run-console: web-build run-assistant-api ## Build the web console and serve it behind the API (one command, http://localhost:8000)
 
 dev-token: _ensure-dev-jwt-secret ## Mint a JWT for local testing (ROLE=viewer|operator|admin, default admin)
 	@JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \

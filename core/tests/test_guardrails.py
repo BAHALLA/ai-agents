@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -13,6 +14,7 @@ from orrery_core.security.guardrails import (
     CONFIRMATION_DECISION_STATE_KEY,
     CONFIRMATION_STRICT_STATE_KEY,
     _hash_args,
+    _pending_confirmations,
     classify_decision,
     confirm,
     destructive,
@@ -22,6 +24,15 @@ from orrery_core.security.guardrails import (
     is_guarded,
     require_confirmation,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_pending_confirmations():
+    """Isolate the process-level strict-mode pending store between tests."""
+    _pending_confirmations.reset()
+    yield
+    _pending_confirmations.reset()
+
 
 # ── @destructive decorator ─────────────────────────────────────────────
 
@@ -419,7 +430,10 @@ def test_strict_records_requester_on_pending(fake_tool, fake_ctx):
     result = callback(tool=_danger(fake_tool), args={}, tool_context=ctx)
     assert result["status"] == "confirmation_required"
     assert "'approve'" in result["message"]
-    assert ctx.state["_guardrail_pending_danger_tool"]["requester"] == "alice@example.com"
+    # The pending lives in the requester-keyed store, not session state.
+    pending = _pending_confirmations.get("alice@example.com", "danger_tool")
+    assert pending is not None
+    assert pending["requester"] == "alice@example.com"
 
 
 def test_strict_recall_without_decision_stays_blocked(fake_tool, fake_ctx):
@@ -446,39 +460,69 @@ def test_strict_requester_approval_passes_and_consumes(fake_tool, fake_ctx):
     ctx._invocation_context.invocation_id = "inv-2"
 
     assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
-    assert ctx.state["_guardrail_pending_danger_tool"] is None
+    # Pending consumed from the store, decision consumed from state.
+    assert _pending_confirmations.get("alice@example.com", "danger_tool") is None
     assert ctx.state[CONFIRMATION_DECISION_STATE_KEY] is None  # consumed
 
 
-def test_strict_second_person_approval_refused(fake_tool, fake_ctx):
-    """Only the verified actor who triggered the action may approve it."""
+def test_strict_survives_agent_tool_boundary(fake_tool, fake_ctx):
+    """The core AgentTool-boundary regression.
+
+    The request turn and the approval turn arrive in DIFFERENT sessions (each
+    AgentTool call is a throwaway sub-session). Because the pending is keyed by
+    requester, the approval in a fresh session still resolves against it.
+    """
     callback = require_confirmation()
-    ctx = _strict_ctx(fake_ctx, actor="alice@example.com")
     tool = _danger(fake_tool)
 
-    callback(tool=tool, args={}, tool_context=ctx)
-    _stamp_decision(ctx, "approve", by="mallory@example.com")
+    # Turn 1: request, in one sub-session — blocks and stores the pending.
+    ctx1 = _strict_ctx(fake_ctx, actor="alice@example.com", invocation_id="sub-1")
+    assert (
+        callback(tool=tool, args={"id": 1}, tool_context=ctx1)["status"] == "confirmation_required"
+    )
 
-    result = callback(tool=tool, args={}, tool_context=ctx)
+    # Turn 2: approval arrives in a brand-new, empty sub-session (no pending in
+    # its own state) — must still resolve via the requester-keyed store.
+    ctx2 = _strict_ctx(fake_ctx, actor="alice@example.com", invocation_id="sub-2")
+    _stamp_decision(ctx2, "approve", by="alice@example.com")
+    assert callback(tool=tool, args={"id": 1}, tool_context=ctx2) is None
+
+
+def test_strict_second_person_cannot_approve(fake_tool, fake_ctx):
+    """Only the verified actor who triggered the action may approve it."""
+    callback = require_confirmation()
+    tool = _danger(fake_tool)
+
+    # Alice raises the pending.
+    ctx_alice = _strict_ctx(fake_ctx, actor="alice@example.com")
+    callback(tool=tool, args={}, tool_context=ctx_alice)
+
+    # Mallory approves in her own turn — she cannot resolve Alice's pending.
+    ctx_mallory = _strict_ctx(fake_ctx, actor="mallory@example.com")
+    _stamp_decision(ctx_mallory, "approve", by="mallory@example.com")
+    result = callback(tool=tool, args={}, tool_context=ctx_mallory)
     assert result is not None
-    assert result["status"] == "confirmation_required"
-    assert "not given by the person" in result["message"]
-    # The pending survives so the real requester can still decide.
-    assert isinstance(ctx.state["_guardrail_pending_danger_tool"], dict)
+    assert result["status"] == "confirmation_required"  # blocked, not executed
+
+    # Alice's pending survives so the real requester can still decide.
+    assert _pending_confirmations.get("alice@example.com", "danger_tool") is not None
 
 
 def test_strict_unknown_requester_fails_closed(fake_tool, fake_ctx):
-    """No verified actor at request time → nobody can approve."""
+    """No verified actor at request time → nobody can approve, nothing is stored."""
     callback = require_confirmation()
     ctx = fake_ctx(state={CONFIRMATION_STRICT_STATE_KEY: True})  # no actor
     tool = _danger(fake_tool)
 
-    callback(tool=tool, args={}, tool_context=ctx)
-    assert ctx.state["_guardrail_pending_danger_tool"]["requester"] is None
-    _stamp_decision(ctx, "approve", by="anyone@example.com")
-
     result = callback(tool=tool, args={}, tool_context=ctx)
-    assert result is not None  # still blocked
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+    # Cannot key a pending without a requester — nothing persisted.
+    assert _pending_confirmations.get("", "danger_tool") is None
+
+    # Even a stamped approval cannot unblock it.
+    _stamp_decision(ctx, "approve", by="anyone@example.com")
+    assert callback(tool=tool, args={}, tool_context=ctx) is not None
 
 
 def test_strict_deny_clears_pending(fake_tool, fake_ctx):
@@ -491,7 +535,7 @@ def test_strict_deny_clears_pending(fake_tool, fake_ctx):
 
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result["status"] == "denied"
-    assert ctx.state["_guardrail_pending_danger_tool"] is None
+    assert _pending_confirmations.get("alice@example.com", "danger_tool") is None
 
 
 def test_strict_stale_approval_refused(fake_tool, fake_ctx):

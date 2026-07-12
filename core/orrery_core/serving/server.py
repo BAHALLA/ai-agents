@@ -34,6 +34,7 @@ import logging
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
@@ -69,6 +70,7 @@ class ServerConfig:
     jwt: JWTConfig = field(default_factory=JWTConfig)
     database_url: str | None = None
     cors_origins: tuple[str, ...] = ()
+    web_console_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> ServerConfig:
@@ -80,6 +82,8 @@ class ServerConfig:
         - ``JWT_*`` (see :class:`JWTConfig`)
         - ``DATABASE_URL`` (Postgres recommended for multi-replica)
         - ``ORRERY_CORS_ORIGINS`` (comma-separated)
+        - ``ORRERY_WEB_CONSOLE_ENABLED`` (default ``false``) — serve the built
+          web console (AEP-019) from the packaged ``serving/static`` bundle.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         return cls(
@@ -87,6 +91,8 @@ class ServerConfig:
             jwt=JWTConfig.from_env(),
             database_url=os.getenv("DATABASE_URL") or None,
             cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
+            web_console_enabled=os.getenv("ORRERY_WEB_CONSOLE_ENABLED", "false").lower()
+            in ("1", "true", "yes"),
         )
 
 
@@ -224,4 +230,44 @@ def create_app(
         reply = await gateway.run(msg)
         return ChatResponse(session_id=reply.session_id, response=reply.text)
 
+    # Mount the web console last so the explicit API routes above always win
+    # over the catch-all static mount at "/".
+    if cfg.web_console_enabled:
+        _mount_web_console(api)
+
     return api
+
+
+# ── Web console (AEP-019) ───────────────────────────────────────────
+
+
+def _static_dir() -> Path:
+    """Directory holding the built console bundle (`web/dist`, copied here at
+    image build time). Kept as a function so tests can monkeypatch it."""
+    return Path(__file__).parent / "static"
+
+
+def _mount_web_console(api: FastAPI) -> None:
+    """Serve the built SPA at ``/`` when the bundle is present.
+
+    The static shell (HTML/JS/CSS) carries no secrets — the operator enters
+    their bearer token at runtime and it rides the ``Authorization`` header on
+    the ``/chat`` API, which stays JWT-protected. Serving the shell without auth
+    is therefore correct (a browser navigation can't send a bearer header
+    anyway). A missing bundle is a warn-and-skip, not a crash, so the API still
+    serves when the frontend hasn't been built.
+    """
+    from fastapi.staticfiles import StaticFiles
+
+    static_dir = _static_dir()
+    if not (static_dir / "index.html").is_file():
+        logger.warning(
+            "ORRERY_WEB_CONSOLE_ENABLED is set but no built bundle was found at %s. "
+            "Build it with `cd web && npm run build` (or via the Docker image). "
+            "Serving the API without the console.",
+            static_dir,
+        )
+        return
+
+    api.mount("/", StaticFiles(directory=static_dir, html=True), name="console")
+    logger.info("Web console enabled, serving %s at /", static_dir)
