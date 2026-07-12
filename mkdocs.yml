@@ -157,6 +157,7 @@ nav:
     - "AEP-016: Load & Chaos Testing": enhancements/aep-016-load-chaos-testing.md
     - "AEP-017: Runbooks & On-Call": enhancements/aep-017-runbooks-oncall.md
     - "AEP-018: Pub/Sub Idempotency & HPA": enhancements/aep-018-pubsub-idempotency-hpa.md
+    - "AEP-019: Web Console": enhancements/aep-019-web-console.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md
