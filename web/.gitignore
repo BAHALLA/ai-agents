@@ -1,0 +1,13 @@
+# Node toolchain — the web console is an isolated build, not a uv workspace member.
+node_modules
+dist
+coverage
+
+# Local env overrides (never commit real tokens or endpoints)
+.env
+.env.local
+.env.*.local
+
+# Editor / tooling caches
+*.tsbuildinfo
+.vite

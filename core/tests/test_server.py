@@ -272,3 +272,76 @@ def test_chat_empty_message_rejected(app_no_auth):
     client = TestClient(app_no_auth)
     r = client.post("/chat", json={"message": ""})
     assert r.status_code == 422
+
+
+# ── Web console (AEP-019) ───────────────────────────────────────────
+
+
+def _write_bundle(tmp_path):
+    """Create a minimal built-bundle layout the mount will accept."""
+    (tmp_path / "index.html").write_text("<!doctype html><title>Console</title>", encoding="utf-8")
+    return tmp_path
+
+
+def test_console_not_mounted_when_disabled(patched_runner):
+    app = create_app(
+        root_agent=MagicMock(),
+        app_name="test",
+        plugins=[],
+        config=ServerConfig(auth_enabled=False, jwt=JWTConfig(secret="x")),
+    )
+    assert not any(getattr(r, "name", None) == "console" for r in app.routes)
+
+
+def test_console_mounts_and_serves_index_when_bundle_present(patched_runner, tmp_path):
+    with patch("orrery_core.serving.server._static_dir", return_value=_write_bundle(tmp_path)):
+        app = create_app(
+            root_agent=MagicMock(),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(
+                auth_enabled=False, jwt=JWTConfig(secret="x"), web_console_enabled=True
+            ),
+        )
+    client = TestClient(app)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Console" in r.text
+
+
+def test_console_enabled_but_missing_bundle_skips_without_crashing(patched_runner, tmp_path):
+    # Point at an empty dir (no index.html): warn-and-skip, API still serves.
+    with patch("orrery_core.serving.server._static_dir", return_value=tmp_path):
+        app = create_app(
+            root_agent=MagicMock(),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(
+                auth_enabled=False, jwt=JWTConfig(secret="x"), web_console_enabled=True
+            ),
+        )
+    assert not any(getattr(r, "name", None) == "console" for r in app.routes)
+    assert TestClient(app).get("/healthz").status_code == 200
+
+
+def test_console_mount_does_not_shadow_api_routes(patched_runner, tmp_path):
+    """The static catch-all at / must not intercept explicit API routes."""
+    with patch("orrery_core.serving.server._static_dir", return_value=_write_bundle(tmp_path)):
+        app = create_app(
+            root_agent=MagicMock(),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(
+                auth_enabled=False, jwt=JWTConfig(secret="x"), web_console_enabled=True
+            ),
+        )
+    client = TestClient(app)
+    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.post("/chat", json={"message": "hi"}).status_code == 200
+
+
+def test_web_console_enabled_from_env(monkeypatch):
+    monkeypatch.setenv("ORRERY_WEB_CONSOLE_ENABLED", "true")
+    assert ServerConfig.from_env().web_console_enabled is True
+    monkeypatch.setenv("ORRERY_WEB_CONSOLE_ENABLED", "false")
+    assert ServerConfig.from_env().web_console_enabled is False

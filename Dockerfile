@@ -51,6 +51,20 @@ COPY agents/ agents/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --frozen --extra postgres --extra server --extra otel
 
+# ── Web console build stage (AEP-019) ─────────────────────────────────
+# Builds the React SPA to a static bundle. An isolated Node toolchain — no
+# Node reaches the runtime image; only the compiled dist/ is copied in.
+FROM node:22-bookworm-slim AS web-builder
+
+WORKDIR /web
+
+# Install with the committed lockfile first (cached layer, independent of src).
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+COPY web/ ./
+RUN npm run build
+
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.14-slim-bookworm
 
@@ -67,6 +81,11 @@ COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/core/ /app/core/
 COPY --from=builder --chown=appuser:appuser /app/agents/ /app/agents/
+
+# Built web console bundle. The FastAPI front door serves it from here when
+# ORRERY_WEB_CONSOLE_ENABLED=true (AEP-019). Copied after core/ so it lands in
+# the packaged serving/static directory.
+COPY --from=web-builder --chown=appuser:appuser /web/dist /app/core/orrery_core/serving/static
 
 USER appuser
 

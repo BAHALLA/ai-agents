@@ -29,6 +29,10 @@ wheels/
 *.db
 site/
 
+# Web console build output (AEP-019) — built from web/ into the image, not tracked
+core/orrery_core/serving/static/
+web/node_modules/
+
 # Terraform
 .terraform/
 *.tfstate
