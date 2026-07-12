@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--blue">in-progress</span> (Milestone 1 chat console shipped; Milestones 2–3 remaining) |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High (8-12 days) |
 | **Impact** | Medium-High (adoption / onboarding) |
