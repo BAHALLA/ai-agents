@@ -21,21 +21,24 @@ Milestone 1 (MVP) — an authenticated chat console:
 Milestones 2 (triage/remediation view) and 3 (onboarding wizard) are tracked in
 the AEP and not yet built.
 
-## Develop
+## Run
+
+From the repo root, wrapped as Make targets (one command each):
 
 ```bash
-cd web
-npm install
-npm run dev          # http://localhost:5173, proxies /chat to VITE_DEV_API_TARGET
+make run-console     # build the SPA + serve it behind the API at http://localhost:8000
+make web-dev         # Vite dev server on :5173 with hot reload (proxies /chat to :8000)
+make web-install     # npm ci
 ```
 
-Point the dev proxy at a running front door (default `http://localhost:8000`):
+`make run-console` is the production-like path (same-origin, single port). For
+fast iteration use two terminals — `make run-assistant-api` and `make web-dev` —
+then mint a token with `make dev-token` and paste it into the gate.
+
+The underlying npm scripts still work directly if you prefer:
 
 ```bash
-# terminal 1 — the API
-make run-assistant-api
-# terminal 2 — the console
-VITE_DEV_API_TARGET=http://localhost:8000 npm run dev
+cd web && npm install && npm run dev
 ```
 
 Copy `.env.example` to `.env.local` to override the API base or dev proxy.
@@ -43,14 +46,13 @@ Copy `.env.example` to `.env.local` to override the API base or dev proxy.
 ## Quality gate
 
 ```bash
-npm run check        # lint + typecheck + test
-npm run build        # tsc --noEmit && vite build  → dist/
-npm run test:watch   # vitest in watch mode
-npm run format       # prettier --write .
+make web-check       # lint + format + typecheck + test + build (mirrors CI)
+make web-fmt         # prettier --write .
 ```
 
-CI runs the same commands in a dedicated `web` job (see
-`.github/workflows/ci.yml`), independent of the Python gate.
+CI runs `make web-check` in a dedicated `web` job (see
+`.github/workflows/ci.yml`), so the gate is defined once and matches local.
+Underlying scripts: `npm run check`, `npm run test:watch`, `npm run build`.
 
 ## Layout
 
