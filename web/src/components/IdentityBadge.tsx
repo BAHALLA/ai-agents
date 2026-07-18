@@ -11,6 +11,12 @@ const roleTitle: Record<Identity["role"], string> = {
   admin: "Admin — may run destructive tools after confirmation.",
 };
 
+const roleBadge: Record<Identity["role"], string> = {
+  viewer: "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
+  operator: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+  admin: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300",
+};
+
 /**
  * Shows who the operator is acting as and their resolved role. Display only —
  * decoded client-side from the token; the server re-derives the authoritative
@@ -19,16 +25,26 @@ const roleTitle: Record<Identity["role"], string> = {
 export function IdentityBadge({ identity, onSignOut }: Props) {
   if (!identity) return null;
   return (
-    <div className="identity" role="status">
-      <div className="identity__who">
-        <span className="identity__subject" title={identity.subject}>
+    <div role="status" className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span
+          className="min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200"
+          title={identity.subject}
+        >
           {identity.subject}
         </span>
-        <span className={`badge badge--${identity.role}`} title={roleTitle[identity.role]}>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${roleBadge[identity.role]}`}
+          title={roleTitle[identity.role]}
+        >
           {identity.role}
         </span>
       </div>
-      <button type="button" className="btn btn--ghost" onClick={onSignOut}>
+      <button
+        type="button"
+        onClick={onSignOut}
+        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+      >
         Sign out
       </button>
     </div>

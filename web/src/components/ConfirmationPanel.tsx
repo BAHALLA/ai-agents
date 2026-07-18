@@ -19,39 +19,45 @@ export function ConfirmationPanel({ pending, disabled, onDecide }: Props) {
   const argEntries = Object.entries(pending.args);
 
   return (
-    <section className="confirm" role="alertdialog" aria-label="Pending confirmation">
-      <div className="confirm__header">
-        <span className={`confirm__level confirm__level--${pending.level || "confirm"}`}>
+    <section
+      role="alertdialog"
+      aria-label="Pending confirmation"
+      className="mx-4 mb-2 rounded-xl border border-slate-200 border-l-4 border-l-amber-500 bg-white p-4 shadow-sm dark:border-slate-700 dark:border-l-amber-500 dark:bg-slate-800"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300">
           {pending.level || "guarded"}
         </span>
-        <span className="confirm__title">
-          Awaiting your approval: <code>{pending.tool_name}</code>
+        <span className="text-sm text-slate-700 dark:text-slate-200">
+          Awaiting your approval: <code className="font-mono font-medium">{pending.tool_name}</code>
         </span>
       </div>
       {argEntries.length > 0 ? (
-        <dl className="confirm__args">
+        <dl className="mt-2 grid gap-1 text-sm">
           {argEntries.map(([key, value]) => (
-            <div key={key} className="confirm__arg">
-              <dt>{key}</dt>
-              <dd>{typeof value === "string" ? value : JSON.stringify(value)}</dd>
+            <div key={key} className="flex gap-2">
+              <dt className="min-w-32 text-slate-500 dark:text-slate-400">{key}</dt>
+              <dd className="m-0 font-mono break-all text-slate-800 dark:text-slate-200">
+                {typeof value === "string" ? value : JSON.stringify(value)}
+              </dd>
             </div>
           ))}
         </dl>
       ) : null}
-      <div className="confirm__actions">
+      <div className="mt-3 flex gap-2">
         <button
           type="button"
-          className="btn btn--approve"
           disabled={disabled}
           onClick={() => onDecide("approve")}
+          className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           Approve
         </button>
         <button
           type="button"
-          className="btn btn--deny"
           disabled={disabled}
           onClick={() => onDecide("deny")}
+          className="rounded-lg border border-red-500 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40"
         >
           Deny
         </button>

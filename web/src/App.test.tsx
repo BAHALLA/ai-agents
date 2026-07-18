@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
+import { storageKeys } from "./config";
 
 /** A minimal unsigned JWT for the given claims (display decoding only). */
 function makeToken(payload: Record<string, unknown>): string {
   const b64 = (obj: unknown) =>
     btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.sig`;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 afterEach(() => {
@@ -41,15 +49,9 @@ describe("App auth flow", () => {
   it("sends a message and renders the assistant reply", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ session_id: "s1", response: "Kafka is healthy." }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ),
+      vi.fn(async () => jsonResponse({ session_id: "s1", response: "Kafka is healthy." })),
     );
-    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
     render(<App />);
@@ -58,47 +60,41 @@ describe("App auth flow", () => {
     await user.click(screen.getByRole("button", { name: /send/i }));
 
     expect(await screen.findByText("Kafka is healthy.")).toBeInTheDocument();
-    await waitFor(() => expect(localStorage.getItem("orrery.console.sessionId")).toBe("s1"));
+    // The server session id is threaded into the persisted conversation.
+    await waitFor(() => {
+      const raw = localStorage.getItem(storageKeys.conversations) ?? "[]";
+      expect(JSON.stringify(JSON.parse(raw))).toContain("s1");
+    });
   });
 
   it("renders assistant markdown as formatted output, not raw asterisks", async () => {
     const reply = "Images:\n\n* **grafana/loki:3.7.3** (ID: `83dfa527a638`)\n* plain item";
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ session_id: "s1", response: reply }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ),
+      vi.fn(async () => jsonResponse({ session_id: "s1", response: reply })),
     );
-    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
     render(<App />);
     await user.type(screen.getByRole("textbox", { name: /message/i }), "list images");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    // Bold + inline code became real elements inside a real list…
     const bold = await screen.findByText("grafana/loki:3.7.3");
     expect(bold.tagName).toBe("STRONG");
     expect(screen.getByText("83dfa527a638").tagName).toBe("CODE");
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    // …and the raw markdown syntax is gone from the transcript.
+    // Scope to the rendered markdown list (the sidebar history is also a list).
+    const markdownList = bold.closest("ul");
+    expect(markdownList).not.toBeNull();
+    expect(within(markdownList as HTMLElement).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.queryByText(/\*\*grafana/)).not.toBeInTheDocument();
   });
 
-  it("renders the tool timeline and confirmation panel after a turn", async () => {
-    const json = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+  it("shows the tool-call table and confirmation panel after a guarded turn", async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       const u = String(url);
       if (u.includes("/activity")) {
-        return json({
+        return jsonResponse({
           session_id: "s1",
           entries: [
             {
@@ -110,7 +106,7 @@ describe("App auth flow", () => {
         });
       }
       if (u.includes("/confirmations/pending")) {
-        return json({
+        return jsonResponse({
           pending: {
             tool_name: "restart_deployment",
             level: "destructive",
@@ -119,26 +115,28 @@ describe("App auth flow", () => {
           },
         });
       }
-      return json({ session_id: "s1", response: "This action needs your approval." });
+      if (u.includes("/triage"))
+        return jsonResponse({ session_id: "s1", severity: null, report: null });
+      return jsonResponse({ session_id: "s1", response: "This action needs your approval." });
     });
     vi.stubGlobal("fetch", fetchMock);
-    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
     render(<App />);
-
     await user.type(screen.getByRole("textbox", { name: /message/i }), "restart payment-api");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    // Timeline pane, collapsed by default — expand it to see the recorded call.
-    const summary = await screen.findByText(/tool calls/i);
-    await user.click(summary);
-    expect(screen.getByText("restart_deployment", { selector: ".timeline__op" })).toBeVisible();
-
-    // Confirmation panel for the pending guarded action.
+    // The confirmation panel is inline in the chat column.
     const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
     expect(panel).toHaveTextContent("restart_deployment");
     expect(panel).toHaveTextContent("payment-api");
+
+    // Open the inspector's Tool calls tab and assert the table row landed.
+    await user.click(screen.getByRole("button", { name: /tool calls/i }));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("restart_deployment")).toBeInTheDocument();
+    expect(within(table).getByText("confirmation_required")).toBeInTheDocument();
 
     // Approve sends the literal decision word through the normal chat flow —
     // the server-side requester-verified gate stays the authority.
@@ -150,27 +148,22 @@ describe("App auth flow", () => {
     });
   });
 
-  it("runs a triage from the header button and renders the verdict banner", async () => {
-    const json = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+  it("runs a triage and auto-opens the verdict report", async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       const u = String(url);
       if (u.includes("/triage")) {
-        return json({
+        return jsonResponse({
           session_id: "s1",
           severity: "degraded",
           report: "## Triage\n\nKafka: consumer lag growing on **orders**.",
         });
       }
-      if (u.includes("/activity")) return json({ session_id: "s1", entries: [] });
-      if (u.includes("/confirmations/pending")) return json({ pending: null });
-      return json({ session_id: "s1", response: "Triage complete: degraded." });
+      if (u.includes("/activity")) return jsonResponse({ session_id: "s1", entries: [] });
+      if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
+      return jsonResponse({ session_id: "s1", response: "Triage complete: degraded." });
     });
     vi.stubGlobal("fetch", fetchMock);
-    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
     render(<App />);
@@ -184,10 +177,32 @@ describe("App auth flow", () => {
       expect(JSON.parse(String(chatCalls[0][1]?.body)).message).toMatch(/incident triage/i);
     });
 
-    // The recorded verdict renders as a severity banner with the report inside.
-    const banner = await screen.findByText("degraded");
-    expect(banner).toHaveClass("triage__badge");
-    await user.click(screen.getByText(/last triage verdict/i));
-    expect(screen.getByText("orders").tagName).toBe("STRONG");
+    // The inspector auto-opens on the triage tab; the report renders as prose.
+    const orders = await screen.findByText("orders");
+    expect(orders.tagName).toBe("STRONG");
+    expect(screen.getAllByText("degraded").length).toBeGreaterThan(0);
+  });
+
+  it("keeps conversations in a sidebar history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ session_id: "s1", response: "ok" })),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "check kafka");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("ok");
+
+    // The conversation is titled from the first message and listed under History.
+    const history = screen.getByRole("navigation", { name: /conversation history/i });
+    expect(within(history).getByText("check kafka")).toBeInTheDocument();
+
+    // New chat adds a fresh entry and clears the transcript.
+    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    expect(screen.queryByText("ok")).not.toBeInTheDocument();
   });
 });

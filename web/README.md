@@ -8,6 +8,17 @@ workspace. It builds to a static bundle that the FastAPI front door
 (`core/orrery_core/serving/server.py`) serves from `serving/static/` behind the
 same JWT auth as the API. `make test` (Python) never touches Node.
 
+Built with **React + Vite + TypeScript** and styled with **Tailwind CSS v4**
+(`@tailwindcss/vite`) + `@tailwindcss/typography` for rendered markdown. Dark
+mode follows the OS (`prefers-color-scheme`); there is no manual toggle.
+
+The UI is an app shell: a **left sidebar** (brand, New chat, Run triage,
+conversation history, identity), a **chat column** in the middle, and a
+**right inspector panel** (Tool calls table + Triage report) that toggles from
+the header. Conversation history is kept **client-side** in `localStorage`
+(the server has no "list sessions" endpoint) — each entry stores the full
+transcript plus the server-issued `sessionId`.
+
 ## Status
 
 Milestone 1 — an authenticated chat console:
@@ -16,25 +27,27 @@ Milestone 1 — an authenticated chat console:
 - Chat against `POST /chat`, threading the server-issued `session_id`
 - Identity + role badge (viewer / operator / admin), decoded client-side for
   display — the server remains authoritative for RBAC
-- **Tool-call timeline** (`GET /session/{id}/activity`): every recorded tool
-  execution for the session, collapsed under the transcript, so the
+- **Tool calls table** (`GET /session/{id}/activity`): every recorded tool
+  execution — time, tool, agent, status — in the right inspector panel, so the
   orchestration is visible instead of an opaque paragraph
 - **Confirmation panel** (`GET /confirmations/pending`): when a guarded tool
-  is awaiting the caller's decision, an Approve/Deny panel renders it. The
+  is awaiting the caller's decision, an Approve/Deny panel renders inline. The
   buttons send the literal words `approve`/`deny` through the normal chat
   flow — the server's requester-verified gate stays the sole authority
+- **Conversation history** sidebar — client-side, titled from the first
+  message; New chat starts a fresh session
 - Loading, error, and auth-expiry states
 
 Milestone 2 — triage view:
 
-- **Run triage** header button — one click sends the full-sweep prompt to the
+- **Run triage** sidebar button — one click sends the full-sweep prompt to the
   `incident_triage_agent`
-- **Verdict banner** (`GET /session/{id}/triage`): the recorded severity
+- **Verdict report** (`GET /session/{id}/triage`): the recorded severity
   (healthy / degraded / critical) as a color-coded badge with the full triage
-  report collapsed inside
-- **Live timeline**: while a request is in flight the tool-call timeline is
-  polled every 2.5s, so multi-specialist sweeps become visible as each
-  specialist completes
+  report rendered as prose in the inspector's Triage tab, which auto-opens when
+  a verdict lands
+- **Live tool calls**: while a request is in flight the table is polled every
+  2.5s, so multi-specialist sweeps become visible as each specialist completes
 
 Remaining: per-system status chips, the remediation-loop trace (batch
 workflow only today), and Milestone 3 (onboarding wizard).
@@ -76,12 +89,15 @@ Underlying scripts: `npm run check`, `npm run test:watch`, `npm run build`.
 
 ```
 src/
-  api/        HTTP client + wire types (mirror server.py; will be OpenAPI-generated)
-  auth/       token storage, JWT display-decode, role mapping, useAuth
-  chat/       useChat controller + message types
-  components/ ChatConsole, MessageList, MessageInput, TokenGate, IdentityBadge
-  styles/     theme-aware CSS (light/dark via prefers-color-scheme)
-  test/       vitest setup (jsdom shims)
+  api/           HTTP client + wire types (mirror server.py; will be OpenAPI-generated)
+  auth/          token storage, JWT display-decode, role mapping, useAuth
+  chat/          useChat controller (drives the active conversation) + message types
+  conversations/ client-side history store (useConversations + types)
+  components/     app shell — Sidebar, ChatConsole, MessageList, MessageInput,
+                  InspectorPanel, ToolCallsTable, TriageReport, ConfirmationPanel,
+                  TokenGate, IdentityBadge; severity.ts (shared badge classes)
+  styles/         Tailwind entry (@import "tailwindcss") + a little custom CSS
+  test/           vitest setup (jsdom shims)
 ```
 
 ## Design notes

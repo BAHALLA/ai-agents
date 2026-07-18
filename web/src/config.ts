@@ -14,4 +14,6 @@ export const config = {
 export const storageKeys = {
   token: "orrery.console.token",
   sessionId: "orrery.console.sessionId",
+  conversations: "orrery.console.conversations",
+  activeConversation: "orrery.console.activeConversation",
 } as const;

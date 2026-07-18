@@ -1,13 +1,14 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // The console is served same-origin by the FastAPI front door in production
 // (StaticFiles from serving/static). During local dev we proxy API calls to a
 // locally running server so the browser has no CORS or auth-origin surprises.
 // Point VITE_DEV_API_TARGET at your `make run-assistant-api` instance.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     // Emitted bundle is copied into the Python image at build time. Keep it
     // deterministic and fail the build on anything unexpectedly large.
