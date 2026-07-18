@@ -17,20 +17,17 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
-      "/chat": {
-        target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/healthz": {
-        target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/readyz": {
-        target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8000",
-        changeOrigin: true,
-      },
-    },
+    // Every API path must be listed here or dev mode silently serves the SPA
+    // shell for it (the side panes then render empty while :8000 works fine).
+    proxy: Object.fromEntries(
+      ["/chat", "/session", "/confirmations", "/healthz", "/readyz"].map((path) => [
+        path,
+        {
+          target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8000",
+          changeOrigin: true,
+        },
+      ]),
+    ),
   },
   test: {
     environment: "jsdom",
