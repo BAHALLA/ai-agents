@@ -311,8 +311,11 @@ def test_default_plugins_composition():
     plugins = default_plugins(enable_tracing=False)
 
     # Audit sits BEFORE the gates so a denied call still leaves an attempt
-    # record; the output cap runs last among the after-tool observers.
+    # record; PII redaction sits before audit so the audit log records
+    # redacted values; the output cap runs last among after-tool observers.
     expected_names = [
+        "safety_screen",
+        "pii_redaction",
         "audit",
         "guardrails",
         "resilience",
@@ -335,6 +338,8 @@ def test_default_plugins_with_memory():
     plugins = default_plugins(enable_memory=True, enable_tracing=False)
 
     expected_names = [
+        "safety_screen",
+        "pii_redaction",
         "audit",
         "guardrails",
         "resilience",

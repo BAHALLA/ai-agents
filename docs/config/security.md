@@ -147,14 +147,67 @@ through `default_secrets.get("JWT_SECRET")` rather than
 
 ---
 
+## Runtime hardening plugins (AEP-013)
+
+Three content-level defenses ship in `default_plugins()`, all **on by
+default** with env off-switches:
+
+### Prompt-injection screening
+
+`SafetyScreenPlugin` runs before the model does (`before_run_callback` — the
+one plugin hook that can halt the runner). Messages matching overt override
+phrasings ("ignore previous instructions", "reveal your system prompt",
+"bypass the guardrails", ...) are refused before they cost a token or reach a
+tool; the attempt is logged for audit visibility. The patterns are
+deliberately narrow — an SRE pasting incident logs must not trip false
+positives — and this is a *baseline*: the real security boundary remains the
+deterministic layer underneath (RBAC, confirmations, autonomy gates, input
+validation), which holds even when a novel paraphrase gets past the screen.
+
+```bash
+ORRERY_SAFETY_SCREEN=false   # disable (default: on)
+```
+
+### PII / secret redaction of tool outputs
+
+`PIIRedactionPlugin` scrubs credentials from every tool result before the
+model, the session store, **and the audit log** see them (it registers ahead
+of `AuditPlugin`). Two layers: dict keys that name a credential
+(`password`, `access_token`, `api_key`, ...) have their values replaced
+outright, and string values are scanned for secret shapes (`password=...`
+pairs in log lines, PEM private-key blocks, AWS/GitHub/Slack/OpenAI token
+prefixes, JWTs). Pagination cursors (`next_page_token`) are allowlisted.
+
+IP addresses are **not** redacted by default — an SRE agent that cannot see
+pod or broker IPs cannot diagnose much. Compliance-bound deployments can opt
+in:
+
+```bash
+ORRERY_PII_REDACTION=false   # disable credential scrubbing (default: on)
+ORRERY_REDACT_IPS=true       # also redact IPv4 addresses (default: off)
+```
+
+### Gemini content-safety filters
+
+`create_agent()` attaches `GenerateContentConfig` safety settings (dangerous
+content, harassment, hate speech, sexually explicit) to every Gemini model.
+The default threshold is `BLOCK_ONLY_HIGH`: SRE conversations legitimately
+talk about killing pods and destroying volumes all day, and stricter
+thresholds trip on that. LiteLLM-routed providers (Claude, OpenAI, Ollama)
+do not consume the genai config and are unaffected.
+
+```bash
+GEMINI_SAFETY_FILTERS=false                     # disable (default: on)
+GEMINI_SAFETY_THRESHOLD=BLOCK_MEDIUM_AND_ABOVE  # default: BLOCK_ONLY_HIGH
+```
+
+---
+
 ## What this does **not** cover (intentionally)
 
-The following are tracked separately and will land in follow-up PRs:
-
-- **PII redaction** of tool outputs (AEP-013 §3)
-- **Prompt-injection screening** plugin (AEP-013 §4)
-- **Gemini safety filters** (AEP-013 §5)
 - **Vault / GCP Secret Manager / AWS Secrets Manager adapters** —
   `SecretsManager` exposes the `SecretsBackend` protocol; concrete
   adapters will ship as separate modules so each provider's SDK is
   optional.
+- **Supply-chain security** (image signing, SBOMs, admission policy) — see
+  [Supply Chain Security](../supply-chain.md).

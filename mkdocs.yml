@@ -116,6 +116,7 @@ nav:
     - Observability (Metrics & Tracing): metrics.md
   - Operations:
     - Production Deployment: deployment.md
+    - Supply Chain Security: supply-chain.md
     - Troubleshooting: troubleshooting.md
     - Integrations:
       - Overview: integrations.md

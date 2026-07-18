@@ -1,0 +1,147 @@
+"""PII / secret redaction for tool outputs (AEP-013).
+
+``PIIRedactionPlugin`` scrubs credentials from every tool result before the
+model, the session store, or any after-tool observer sees them. Two layers:
+
+1. **Key-based**: dict entries whose key names a credential (``password``,
+   ``access_token``, ``api_key``, ...) have their value replaced outright —
+   the most reliable signal, immune to value-format drift.
+2. **Pattern-based**: string values are scanned for well-known secret shapes
+   (``password=...`` pairs, PEM blocks, AWS/GitHub/Slack/OpenAI token
+   prefixes, JWTs) and matches are replaced in place.
+
+Redaction **mutates the result in place and returns None** — deliberately.
+ADK's after-tool chain early-exits on the first non-None return, so returning
+a redacted copy would silence every observer registered later (audit outcome,
+activity, metrics, output cap). Mutating the shared dict keeps the chain
+intact while ensuring all downstream observers record the redacted values —
+which is the point: the audit log must not carry secrets either. For the same
+reason the plugin is registered *before* ``AuditPlugin`` in
+``default_plugins()``.
+
+Infrastructure identifiers (IP addresses) are **not** redacted by default —
+an SRE agent that cannot see pod IPs or broker addresses cannot diagnose
+anything. Opt in with ``redact_ips=True`` (``ORRERY_REDACT_IPS`` via
+``default_plugins``) for compliance-bound deployments.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+
+from google.adk.plugins.base_plugin import BasePlugin
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
+
+logger = logging.getLogger("orrery.pii")
+
+REDACTED = "[REDACTED]"
+
+# Dict keys that carry credentials. Matched against the end of the key so
+# "access_token" and "db_password" hit but "token_count" does not.
+SENSITIVE_KEY_PATTERN = re.compile(
+    r"(?i)(?:^|[_\-.])"
+    r"(password|passwd|pwd|secret|token|api[_\-]?key|apikey|authorization|"
+    r"credential|credentials|private[_\-]?key|access[_\-]?key|session[_\-]?key|"
+    r"client[_\-]?secret|signing[_\-]?key|cert[_\-]?key)s?$"
+)
+
+# Keys that end in a sensitive word but are opaque cursors, not credentials.
+KEY_ALLOWLIST = frozenset({"next_page_token", "page_token", "continue_token", "resume_token"})
+
+# Secret shapes inside free-form string values (log lines, config dumps, ...).
+SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # key=value / key: value credential pairs
+    re.compile(
+        r"(?i)\b(password|passwd|pwd|secret|token|api[_\-]?key|apikey|"
+        r"credential|authorization|bearer)\b\s*[:=]\s*\S+"
+    ),
+    # PEM private-key blocks
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
+    # Provider token prefixes: AWS access key, GitHub, Slack, OpenAI-style
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9\-_]{20,}\b"),
+    # JWT: three dot-separated base64url segments
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+)
+
+IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+REDACTED_IP = "[REDACTED_IP]"
+
+_MAX_DEPTH = 32
+
+
+def _redact_text(text: str, *, redact_ips: bool) -> tuple[str, int]:
+    """Return *text* with secret shapes replaced, plus the replacement count."""
+    count = 0
+    for pattern in SECRET_VALUE_PATTERNS:
+        text, n = pattern.subn(REDACTED, text)
+        count += n
+    if redact_ips:
+        text, n = IPV4_PATTERN.subn(REDACTED_IP, text)
+        count += n
+    return text, count
+
+
+def _is_sensitive_key(key: str) -> bool:
+    return key.lower() not in KEY_ALLOWLIST and bool(SENSITIVE_KEY_PATTERN.search(key))
+
+
+def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> int:
+    """Redact secrets in *obj* (dict/list) **in place**; return replacements made.
+
+    Strings nested in tuples/sets are left alone (immutable containers are
+    rare in tool results and rebuilding them would change object identity).
+    """
+    if _depth > _MAX_DEPTH:
+        return 0
+    count = 0
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(key, str) and _is_sensitive_key(key) and value not in (None, ""):
+                obj[key] = REDACTED
+                count += 1
+            elif isinstance(value, str):
+                redacted, n = _redact_text(value, redact_ips=redact_ips)
+                if n:
+                    obj[key] = redacted
+                    count += n
+            else:
+                count += redact_structure(value, redact_ips=redact_ips, _depth=_depth + 1)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, str):
+                redacted, n = _redact_text(item, redact_ips=redact_ips)
+                if n:
+                    obj[i] = redacted
+                    count += n
+            else:
+                count += redact_structure(item, redact_ips=redact_ips, _depth=_depth + 1)
+    return count
+
+
+class PIIRedactionPlugin(BasePlugin):
+    """Scrubs credentials from tool results before anything downstream sees them."""
+
+    def __init__(self, *, redact_ips: bool = False) -> None:
+        super().__init__(name="pii_redaction")
+        self._redact_ips = redact_ips
+
+    async def after_tool_callback(
+        self,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        result: Any,
+    ) -> None:
+        # In-place + return None: a non-None return would early-exit ADK's
+        # after-tool chain and skip every observer registered after this one.
+        count = redact_structure(result, redact_ips=self._redact_ips)
+        if count:
+            logger.warning("redacted %d secret value(s) from '%s' result", count, tool.name)
+        return None

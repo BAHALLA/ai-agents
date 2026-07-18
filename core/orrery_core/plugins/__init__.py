@@ -19,20 +19,25 @@ Plugin execution order matters — ``default_plugins()`` returns them in the
 correct sequence (each step sees the call before the next; ErrorHandler last):
 
 1. TracingPlugin       (span wraps everything — optional, [otel] extra)
-2. AuthPlugin          (applies verified JWT role — optional)
-3. AuditPlugin         (records the attempt *before* the gates, so a call that
+2. SafetyScreenPlugin  (blocks prompt-injection messages before the model
+   runs — on by default, ``ORRERY_SAFETY_SCREEN=false`` disables)
+3. AuthPlugin          (applies verified JWT role — optional)
+4. PIIRedactionPlugin  (scrubs credentials from tool results **in place**,
+   before AuditPlugin so the audit log records redacted values — on by
+   default, ``ORRERY_PII_REDACTION=false`` disables)
+5. AuditPlugin         (records the attempt *before* the gates, so a call that
    is later denied still leaves an audit record; the outcome — including a
    gate's deny dict — is audited after the call)
-4. GuardrailsPlugin    (RBAC — blocks unauthorized calls)
-5. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured)
-6. ResiliencePlugin    (circuit breaker — blocks calls to failing tools)
-7. MetricsPlugin       (timing + counters)
-8. ActivityPlugin      (session activity tracking)
-9. MemoryPlugin        (cross-session memory persistence)
-10. ToolOutputCapPlugin (caps oversized tool results — last among the
+6. GuardrailsPlugin    (RBAC — blocks unauthorized calls)
+7. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured)
+8. ResiliencePlugin    (circuit breaker — blocks calls to failing tools)
+9. MetricsPlugin       (timing + counters)
+10. ActivityPlugin     (session activity tracking)
+11. MemoryPlugin       (cross-session memory persistence)
+12. ToolOutputCapPlugin (caps oversized tool results — last among the
     after-tool observers, because ADK's after-tool chain early-exits on the
     first non-None return and the cap returns a replacement)
-11. ErrorHandlerPlugin (graceful error recovery — must be last)
+13. ErrorHandlerPlugin (graceful error recovery — must be last)
 """
 
 from __future__ import annotations
@@ -53,7 +58,9 @@ from .guardrails_plugin import GuardrailsPlugin
 from .memory_plugin import MemoryPlugin
 from .metrics_plugin import MetricsPlugin
 from .output_cap_plugin import DEFAULT_MAX_TOOL_RESULT_BYTES, ToolOutputCapPlugin
+from .pii_plugin import PIIRedactionPlugin
 from .resilience_plugin import ResiliencePlugin
+from .safety_plugin import SafetyScreenPlugin
 
 __all__ = [
     "AUTONOMY_LEVEL_STATE_KEY",
@@ -66,12 +73,25 @@ __all__ = [
     "GuardrailsPlugin",
     "MemoryPlugin",
     "MetricsPlugin",
+    "PIIRedactionPlugin",
     "ResiliencePlugin",
+    "SafetyScreenPlugin",
     "ToolOutputCapPlugin",
     "default_plugins",
 ]
 
 logger = logging.getLogger("orrery.plugins")
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    """Read a boolean env flag; unset/empty falls back to *default*."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in _TRUTHY
 
 
 def _resolve_autonomy_level(autonomy_level: str | None) -> str | None:
@@ -104,6 +124,9 @@ def default_plugins(
     require_auth: bool = True,
     enable_tracing: bool | None = None,
     max_tool_result_bytes: int = DEFAULT_MAX_TOOL_RESULT_BYTES,
+    enable_safety_screen: bool | None = None,
+    enable_pii_redaction: bool | None = None,
+    redact_ips: bool | None = None,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
@@ -144,6 +167,16 @@ def default_plugins(
         max_tool_result_bytes: Per-tool-result size cap (bytes) so one
             oversized payload can't push the next model request past the
             Gemini/Vertex request limit. ``0`` disables the cap.
+        enable_safety_screen: Whether to block prompt-injection messages
+            before the model runs (``SafetyScreenPlugin``). ``None`` resolves
+            from ``ORRERY_SAFETY_SCREEN`` and defaults to **on**.
+        enable_pii_redaction: Whether to scrub credentials from tool results
+            (``PIIRedactionPlugin``). ``None`` resolves from
+            ``ORRERY_PII_REDACTION`` and defaults to **on**.
+        redact_ips: Whether the PII plugin also redacts IPv4 addresses.
+            ``None`` resolves from ``ORRERY_REDACT_IPS`` and defaults to
+            **off** — an SRE agent that cannot see pod/broker IPs cannot
+            diagnose much; enable for compliance-bound deployments.
     """
     if enable_tracing is None:
         enable_tracing = os.getenv("OTEL_TRACING_ENABLED", "").strip().lower() in {
@@ -174,8 +207,23 @@ def default_plugins(
             if configure_tracing():
                 plugins.append(TracingPlugin())
 
+    if enable_safety_screen is None:
+        enable_safety_screen = _env_flag("ORRERY_SAFETY_SCREEN", default=True)
+    if enable_safety_screen:
+        plugins.append(SafetyScreenPlugin())
+
     if enable_auth:
         plugins.append(AuthPlugin(require_auth=require_auth))
+
+    # PII redaction before Audit: it mutates tool results in place (and
+    # returns None, so the after-tool chain keeps running), and registering
+    # it first means the audit log records the redacted values too.
+    if enable_pii_redaction is None:
+        enable_pii_redaction = _env_flag("ORRERY_PII_REDACTION", default=True)
+    if enable_pii_redaction:
+        if redact_ips is None:
+            redact_ips = _env_flag("ORRERY_REDACT_IPS", default=False)
+        plugins.append(PIIRedactionPlugin(redact_ips=redact_ips))
 
     # Audit before the gates: the attempt is recorded even when a gate below
     # denies the call (ADK's before-tool chain early-exits on the first

@@ -13,8 +13,8 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--red">P0</span> | [AEP-002](aep-002-agent-evaluation.md) | Agent Evaluation Framework | <span class="badge badge--green">completed</span> | High | Critical |
 | <span class="badge badge--red">P0</span> | [AEP-003](aep-003-memory-service.md) | Cross-Session Memory Service | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--red">P0</span> | [AEP-011](aep-011-deployment-hardening.md) | Production Deployment Hardening | <span class="badge badge--green">completed</span> | High | Critical |
-| <span class="badge badge--red">P0</span> | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | <span class="badge badge--blue">in-progress</span> | High | Critical |
-| <span class="badge badge--red">P0</span> | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | <span class="badge badge--amber">proposed</span> | Medium | High |
+| <span class="badge badge--red">P0</span> | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | <span class="badge badge--green">completed</span> | High | Critical |
+| <span class="badge badge--red">P0</span> | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
@@ -46,13 +46,13 @@ Each AEP follows a consistent structure:
 ### Phase 1 - Production Readiness (P0)
 
 The platform has strong foundations (RBAC, guardrails, metrics, audit, memory)
-and the deployment layer has now landed. The remaining P0 work is the
-security perimeter:
+and the deployment + security perimeter has now landed. **Phase 1 is
+complete**:
 
 - **AEP-011 ✅**: Kubernetes manifests, Helm chart, CD pipeline, rate limiting, PostgreSQL sessions *(completed 2026-04-11)*
-- **AEP-013**: JWT/OAuth authentication, PII redaction, prompt injection detection, secrets management
-- **AEP-014**: SBOM generation, cosign image signing, trivy scanning, base image pinning
-- **AEP-018**: Pub/Sub worker idempotency (dedup on Chat `eventId`) and backlog-based HPA to remove the single-replica SPOF in the Chat transport
+- **AEP-013 ✅**: JWT/OAuth authentication, PII redaction, prompt injection detection, Gemini safety filters, secrets management *(completed 2026-07-18)*
+- **AEP-014 ✅**: SBOM generation, cosign image signing, trivy scanning, base image pinning, admission policy *(completed 2026-07-18)*
+- **AEP-018 ✅**: Pub/Sub worker idempotency (dedup on Chat `eventId`) and backlog-based HPA to remove the single-replica SPOF in the Chat transport
 
 ### Phase 2 - Autonomous Capabilities & Observability (P1)
 
@@ -100,3 +100,5 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-04-18 | AEP-018 added (P0) | Pub/Sub at-least-once delivery means redelivered events can double-act on `@destructive` tools; single-replica worker is a SPOF during incidents. Split out of Google Chat Pub/Sub transport work. |
 | 2026-07-12 | AEP-019 added (P2) | Onboarding/usage gap: the only browser surface today is ADK's developer Dev UI. A product web console accelerates adoption but is UX, not a production blocker — sequenced behind the AEP-013/014 security perimeter it would amplify, and alongside streaming (AEP-009). |
 | 2026-07-12 | AEP-019: proposed → in-progress | Milestone 1 (authenticated chat console) shipped: Vite + React SPA under web/, served by the FastAPI front door behind ORRERY_WEB_CONSOLE_ENABLED, with two-stage Docker build and a dedicated web CI job. |
+| 2026-07-18 | AEP-013: in-progress → completed | Remaining content-level defenses shipped: SafetyScreenPlugin (prompt-injection screen, blocks in before_run), PIIRedactionPlugin (credential scrubbing of tool results, registered before audit), and Gemini safety filters in create_agent — all on by default with env off-switches. |
+| 2026-07-18 | AEP-014: proposed → completed | Chain of custody closed: digest-pinned base images, CycloneDX Python SBOM on CI builds + releases, Trivy image scan gating releases with SARIF to code scanning, PR dependency-review gate, opt-in Sigstore admission policy. Cosign signing and buildx SBOM/provenance had already landed with AEP-011. |

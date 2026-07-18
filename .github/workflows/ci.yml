@@ -31,6 +31,21 @@ jobs:
         # so a new agent is picked up automatically — no CI edit needed.
         run: make type-check
 
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    # Gates PRs on known CVEs introduced by dependency changes (AEP-014).
+    # Diff-based, so it only exists for pull_request events.
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -45,6 +60,20 @@ jobs:
 
       - name: Bandit check
         run: uvx --python 3.14 bandit -r agents/ core/ -ll
+
+      # CycloneDX SBOM of the locked Python graph (AEP-014) — kept as a build
+      # artifact so any CI run's dependency set can be audited after the fact.
+      # Releases attach the same SBOM as a release asset.
+      - name: Generate Python SBOM (CycloneDX)
+        run: |
+          uv export --frozen --no-dev --format requirements-txt -o requirements-sbom.txt
+          uvx cyclonedx-py requirements requirements-sbom.txt -o sbom-python.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-python
+          path: sbom-python.cdx.json
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0

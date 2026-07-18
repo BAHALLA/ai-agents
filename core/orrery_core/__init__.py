@@ -6,6 +6,7 @@ from .agent.base import identity_aware_instruction as identity_aware_instruction
 from .agent.base import load_agent_env as load_agent_env
 from .agent.base import resolve_model as resolve_model
 from .agent.base import resolve_planner as resolve_planner
+from .agent.base import resolve_safety_config as resolve_safety_config
 from .agent.config import AgentConfig as AgentConfig
 from .agent.config import load_config as load_config
 from .agent.prompts import CONFIRMATION_RULE as CONFIRMATION_RULE
@@ -34,7 +35,9 @@ from .plugins import ErrorHandlerPlugin as ErrorHandlerPlugin
 from .plugins import GuardrailsPlugin as GuardrailsPlugin
 from .plugins import MemoryPlugin as MemoryPlugin
 from .plugins import MetricsPlugin as MetricsPlugin
+from .plugins import PIIRedactionPlugin as PIIRedactionPlugin
 from .plugins import ResiliencePlugin as ResiliencePlugin
+from .plugins import SafetyScreenPlugin as SafetyScreenPlugin
 from .plugins import ToolOutputCapPlugin as ToolOutputCapPlugin
 from .plugins import default_plugins as default_plugins
 from .reliability.error_handlers import graceful_model_error as graceful_model_error

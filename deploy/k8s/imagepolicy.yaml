@@ -1,0 +1,25 @@
+# Admission-time signature verification (AEP-014, optional).
+#
+# Requires the Sigstore Policy Controller:
+#   https://docs.sigstore.dev/policy-controller/overview/
+#
+# Once applied, namespaces labeled `policy.sigstore.dev/include=true` refuse
+# to run any ghcr.io/bahalla/orrery image that was not signed by this
+# repository's GitHub Actions release workflow (keyless / OIDC identity).
+# A stolen GHCR token can push a malicious tag but cannot mint the workflow
+# identity, so the cluster rejects it at admission.
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: orrery-images
+spec:
+  images:
+    - glob: "ghcr.io/bahalla/orrery*"
+  authorities:
+    - keyless:
+        url: https://fulcio.sigstore.dev
+        identities:
+          - issuer: https://token.actions.githubusercontent.com
+            subjectRegExp: "https://github.com/BAHALLA/orrery/.*"
+      ctlog:
+        url: https://rekor.sigstore.dev

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--blue">in-progress</span> (auth layer landed; PII redaction + injection screening + Gemini safety filters remaining) |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--red">P0</span> |
 | **Effort** | High (7-10 days) |
 | **Impact** | Critical |
@@ -204,15 +204,45 @@ class SecretsManager:
 
 ## Acceptance Criteria
 
-- [ ] JWT authentication required for HTTP endpoints
-- [ ] User role derived from verified JWT claims (not self-declared)
-- [ ] PII redaction applied to all tool outputs
-- [ ] Prompt injection patterns detected and blocked
-- [ ] Gemini safety filters enabled for content screening
-- [ ] Secrets manager with vault integration (env var fallback)
-- [ ] Slack bot verifies request signatures
-- [ ] All security features have comprehensive tests
-- [ ] Security documentation with threat model
+- [x] JWT authentication required for HTTP endpoints
+- [x] User role derived from verified JWT claims (not self-declared)
+- [x] PII redaction applied to all tool outputs
+- [x] Prompt injection patterns detected and blocked
+- [x] Gemini safety filters enabled for content screening
+- [x] Secrets manager with pluggable backends (mounted-file backend shipped;
+      env var fallback; the `SecretsBackend` protocol accepts a Vault adapter
+      without core changes)
+- [x] Slack bot verifies request signatures (slack-bolt signing-secret
+      verification; Socket Mode authenticates via app token)
+- [x] All security features have comprehensive tests
+- [x] Security documentation with threat model
+      ([Security & Authentication](../config/security.md))
+
+## Implementation notes (as landed)
+
+The landed implementation diverges from the sketches above where ADK 2.0
+semantics required it:
+
+- **SafetyScreenPlugin blocks in `before_run_callback`, not
+  `on_user_message_callback`** — in ADK 2.0 the latter can only *replace* the
+  user message; `before_run_callback` is the hook whose non-None return halts
+  the runner, so a screened message never reaches the model or any tool.
+- **PIIRedactionPlugin mutates tool results in place and returns `None`** —
+  ADK's after-tool chain early-exits on the first non-None return, so
+  returning a redacted copy would silence every observer registered later
+  (audit outcome, activity, metrics, output cap). It registers *before*
+  `AuditPlugin` so the audit log records redacted values too. Key-based
+  redaction (credential-named dict keys) is layered over value-pattern
+  scanning (kv pairs, PEM blocks, AWS/GitHub/Slack/OpenAI token shapes,
+  JWTs); IP redaction is opt-in (`ORRERY_REDACT_IPS`) because an SRE agent
+  that cannot see pod/broker IPs cannot diagnose much.
+- **Gemini safety filters default to `BLOCK_ONLY_HIGH`**, not
+  `BLOCK_LOW_AND_ABOVE` — SRE conversations legitimately discuss killing
+  pods and destroying volumes; the aggressive threshold trips on ops
+  chatter. Threshold via `GEMINI_SAFETY_THRESHOLD`; only attached to Gemini
+  string models (LiteLLM providers ignore the genai config).
+- Both plugins are **on by default** in `default_plugins()`
+  (`ORRERY_SAFETY_SCREEN=false` / `ORRERY_PII_REDACTION=false` to disable).
 
 ## Notes
 

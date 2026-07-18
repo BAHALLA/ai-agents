@@ -1,5 +1,7 @@
 # ── Build stage ───────────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
+# Pinned by digest (AEP-014): two builds resolve the same bytes; Dependabot's
+# docker ecosystem bumps the digest when the upstream tag moves.
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim@sha256:7cf77f594be8042dab6daa9fe326f90962252268b4f120a7f5dccce4d947e6c1 AS builder
 
 WORKDIR /app
 
@@ -54,7 +56,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ── Web console build stage (AEP-019) ─────────────────────────────────
 # Builds the React SPA to a static bundle. An isolated Node toolchain — no
 # Node reaches the runtime image; only the compiled dist/ is copied in.
-FROM node:22-bookworm-slim AS web-builder
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS web-builder
 
 WORKDIR /web
 
@@ -66,7 +68,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────
-FROM python:3.14-slim-bookworm
+FROM python:3.14-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser

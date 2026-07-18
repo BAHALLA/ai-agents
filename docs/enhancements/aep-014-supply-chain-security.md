@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--red">P0</span> |
 | **Effort** | Medium (3-5 days) |
 | **Impact** | High |
@@ -187,16 +187,35 @@ spec:
 
 ## Acceptance Criteria
 
-- [ ] Base images pinned by digest in `Dockerfile`
-- [ ] Renovate/Dependabot open PRs for base image digest updates
-- [ ] CycloneDX Python SBOM generated on every CI build
-- [ ] SBOM attached to GitHub releases as a downloadable artifact
-- [ ] Images signed with cosign keyless identity in CI
-- [ ] Signature verification documented in `docs/security.md`
-- [ ] Trivy scan gates image publish on HIGH/CRITICAL unfixed CVEs
-- [ ] Trivy SARIF uploaded to GitHub Code Scanning
-- [ ] PR dependency review gate merged to `ci.yml`
-- [ ] (Stretch) Admission-time signature verification via Sigstore Policy Controller
+- [x] Base images pinned by digest in `Dockerfile`
+- [x] Dependabot opens PRs for base image digest updates (`docker` ecosystem)
+- [x] CycloneDX Python SBOM generated on every CI build (uploaded as a build
+      artifact from the security job)
+- [x] SBOM attached to GitHub releases as a downloadable artifact
+- [x] Images signed with cosign keyless identity in CI
+- [x] Signature verification documented in
+      [Supply Chain Security](../supply-chain.md) (`docs/supply-chain.md` —
+      `docs/security.md` would collide with the existing
+      `docs/config/security.md` auth page)
+- [x] Trivy scan gates image publish on HIGH/CRITICAL fixable CVEs (scans the
+      pushed digest; the release job depends on it, so a vulnerable image
+      never becomes a GitHub release)
+- [x] Trivy SARIF uploaded to GitHub Code Scanning (`container-image` category)
+- [x] PR dependency review gate merged to `ci.yml` (`fail-on-severity: high`)
+- [x] (Stretch) Admission-time signature verification via Sigstore Policy
+      Controller — shipped as an opt-in manifest, `deploy/k8s/imagepolicy.yaml`
+
+## Implementation notes (as landed)
+
+- The SBOM is produced from the lockfile (`uv export --frozen` →
+  `cyclonedx-py requirements`), not from `uv.lock` directly — cyclonedx-py
+  has no uv-lock reader; the frozen export preserves the exact pinned graph.
+- The Trivy image scan runs *after* the push (it scans the pushed digest,
+  which is what buildx produces for multi-arch builds) but *gates the
+  release*: `docker-publish` failing the scan fails the workflow before the
+  `release` job runs, so no GitHub release is cut for a vulnerable image.
+- `ignore-unfixed: true` keeps the gate actionable — a CVE with no upstream
+  fix would otherwise block every release until Debian patches it.
 
 ## Notes
 

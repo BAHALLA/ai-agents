@@ -153,6 +153,50 @@ def resolve_model() -> str | BaseLlm:
     return LiteLlm(model=model_name)
 
 
+_SAFETY_THRESHOLDS = frozenset(
+    {"BLOCK_NONE", "BLOCK_ONLY_HIGH", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_LOW_AND_ABOVE"}
+)
+
+
+def resolve_safety_config() -> Any | None:
+    """Build a ``GenerateContentConfig`` with Gemini content-safety filters.
+
+    Applied by ``create_agent()`` to Gemini models only (LiteLLM-routed
+    providers do not consume the genai safety settings). On by default;
+    ``GEMINI_SAFETY_FILTERS=false`` disables. The block threshold comes from
+    ``GEMINI_SAFETY_THRESHOLD`` (default ``BLOCK_ONLY_HIGH`` — SRE work talks
+    about killing pods and destroying volumes all day, so the aggressive
+    thresholds trip on legitimate operations chatter).
+
+    Returns ``None`` when disabled or when the provider is not Gemini.
+    """
+    enabled = os.getenv("GEMINI_SAFETY_FILTERS", "").strip().lower()
+    if enabled in ("0", "false", "no", "off"):
+        return None
+    if os.getenv("MODEL_PROVIDER", "gemini").lower() != "gemini":
+        return None
+
+    from google.genai import types
+
+    threshold_name = os.getenv("GEMINI_SAFETY_THRESHOLD", "BLOCK_ONLY_HIGH").strip().upper()
+    if threshold_name not in _SAFETY_THRESHOLDS:
+        logger.warning("Unknown GEMINI_SAFETY_THRESHOLD %r; using BLOCK_ONLY_HIGH.", threshold_name)
+        threshold_name = "BLOCK_ONLY_HIGH"
+    threshold = types.HarmBlockThreshold(threshold_name)
+
+    return types.GenerateContentConfig(
+        safety_settings=[
+            types.SafetySetting(category=category, threshold=threshold)
+            for category in (
+                types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            )
+        ]
+    )
+
+
 def resolve_planner() -> BasePlanner | None:
     """Resolve an ADK planner from environment variables.
 
@@ -271,6 +315,14 @@ def create_agent(
     kwargs: dict[str, Any] = {
         "name": name,
         "model": resolved_model,
+        # Gemini content-safety filters (AEP-013). Only attached when the
+        # resolved model is a Gemini string — LiteLLM models ignore the
+        # genai config, so attaching it there would be misleading.
+        **(
+            {"generate_content_config": safety_config}
+            if isinstance(resolved_model, str) and (safety_config := resolve_safety_config())
+            else {}
+        ),
         "description": description,
         # Passed as an InstructionProvider so ADK uses the prompt verbatim (no
         # {var} state templating — literal braces are safe) AND so the current
