@@ -135,6 +135,14 @@ class PendingResponse(BaseModel):
     pending: PendingConfirmationInfo | None
 
 
+class TriageResponse(BaseModel):
+    """Latest triage verdict recorded in this session (AEP-019 Milestone 2)."""
+
+    session_id: str
+    severity: str | None
+    report: str | None
+
+
 # ── App factory ─────────────────────────────────────────────────────
 
 
@@ -155,6 +163,8 @@ def create_app(
       returns ``{"session_id": str, "response": str}``.
     - ``GET /session/{id}/activity`` — the caller's tool-call timeline for
       that session (404 for another user's session).
+    - ``GET /session/{id}/triage`` — the session's latest triage verdict
+      (``incident_severity`` + ``triage_report``), or nulls.
     - ``GET /confirmations/pending`` — the caller's own guarded action
       awaiting approve/deny, or ``{"pending": null}``.
     - ``GET /healthz`` — liveness (always 200 once the app is up).
@@ -288,6 +298,34 @@ def create_app(
             if isinstance(e, dict)
         ]
         return ActivityResponse(session_id=session_id, entries=entries)
+
+    @api.get("/session/{session_id}/triage", response_model=TriageResponse)
+    async def session_triage(
+        session_id: str,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> TriageResponse:
+        """Latest triage verdict for one of the caller's sessions (AEP-019).
+
+        ``record_triage_verdict`` writes ``incident_severity`` and
+        ``triage_report`` to session state; ADK's ``AgentTool`` forwards the
+        sub-session's state delta to the parent, so a chat-root triage run
+        lands here. Same owner scoping as the activity endpoint: the lookup
+        pins ``user_id`` to the verified subject, so another user's session
+        id is a plain 404.
+        """
+        session = await gateway.session_service.get_session(
+            app_name=app_name, user_id=auth.subject, session_id=session_id
+        )
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        state = session.state or {}
+        severity = state.get("incident_severity")
+        report = state.get("triage_report")
+        return TriageResponse(
+            session_id=session_id,
+            severity=str(severity) if severity else None,
+            report=str(report) if report else None,
+        )
 
     @api.get("/confirmations/pending", response_model=PendingResponse)
     async def pending_confirmation(

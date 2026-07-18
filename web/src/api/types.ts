@@ -48,3 +48,13 @@ export interface PendingConfirmation {
 export interface PendingResponse {
   pending: PendingConfirmation | null;
 }
+
+/** Triage severity verdict recorded by record_triage_verdict. */
+export type TriageSeverity = "healthy" | "degraded" | "critical";
+
+/** GET /session/{id}/triage response. */
+export interface TriageResponse {
+  session_id: string;
+  severity: TriageSeverity | null;
+  report: string | null;
+}

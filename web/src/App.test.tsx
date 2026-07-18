@@ -149,4 +149,45 @@ describe("App auth flow", () => {
       expect(JSON.parse(String(last[1]?.body))).toMatchObject({ message: "approve" });
     });
   });
+
+  it("runs a triage from the header button and renders the verdict banner", async () => {
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/triage")) {
+        return json({
+          session_id: "s1",
+          severity: "degraded",
+          report: "## Triage\n\nKafka: consumer lag growing on **orders**.",
+        });
+      }
+      if (u.includes("/activity")) return json({ session_id: "s1", entries: [] });
+      if (u.includes("/confirmations/pending")) return json({ pending: null });
+      return json({ session_id: "s1", response: "Triage complete: degraded." });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /run triage/i }));
+
+    // The canned prompt went through the normal /chat flow.
+    await waitFor(() => {
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      expect(chatCalls).toHaveLength(1);
+      expect(JSON.parse(String(chatCalls[0][1]?.body)).message).toMatch(/incident triage/i);
+    });
+
+    // The recorded verdict renders as a severity banner with the report inside.
+    const banner = await screen.findByText("degraded");
+    expect(banner).toHaveClass("triage__badge");
+    await user.click(screen.getByText(/last triage verdict/i));
+    expect(screen.getByText("orders").tagName).toBe("STRONG");
+  });
 });

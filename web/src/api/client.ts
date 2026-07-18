@@ -1,5 +1,11 @@
 import { config } from "../config";
-import type { ActivityResponse, ChatRequest, ChatResponse, PendingResponse } from "./types";
+import type {
+  ActivityResponse,
+  ChatRequest,
+  ChatResponse,
+  PendingResponse,
+  TriageResponse,
+} from "./types";
 
 /** A typed API error carrying the HTTP status so callers can branch on 401 etc. */
 export class ApiError extends Error {
@@ -82,6 +88,15 @@ export class ApiClient {
   /** The caller's own guarded action awaiting approve/deny, if any. */
   pendingConfirmation(options?: RequestOptions): Promise<PendingResponse> {
     return this.request<PendingResponse>("/confirmations/pending", undefined, options);
+  }
+
+  /** The session's latest triage verdict (severity + report), if any. */
+  triage(sessionId: string, options?: RequestOptions): Promise<TriageResponse> {
+    return this.request<TriageResponse>(
+      `/session/${encodeURIComponent(sessionId)}/triage`,
+      undefined,
+      options,
+    );
   }
 }
 

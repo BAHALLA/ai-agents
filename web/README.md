@@ -25,8 +25,19 @@ Milestone 1 — an authenticated chat console:
   flow — the server's requester-verified gate stays the sole authority
 - Loading, error, and auth-expiry states
 
-Milestones 2 (triage/remediation view) and 3 (onboarding wizard) are tracked in
-the AEP and not yet built.
+Milestone 2 — triage view:
+
+- **Run triage** header button — one click sends the full-sweep prompt to the
+  `incident_triage_agent`
+- **Verdict banner** (`GET /session/{id}/triage`): the recorded severity
+  (healthy / degraded / critical) as a color-coded badge with the full triage
+  report collapsed inside
+- **Live timeline**: while a request is in flight the tool-call timeline is
+  polled every 2.5s, so multi-specialist sweeps become visible as each
+  specialist completes
+
+Remaining: per-system status chips, the remediation-loop trace (batch
+workflow only today), and Milestone 3 (onboarding wizard).
 
 ## Run
 

@@ -5,6 +5,7 @@ import { IdentityBadge } from "./IdentityBadge";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { ToolTimeline } from "./ToolTimeline";
+import { TriageBanner } from "./TriageBanner";
 
 interface Props {
   token: string;
@@ -31,6 +32,15 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           <span className="console__title">Orrery Console</span>
         </div>
         <div className="console__header-right">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={chat.isSending}
+            onClick={() => void chat.runTriage()}
+            title="Run a full health sweep across Kafka, K8s, Docker, Observability, and Elasticsearch"
+          >
+            Run triage
+          </button>
           {chat.messages.length > 0 ? (
             <button type="button" className="btn btn--ghost" onClick={chat.reset}>
               New chat
@@ -41,6 +51,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       </header>
 
       <main className="console__body">
+        {chat.triage ? <TriageBanner triage={chat.triage} /> : null}
         <MessageList messages={chat.messages} isSending={chat.isSending} />
         <ToolTimeline entries={chat.activity} />
       </main>

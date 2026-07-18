@@ -555,3 +555,76 @@ body {
   border-top: 1px solid var(--border);
   margin: 0.7rem 0;
 }
+
+/* ── Triage verdict banner (AEP-019 M2) ───────────────────────────── */
+:root {
+  --sev-healthy: #2b8a3e;
+  --sev-healthy-bg: #ebfbee;
+  --sev-degraded: #e8590c;
+  --sev-degraded-bg: #fff4e6;
+  --sev-critical: #c92a2a;
+  --sev-critical-bg: #fff0f0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sev-healthy: #69db7c;
+    --sev-healthy-bg: #12261a;
+    --sev-degraded: #ffa94d;
+    --sev-degraded-bg: #2a1f12;
+    --sev-critical: #ff8787;
+    --sev-critical-bg: #2a1a1a;
+  }
+}
+.triage {
+  margin: 0.75rem auto 0;
+  max-width: 48rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.triage__summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  user-select: none;
+}
+.triage__badge {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+}
+.triage--healthy {
+  border-left: 4px solid var(--sev-healthy);
+}
+.triage--healthy .triage__badge {
+  background: var(--sev-healthy-bg);
+  color: var(--sev-healthy);
+}
+.triage--degraded {
+  border-left: 4px solid var(--sev-degraded);
+}
+.triage--degraded .triage__badge {
+  background: var(--sev-degraded-bg);
+  color: var(--sev-degraded);
+}
+.triage--critical {
+  border-left: 4px solid var(--sev-critical);
+}
+.triage--critical .triage__badge {
+  background: var(--sev-critical-bg);
+  color: var(--sev-critical);
+}
+.triage__label {
+  color: var(--text-muted);
+}
+.triage__report {
+  padding: 0.25rem 0.9rem 0.8rem;
+  border-top: 1px solid var(--border);
+}

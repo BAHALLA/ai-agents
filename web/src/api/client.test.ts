@@ -140,3 +140,21 @@ describe("ApiClient.pendingConfirmation", () => {
     expect(res.pending).toBeNull();
   });
 });
+
+describe("ApiClient.triage", () => {
+  it("GETs the session triage verdict", async () => {
+    const payload = { session_id: "s1", severity: "critical", report: "## Down" };
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const res = await new ApiClient("tok").triage("s1");
+    expect(res).toEqual(payload);
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/session/s1/triage");
+    expect(init.method).toBe("GET");
+  });
+});

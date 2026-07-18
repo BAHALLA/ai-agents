@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, ApiError } from "../api/client";
-import type { ActivityEntry, PendingConfirmation } from "../api/types";
+import type { ActivityEntry, PendingConfirmation, TriageResponse } from "../api/types";
 import { storageKeys } from "../config";
 import type { ChatError, ChatMessage } from "./types";
 
@@ -18,6 +18,11 @@ function readStoredSession(): string | null {
   }
 }
 
+/** The canned prompt behind the "Run triage" button — routes to the
+ * incident_triage_agent AgentTool on the chat root. */
+export const TRIAGE_PROMPT =
+  "Run a full incident triage across all systems and report the verdict.";
+
 export interface ChatController {
   messages: ChatMessage[];
   sessionId: string | null;
@@ -27,9 +32,13 @@ export interface ChatController {
   activity: ActivityEntry[];
   /** The caller's guarded action awaiting approve/deny, if any. */
   pending: PendingConfirmation | null;
+  /** The session's latest triage verdict, if one was recorded. */
+  triage: TriageResponse | null;
   send: (text: string) => Promise<void>;
   /** Send an approve/deny decision through the normal chat flow. */
   decide: (word: "approve" | "deny") => Promise<void>;
+  /** Kick off a full triage sweep (the canned prompt). */
+  runTriage: () => Promise<void>;
   reset: () => void;
 }
 
@@ -49,6 +58,7 @@ export function useChat(token: string | null): ChatController {
   const [error, setError] = useState<ChatError | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
+  const [triage, setTriage] = useState<TriageResponse | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Keep the client's token current without recreating it (preserves identity).
@@ -69,19 +79,31 @@ export function useChat(token: string | null): ChatController {
     }
   }, []);
 
-  // Best-effort side panes: the timeline and pending-confirmation state are
-  // rendering data, so a failed refresh never surfaces as a chat error.
+  // Best-effort side panes: the timeline, pending-confirmation, and triage
+  // state are rendering data, so a failed refresh never surfaces as a chat
+  // error.
   const refreshSidePanes = useCallback(
     async (id: string) => {
-      const [act, pend] = await Promise.allSettled([
+      const [act, pend, tri] = await Promise.allSettled([
         client.activity(id),
         client.pendingConfirmation(),
+        client.triage(id),
       ]);
       if (act.status === "fulfilled") setActivity(act.value.entries ?? []);
       if (pend.status === "fulfilled") setPending(pend.value.pending ?? null);
+      if (tri.status === "fulfilled") setTriage(tri.value.severity ? tri.value : null);
     },
     [client],
   );
+
+  // While a request is in flight, poll the timeline so multi-specialist
+  // sweeps become visible as each specialist completes — the closest thing
+  // to progress until streaming (AEP-009) lands.
+  useEffect(() => {
+    if (!isSending || !sessionId) return;
+    const timer = setInterval(() => void refreshSidePanes(sessionId), 2500);
+    return () => clearInterval(timer);
+  }, [isSending, sessionId, refreshSidePanes]);
 
   const send = useCallback(
     async (raw: string) => {
@@ -126,6 +148,8 @@ export function useChat(token: string | null): ChatController {
   // server decides whether it authorizes anything. The panel is a renderer.
   const decide = useCallback((word: "approve" | "deny") => send(word), [send]);
 
+  const runTriage = useCallback(() => send(TRIAGE_PROMPT), [send]);
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
@@ -133,6 +157,7 @@ export function useChat(token: string | null): ChatController {
     setSessionId(null);
     setActivity([]);
     setPending(null);
+    setTriage(null);
     try {
       localStorage.removeItem(storageKeys.sessionId);
     } catch {
@@ -140,5 +165,17 @@ export function useChat(token: string | null): ChatController {
     }
   }, []);
 
-  return { messages, sessionId, isSending, error, activity, pending, send, decide, reset };
+  return {
+    messages,
+    sessionId,
+    isSending,
+    error,
+    activity,
+    pending,
+    triage,
+    send,
+    decide,
+    runTriage,
+    reset,
+  };
 }

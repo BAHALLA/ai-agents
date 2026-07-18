@@ -472,3 +472,48 @@ def test_pending_returns_own_action_only(app_with_auth, pending_store):
     assert pending["tool_name"] == "restart_deployment"
     assert pending["level"] == "destructive"
     assert pending["args"] == {"name": "payment-api", "namespace": "prod"}
+
+
+# ── GET /session/{id}/triage (AEP-019 Milestone 2) ──────────────────
+
+
+def test_triage_requires_auth(app_with_auth):
+    client = TestClient(app_with_auth)
+    assert client.get("/session/sess-1/triage").status_code == 401
+
+
+def test_triage_unknown_session_is_404(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    client = TestClient(app_with_auth)
+    r = client.get("/session/nope/triage", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 404
+
+
+def test_triage_no_verdict_yet(app_with_auth, patched_runner, mock_session):
+    mock_session.state = {}
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    client = TestClient(app_with_auth)
+    r = client.get("/session/sess-1/triage", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 200
+    assert r.json() == {"session_id": "sess-1", "severity": None, "report": None}
+
+
+def test_triage_returns_recorded_verdict(app_with_auth, patched_runner, mock_session):
+    mock_session.state = {
+        "incident_severity": "degraded",
+        "triage_report": "## Triage\nKafka: lag growing on orders.",
+    }
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    client = TestClient(app_with_auth)
+    r = client.get("/session/sess-1/triage", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["severity"] == "degraded"
+    assert "lag growing" in body["report"]
+
+
+def test_triage_lookup_is_pinned_to_the_verified_subject(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    client = TestClient(app_with_auth)
+    client.get("/session/sess-1/triage", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert patched_runner.get_session.call_args.kwargs["user_id"] == "alice"
