@@ -34,9 +34,11 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
-    # Gates PRs on known CVEs introduced by dependency changes (AEP-014).
-    # Diff-based, so it only exists for pull_request events.
-    if: github.event_name == 'pull_request'
+    # Gates on known CVEs introduced by dependency changes (AEP-014). The
+    # action is diff-based: PR events diff base...head automatically; push
+    # events diff the previous main commit (github.event.before) against the
+    # pushed one. workflow_dispatch has no diff to compare, so it skips.
+    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
     steps:
@@ -45,6 +47,8 @@ jobs:
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
+          base-ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head-ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   security:
     name: Security Scan

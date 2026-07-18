@@ -76,7 +76,9 @@ RUN groupadd --gid 1000 appuser && \
 WORKDIR /app
 
 # Docker CLI for container monitoring (used by docker-agent tools).
-COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+# Digest-pinned like the FROM bases; docker:27-cli was built with Go 1.22,
+# whose stdlib carries 15 HIGH/CRITICAL CVEs that tripped the Trivy gate.
+COPY --from=docker:29-cli@sha256:be132a9f282288de4afaf63379dff75711fda0147c6b72a9df44e51841402144 /usr/local/bin/docker /usr/local/bin/docker
 
 # Copy the virtual environment and source from builder with correct ownership
 # in a single layer (avoids a separate `chown -R` that would double disk use).

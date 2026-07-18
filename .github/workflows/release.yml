@@ -117,15 +117,29 @@ jobs:
         run: |
           echo "ref=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
-      - name: Trivy image scan
+      # Two passes: the table run is the gate and prints the findings in the
+      # job log (a SARIF-only gate fails without showing what it found); the
+      # SARIF run reuses the cached scan and feeds code scanning either way.
+      - name: Trivy image scan (gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.imageref.outputs.ref }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+          format: table
+
+      - name: Trivy image scan (SARIF for code scanning)
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.imageref.outputs.ref }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
           format: sarif
           output: trivy-image.sarif
+          skip-setup-trivy: true
 
       - name: Upload Trivy SARIF to code scanning
         if: always()
