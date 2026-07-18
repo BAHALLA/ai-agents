@@ -195,6 +195,8 @@ body {
 .console__body {
   overflow: hidden;
   display: flex;
+  /* Stack: triage banner (top) → transcript (fills, scrolls) → timeline. */
+  flex-direction: column;
 }
 .console__footer {
   padding: 0.75rem 1rem 1rem;
@@ -243,6 +245,9 @@ body {
 /* ── Transcript ───────────────────────────────────────────────────── */
 .transcript {
   flex: 1;
+  /* Required in a column flex parent: without it the transcript grows past
+     the container instead of scrolling. */
+  min-height: 0;
   overflow-y: auto;
   padding: 1.25rem 1rem;
   display: flex;
@@ -359,7 +364,8 @@ body {
 
 /* ── Tool-call timeline (AEP-019) ─────────────────────────────────── */
 .timeline {
-  margin: 0.75rem auto 0;
+  flex-shrink: 0;
+  margin: 0.5rem auto 0.75rem;
   max-width: 48rem;
   width: 100%;
   border: 1px solid var(--border);
@@ -386,6 +392,9 @@ body {
   margin: 0;
   padding: 0.25rem 0.9rem 0.75rem;
   list-style: none;
+  /* An expanded long sweep must not swallow the transcript. */
+  max-height: 30vh;
+  overflow-y: auto;
 }
 .timeline__item {
   display: flex;
@@ -576,6 +585,7 @@ body {
   }
 }
 .triage {
+  flex-shrink: 0;
   margin: 0.75rem auto 0;
   max-width: 48rem;
   width: 100%;
@@ -627,4 +637,7 @@ body {
 .triage__report {
   padding: 0.25rem 0.9rem 0.8rem;
   border-top: 1px solid var(--border);
+  /* An expanded report must not swallow the transcript. */
+  max-height: 40vh;
+  overflow-y: auto;
 }
