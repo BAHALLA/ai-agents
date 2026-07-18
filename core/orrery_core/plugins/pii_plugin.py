@@ -39,16 +39,32 @@ logger = logging.getLogger("orrery.pii")
 
 REDACTED = "[REDACTED]"
 
-# Dict keys that carry credentials. Matched against the end of the key so
-# "access_token" and "db_password" hit but "token_count" does not.
+# Dict keys that carry credentials. Keys are normalized to snake_case first
+# (camelCase/PascalCase boundaries become underscores), then matched against
+# the end of the key — so "access_token", "accessToken", and "DbPassword" all
+# hit while "token_count" does not. Matching on the normalized form (rather
+# than a case-insensitive camel lookaround in the pattern) keeps the
+# allowlist meaningful: "nextPageToken" normalizes to the allowlisted
+# "next_page_token" instead of being redacted as a token.
+# "token" is singular-only: plural endings ("total_tokens", "maxTokens") are
+# LLM usage counts, not credentials.
 SENSITIVE_KEY_PATTERN = re.compile(
-    r"(?i)(?:^|[_\-.])"
-    r"(password|passwd|pwd|secret|token|api[_\-]?key|apikey|authorization|"
-    r"credential|credentials|private[_\-]?key|access[_\-]?key|session[_\-]?key|"
-    r"client[_\-]?secret|signing[_\-]?key|cert[_\-]?key)s?$"
+    r"(?:^|[_\-.])"
+    r"(?:(?:password|passwd|pwd|secret|api[_\-]?key|apikey|authorization|"
+    r"credential|private[_\-]?key|access[_\-]?key|session[_\-]?key|"
+    r"client[_\-]?secret|signing[_\-]?key|cert[_\-]?key)s?|token)$"
 )
 
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _normalize_key(key: str) -> str:
+    """``dbPassword`` → ``db_password``; ``AccessToken`` → ``access_token``."""
+    return _CAMEL_BOUNDARY.sub("_", key).lower()
+
+
 # Keys that end in a sensitive word but are opaque cursors, not credentials.
+# Compared against the *normalized* key, so camelCase variants are covered.
 KEY_ALLOWLIST = frozenset({"next_page_token", "page_token", "continue_token", "resume_token"})
 
 # Secret shapes inside free-form string values (log lines, config dumps, ...).
@@ -88,7 +104,8 @@ def _redact_text(text: str, *, redact_ips: bool) -> tuple[str, int]:
 
 
 def _is_sensitive_key(key: str) -> bool:
-    return key.lower() not in KEY_ALLOWLIST and bool(SENSITIVE_KEY_PATTERN.search(key))
+    normalized = _normalize_key(key)
+    return normalized not in KEY_ALLOWLIST and bool(SENSITIVE_KEY_PATTERN.search(normalized))
 
 
 def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> int:

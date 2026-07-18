@@ -33,6 +33,34 @@ class TestKeyBasedRedaction:
         assert redact_structure(data) == 0
         assert data["next_page_token"] == "opaque-cursor"
 
+    def test_camelcase_and_pascalcase_keys_redacted(self):
+        data = {
+            "dbPassword": "pw",
+            "accessToken": "tok",
+            "AccessToken": "tok",
+            "clientSecret": "shh",
+            "APIKey": "k",
+        }
+        count = redact_structure(data)
+        assert count == 5
+        assert all(v == REDACTED for v in data.values())
+
+    def test_camelcase_pagination_cursor_allowlisted(self):
+        """camelCase cursors normalize onto the snake_case allowlist."""
+        data = {"nextPageToken": "opaque-cursor", "pageToken": "abc"}
+        assert redact_structure(data) == 0
+        assert data["nextPageToken"] == "opaque-cursor"
+
+    def test_camelcase_non_credentials_untouched(self):
+        data = {"tokenCount": 5, "monKey": "x"}
+        assert redact_structure(data) == 0
+
+    def test_llm_usage_counts_untouched(self):
+        """Plural token endings are usage counts, not credentials."""
+        data = {"maxTokens": 100, "prompt_tokens": 10, "total_tokens": 15}
+        assert redact_structure(data) == 0
+        assert data == {"maxTokens": 100, "prompt_tokens": 10, "total_tokens": 15}
+
     def test_nested_structures(self):
         data = {"pods": [{"env": {"DB_PASSWORD": "pw", "DB_HOST": "postgres"}}]}
         assert redact_structure(data) == 1
