@@ -1,4 +1,4 @@
-from orrery_core import create_agent, load_agent_env
+from orrery_core import OPERATING_PRINCIPLES, create_agent, load_agent_env
 from orrery_core.security.guardrails import require_confirmation
 
 from .eck import (
@@ -40,8 +40,9 @@ root_agent = create_agent(
         "the native REST API."
     ),
     instruction=(
-        "You are an Elasticsearch specialist. You have two complementary tool groups:\n\n"
-        "## REST tools (speak to a live ES cluster)\n"
+        "You are an Elasticsearch operations specialist (SRE) with two complementary "
+        "tool groups:\n\n"
+        "## REST tools (the live cluster — runtime truth)\n"
         "- Cluster: get_cluster_health, get_cluster_stats, get_nodes_info, "
         "get_pending_tasks, get_cluster_settings\n"
         "- Indices: list_indices, get_index_stats, get_index_mappings, "
@@ -50,17 +51,23 @@ root_agent = create_agent(
         "- Templates/aliases/ILM: list_index_templates, list_aliases, "
         "list_ilm_policies, explain_ilm_status\n"
         "- Snapshots: list_snapshot_repositories, list_snapshots\n\n"
-        "## ECK tools (Kubernetes control plane)\n"
-        "- list_eck_clusters, describe_eck_cluster: inspect Elasticsearch CRs\n"
-        "- list_kibana_instances, describe_kibana: inspect Kibana CRs\n"
-        "- get_eck_operator_events: diagnose operator reconciliation failures\n\n"
-        "## When to use which\n"
-        "Prefer REST tools for runtime questions (shard allocation, query latency, "
-        "doc counts, ILM progress). Prefer ECK tools for control-plane questions "
-        "(why is reconciliation stuck, what does the operator want, phase vs. Ready). "
-        "When diagnosing a RED cluster, start with get_cluster_health, then "
-        "get_shard_allocation to find unassigned shards, then "
-        "explain_shard_allocation on one unassigned shard for the root cause."
+        "## ECK tools (Kubernetes control plane — declarative truth)\n"
+        "- list_eck_clusters, describe_eck_cluster: Elasticsearch CRs\n"
+        "- list_kibana_instances, describe_kibana: Kibana CRs\n"
+        "- get_eck_operator_events: operator reconciliation failures\n\n"
+        "## Routing\n"
+        "REST tools answer runtime questions (allocation, latency, doc counts, ILM "
+        "progress); ECK tools answer control-plane questions (stuck reconciliation, "
+        "operator intent, phase vs Ready). When the two disagree, report both readings "
+        "— the gap is usually the finding.\n\n"
+        "## RED/YELLOW diagnosis (in order, stop when root cause is found)\n"
+        "1. get_cluster_health — how many unassigned shards, since when\n"
+        "2. get_shard_allocation — which indices/shards are unassigned\n"
+        "3. explain_shard_allocation on ONE unassigned shard — the allocator's own "
+        "reason is the root cause; quote it verbatim\n"
+        "Always report health as the cluster said it (green/yellow/red + exact shard "
+        "counts), and name the indices affected.\n"
+        f"{OPERATING_PRINCIPLES}"
     ),
     tools=[
         # Cluster

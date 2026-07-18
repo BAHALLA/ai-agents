@@ -1,4 +1,4 @@
-from orrery_core import create_agent, load_agent_env
+from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
 from orrery_core.security.guardrails import require_confirmation
 
 from .tools import (
@@ -26,17 +26,28 @@ root_agent = create_agent(
         "Alertmanager silence management."
     ),
     instruction=(
-        "You are an observability specialist. Use your tools to query Prometheus metrics, "
-        "check scrape target health, investigate firing alerts, search logs in Loki, and "
-        "manage Alertmanager silences.\n\n"
-        "When diagnosing issues:\n"
-        "1. Start with get_prometheus_targets to check if all targets are healthy\n"
-        "2. Check get_active_alerts for currently firing alerts\n"
-        "3. Use query_prometheus for specific metric investigation\n"
-        "4. Correlate with query_loki_logs for log-level context\n\n"
-        "When a tool returns a 'confirmation_required' status, you MUST ask the user "
-        "to confirm before calling the tool again. Never create or delete silences "
-        "without explicit user approval."
+        "You are an observability specialist (SRE). You query Prometheus metrics, check "
+        "scrape-target health, investigate firing alerts, search Loki logs, and manage "
+        "Alertmanager silences.\n\n"
+        "## Tool routing\n"
+        "For a targeted question, call the one matching tool directly: alert questions → "
+        "get_active_alerts / get_prometheus_alerts; a specific metric → query_prometheus "
+        "(query_prometheus_range for trends); log questions → query_loki_logs (use "
+        "get_loki_labels / get_loki_label_values first only if you don't know the label "
+        "set); silence questions → get_silences.\n\n"
+        "## Open-ended investigation (in order)\n"
+        "1. get_prometheus_targets — a down target means the metrics you'd query next "
+        "are blind spots; report scraped-vs-down counts\n"
+        "2. get_active_alerts — what is firing right now (name, severity, since when)\n"
+        "3. query_prometheus / query_prometheus_range — quantify the suspect metric\n"
+        "4. query_loki_logs — log-level context for the same window\n\n"
+        "Report alert names, label values, and metric numbers exactly as returned. An "
+        "instant-query result is a point in time — say when; use a range query before "
+        "claiming a trend.\n"
+        f"{OPERATING_PRINCIPLES}\n"
+        f"{CONFIRMATION_RULE}\n"
+        "Never create or delete silences without explicit user approval — a silence "
+        "hides pages from humans."
     ),
     tools=[
         query_prometheus,

@@ -95,12 +95,41 @@ _planner = resolve_planner()
 
 # ── Parallel health checkers (graph nodes) ────────────────────────────
 
+
+def _checker_instruction(system: str, checks: str, criteria: str) -> str:
+    """Bounded-sweep contract shared by the five parallel health checkers.
+
+    Checkers run unattended inside the triage graph, so the contract optimizes
+    for speed (each check once, no exploration) and for a report the
+    downstream summarizer/router can rely on: a fixed STATUS line, exact
+    numbers, and 'unverified' — never 'healthy' — for anything a failed tool
+    call left unchecked.
+    """
+    return (
+        f"You are the {system} checker in a bounded, unattended triage sweep. "
+        f"Run each of these checks exactly once: {checks} "
+        "Take no corrective action, call no other tools, and do not retry a failed "
+        "call more than once.\n\n"
+        "Report in exactly this shape:\n"
+        "STATUS: healthy | degraded | critical | unknown\n"
+        "followed by up to 6 evidence bullets quoting exact names and numbers from "
+        "the tool output.\n\n"
+        f"Severity: {criteria} "
+        "The status must come only from what the tools returned this run. If a check "
+        "failed, name what is unverified and cap STATUS at 'unknown' for that area — "
+        "missing data is never 'healthy'."
+    )
+
+
 kafka_health_checker = create_agent(
     name="kafka_health_checker",
     description="Checks Kafka cluster health and reports status.",
-    instruction=(
-        "Check the Kafka cluster health, list topics, and check consumer group lag. "
-        "Provide a brief status summary of your findings."
+    instruction=_checker_instruction(
+        "Kafka",
+        "cluster health, topic list, consumer groups, and consumer lag.",
+        "critical = brokers unreachable/offline or offline partitions; "
+        "degraded = under-replicated partitions, or lag that is high or has no "
+        "active consumers; healthy = none of these.",
     ),
     tools=[get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag],
     output_key="kafka_status",
@@ -109,9 +138,12 @@ kafka_health_checker = create_agent(
 k8s_health_checker = create_agent(
     name="k8s_health_checker",
     description="Checks Kubernetes cluster health and reports status.",
-    instruction=(
-        "Check Kubernetes cluster health: cluster info, node status, recent events, "
-        "and any failing pods. Provide a brief status summary of your findings."
+    instruction=_checker_instruction(
+        "Kubernetes",
+        "cluster info, node status, recent events, and pod states.",
+        "critical = NotReady nodes or workloads down (CrashLoopBackOff/ImagePull "
+        "with no ready replicas); degraded = pod restarts, warning events, evictions, "
+        "or partial replica availability; healthy = none of these.",
     ),
     tools=[get_cluster_info, get_nodes, get_events, list_pods],
     output_key="k8s_status",
@@ -120,9 +152,12 @@ k8s_health_checker = create_agent(
 docker_health_checker = create_agent(
     name="docker_health_checker",
     description="Checks Docker container status and reports findings.",
-    instruction=(
-        "List running containers and check their stats. "
-        "Report any unhealthy or stopped containers. Provide a brief status summary."
+    instruction=_checker_instruction(
+        "Docker",
+        "container list, container stats, and compose service status.",
+        "critical = expected services exited/dead; degraded = restarting or "
+        "unhealthy containers, or containers pinned at resource limits; "
+        "healthy = none of these.",
     ),
     tools=[list_containers, get_container_stats, docker_compose_status],
     output_key="docker_status",
@@ -131,9 +166,12 @@ docker_health_checker = create_agent(
 observability_health_checker = create_agent(
     name="observability_health_checker",
     description="Checks Prometheus targets, firing alerts, and Alertmanager status.",
-    instruction=(
-        "Check Prometheus target health, list firing alerts from Prometheus rules, "
-        "and check active Alertmanager alerts. Provide a brief status summary."
+    instruction=_checker_instruction(
+        "Observability",
+        "Prometheus target health, firing Prometheus alerts, and active Alertmanager alerts.",
+        "critical = critical-severity alerts firing, or Prometheus/Alertmanager "
+        "itself unreachable; degraded = warning alerts firing or scrape targets "
+        "down; healthy = none of these. Report alert names and down-target counts.",
     ),
     tools=[get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus],
     output_key="observability_status",
@@ -142,12 +180,13 @@ observability_health_checker = create_agent(
 elasticsearch_health_checker = create_agent(
     name="elasticsearch_health_checker",
     description="Checks Elasticsearch cluster health, indices, and ECK CRs.",
-    instruction=(
-        "Check Elasticsearch cluster health (green/yellow/red), list indices, and "
-        "scan for unassigned shards. If running on Kubernetes, also list ECK "
-        "Elasticsearch CRs to cross-check declarative state. Provide a brief "
-        "status summary; call out any red/yellow health, unassigned shards, or "
-        "ECK clusters not in the Ready phase."
+    instruction=_checker_instruction(
+        "Elasticsearch",
+        "cluster health (green/yellow/red), index list, shard allocation, and — "
+        "when on Kubernetes — ECK Elasticsearch CRs for the declarative state.",
+        "critical = red health or unassigned primary shards; degraded = yellow "
+        "health, unassigned replicas, or ECK clusters not Ready; healthy = green "
+        "and all CRs Ready. Quote the exact color and unassigned-shard count.",
     ),
     tools=[es_get_cluster_health, es_list_indices, es_get_shard_allocation, list_eck_clusters],
     output_key="elasticsearch_status",
@@ -196,16 +235,22 @@ triage_summarizer = create_agent(
     description="Synthesizes health check results into an incident triage report.",
     planner=_planner,
     instruction=(
-        "You receive health check results from five systems stored in session state: "
-        "kafka_status, k8s_status, docker_status, observability_status, and "
-        "elasticsearch_status.\n\n"
-        "Synthesize these into a single incident triage report with:\n"
-        "1. Overall system status (healthy / degraded / critical)\n"
-        "2. Issues found per system\n"
-        "3. Recommended next actions\n\n"
-        "Then call record_triage_verdict EXACTLY ONCE with overall_status set to "
-        "'healthy', 'degraded', or 'critical' and report set to your full report "
-        "text. Be concise and actionable."
+        "You synthesize the five checker reports in session state (kafka_status, "
+        "k8s_status, docker_status, observability_status, elasticsearch_status) into "
+        "one triage verdict. Use only what the reports say — do not soften, embellish, "
+        "or add findings they don't contain.\n\n"
+        "Verdict rules (strict):\n"
+        "- overall 'critical' if ANY system reports critical\n"
+        "- overall 'degraded' if any system reports degraded or unknown/unverified — "
+        "a system that could not be checked is a risk, not a pass\n"
+        "- overall 'healthy' only when every system affirmatively reports healthy\n\n"
+        "Report shape:\n"
+        "1. Overall status + one-line reason (the deciding system)\n"
+        "2. Per-system: status and its key evidence (exact names/numbers, carried over "
+        "verbatim); one line each for healthy systems\n"
+        "3. Next actions, most urgent first, each naming a concrete target\n\n"
+        "Then call record_triage_verdict EXACTLY ONCE with overall_status "
+        "('healthy'|'degraded'|'critical') and report set to your full report text."
     ),
     tools=[record_triage_verdict],
 )
@@ -216,9 +261,10 @@ journal_writer = create_agent(
     name="journal_writer",
     description="Saves the triage report as a journal note.",
     instruction=(
-        "Read the triage report from session state (triage_report). "
-        "Save it as a note using save_note with the tag 'incident-triage'. "
-        "Also log this operation using log_operation."
+        "Read the triage report from session state (triage_report) and save it "
+        "verbatim — no rewriting — with save_note, tag 'incident-triage'. Then call "
+        "log_operation once to record the triage run. Two tool calls total; "
+        "no commentary."
     ),
     tools=[save_note, log_operation],
 )
@@ -235,11 +281,20 @@ incident_triage_agent = create_agent(
     description="Runs a full health sweep across all systems and returns a triage report.",
     planner=_planner,
     instruction=(
-        "Run a full incident triage. Check the health of Kafka, Kubernetes, Docker, "
-        "Observability (Prometheus/Alertmanager), and Elasticsearch using your tools. "
-        "Then synthesize a single triage report (overall status: healthy/degraded/critical, "
-        "issues per system, recommended next actions) and call record_triage_verdict ONCE "
-        "with overall_status and the full report text. Be concise and actionable."
+        "Run a full incident triage: check Kafka, Kubernetes, Docker, Observability "
+        "(Prometheus/Alertmanager), and Elasticsearch — each system's core checks once, "
+        "no corrective actions, no deep dives (targeted investigation belongs to the "
+        "specialists).\n\n"
+        "Verdict rules (strict): 'critical' if any system shows unavailability or data "
+        "loss risk (brokers down, red ES health, NotReady nodes, critical alerts "
+        "firing); 'degraded' for lost redundancy, growing lag, warning alerts, down "
+        "scrape targets — or any system you could not check (a failed tool call is a "
+        "risk, not a pass; report it as unverified, never as healthy); 'healthy' only "
+        "when every system affirmatively checks out.\n\n"
+        "Report: overall status + deciding reason first, then per-system findings with "
+        "exact names and numbers from tool output, then next actions with concrete "
+        "targets. Call record_triage_verdict EXACTLY ONCE with overall_status and the "
+        "full report text."
     ),
     tools=[
         get_kafka_cluster_health,
@@ -277,21 +332,31 @@ orrery_chat_agent = create_agent(
     planner=_planner,
     mode="chat",
     instruction=(
-        "You are a DevOps assistant that coordinates specialist agents. Delegate based "
-        "on the user's intent:\n"
-        "- **kafka_health_agent**: Kafka cluster health, topics, consumer groups, lag.\n"
+        "You are the coordinator of a DevOps/SRE agent team. Route each request to the "
+        "ONE specialist that owns it; answer from what the specialist returns.\n\n"
+        "## Routing\n"
+        "- **kafka_health_agent**: Kafka cluster health, topics, consumer groups, lag, "
+        "Strimzi CRs, connectors, MirrorMaker.\n"
         "- **k8s_health_agent**: Kubernetes cluster info, nodes, pods, deployments, logs, "
-        "events, scaling, restarts, and rollbacks.\n"
-        "- **observability_agent**: Prometheus metrics/alerts, Loki logs, Alertmanager.\n"
+        "events, operators/CRs, scaling, restarts, rollbacks, patches.\n"
+        "- **observability_agent**: Prometheus metrics/alerts, Loki logs, Alertmanager "
+        "silences.\n"
         "- **elasticsearch_agent**: Elasticsearch health, indices, shards, ILM, snapshots, "
-        "and ECK Kubernetes CRs.\n"
+        "ECK CRs.\n"
         "- **docker_agent**: Docker containers, logs, stats, compose status.\n"
-        "- **ops_journal_agent**: Notes, past findings, activity, preferences, bookmarks.\n"
-        "- **incident_triage_agent**: a broad health sweep across ALL systems — use it when "
-        "the user asks 'is everything healthy?', 'run a triage', or 'check all systems'.\n\n"
-        "Use individual specialists for targeted questions; use incident_triage_agent for "
-        "broad sweeps. Remediation (restart/scale/rollback) is available via k8s_health_agent "
-        "and is guarded — it requires human approval.\n\n"
+        "- **ops_journal_agent**: notes, past findings, activity, preferences, bookmarks.\n"
+        "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
+        "'run a triage', 'check all systems'). Never use it for a single-system "
+        "question — that costs five systems' worth of checks to answer one.\n\n"
+        "For a cross-system incident, delegate to the specialists one at a time in "
+        "cause-likelihood order and stop when the cause is found. Pass the specialist "
+        "everything it needs in your request (names, namespaces, time windows, prior "
+        "findings) — it cannot see the conversation.\n\n"
+        "## Answer fidelity\n"
+        "Report the specialist's findings faithfully: keep exact names, counts, and "
+        "statuses; never add conclusions the specialist's evidence doesn't support. If "
+        "a specialist reports an error or an unverified area, surface that as-is — "
+        "don't paper over it. Lead with the answer; keep it short.\n\n"
         "**Confirmation rule (critical):** when a specialist returns a "
         "`confirmation_required` result for a guarded action, relay that request to the "
         "user and STOP. Do NOT call the specialist again in the same turn, and NEVER "
@@ -299,9 +364,9 @@ orrery_chat_agent = create_agent(
         "Only when the user themselves replies with an explicit 'approve' (or 'deny') in a "
         "later turn should you re-invoke the specialist to carry out (or drop) the exact "
         "same action. A casual 'yes' is not an approval.\n\n"
-        "After a significant investigation, proactively offer to save findings via "
+        "After a significant investigation, offer once to save findings via "
         "ops_journal_agent. Relevant context from past sessions is loaded automatically — "
-        "use it to correlate with similar past incidents."
+        "correlate with similar past incidents when it genuinely matches."
     ),
     tools=[
         AgentTool(agent=kafka_agent),
@@ -336,6 +401,11 @@ _PROBLEM_SIGNALS = (
     "evicted",
     "unavailable",
     "firing",
+    # The checker contract reports unchecked areas as unknown/unverified —
+    # missing data must fail toward remediation review, never toward healthy.
+    "status: unknown",
+    "unverified",
+    "unreachable",
 )
 
 _STATUS_KEYS = (

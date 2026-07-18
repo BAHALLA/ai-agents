@@ -8,6 +8,8 @@ from .agent.base import resolve_model as resolve_model
 from .agent.base import resolve_planner as resolve_planner
 from .agent.config import AgentConfig as AgentConfig
 from .agent.config import load_config as load_config
+from .agent.prompts import CONFIRMATION_RULE as CONFIRMATION_RULE
+from .agent.prompts import OPERATING_PRINCIPLES as OPERATING_PRINCIPLES
 from .observability.activity import activity_tracker as activity_tracker
 from .observability.audit import attempt_logger as attempt_logger
 from .observability.audit import audit_logger as audit_logger
