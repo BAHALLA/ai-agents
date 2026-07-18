@@ -31,7 +31,7 @@ class TestCreateContextCacheConfig:
     @patch.dict(
         "os.environ",
         {
-            "CONTEXT_CACHE_MIN_TOKENS": "512",
+            "CONTEXT_CACHE_MIN_LENGTH": "512",
             "CONTEXT_CACHE_TTL_SECONDS": "300",
             "CONTEXT_CACHE_INTERVALS": "5",
         },
@@ -42,7 +42,7 @@ class TestCreateContextCacheConfig:
         assert config.ttl_seconds == 300
         assert config.cache_intervals == 5
 
-    @patch.dict("os.environ", {"CONTEXT_CACHE_MIN_TOKENS": "1024"})
+    @patch.dict("os.environ", {"CONTEXT_CACHE_MIN_LENGTH": "1024"})
     def test_explicit_takes_precedence_over_env(self):
         config = create_context_cache_config(min_tokens=8192)
         assert config.min_tokens == 8192

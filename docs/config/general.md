@@ -104,7 +104,7 @@ Context caching reduces token usage and latency by caching static system instruc
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONTEXT_CACHE_MIN_TOKENS` | `2048` | Only cache if context exceeds this token count |
+| `CONTEXT_CACHE_MIN_LENGTH` | `2048` | Only cache if context exceeds this token count |
 | `CONTEXT_CACHE_TTL_SECONDS` | `600` | Cache lifetime in seconds (10 minutes) |
 | `CONTEXT_CACHE_INTERVALS` | `10` | Max invocations before cache refresh |
 

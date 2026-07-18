@@ -37,7 +37,7 @@ def create_context_cache_config(
 
     Each parameter falls back to an environment variable, then to ADK defaults:
 
-    - ``CONTEXT_CACHE_MIN_TOKENS`` (default: 2048)
+    - ``CONTEXT_CACHE_MIN_LENGTH`` (default: 2048)
     - ``CONTEXT_CACHE_TTL_SECONDS`` (default: 600)
     - ``CONTEXT_CACHE_INTERVALS`` (default: 10)
 
@@ -45,7 +45,7 @@ def create_context_cache_config(
     Claude/OpenAI via LiteLLM, the config is accepted but has no effect.
     """
     resolved_min_tokens = (
-        min_tokens if min_tokens is not None else int(os.getenv("CONTEXT_CACHE_MIN_TOKENS", "2048"))
+        min_tokens if min_tokens is not None else int(os.getenv("CONTEXT_CACHE_MIN_LENGTH", "2048"))
     )
     resolved_ttl = (
         ttl_seconds
