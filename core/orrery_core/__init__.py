@@ -47,6 +47,16 @@ from .security.auth import AuthPlugin as AuthPlugin
 from .security.auth import JWTConfig as JWTConfig
 from .security.auth import extract_role as extract_role
 from .security.auth import verify_token as verify_token
+from .security.confirmation_flow import approval_refusal as approval_refusal
+from .security.confirmation_flow import blocked_payload as blocked_payload
+from .security.confirmation_flow import hash_args as hash_args
+from .security.confirmation_flow import raise_pending as raise_pending
+from .security.confirmation_flow import wire_before_tool_callback as wire_before_tool_callback
+from .security.confirmation_store import AnyConfirmationStore as AnyConfirmationStore
+from .security.confirmation_store import ConfirmationStore as ConfirmationStore
+from .security.confirmation_store import PendingConfirmation as PendingConfirmation
+from .security.confirmation_store import PostgresConfirmationStore as PostgresConfirmationStore
+from .security.confirmation_store import create_confirmation_store as create_confirmation_store
 from .security.guardrails import ACTOR_STATE_KEY as ACTOR_STATE_KEY
 from .security.guardrails import (
     CONFIRMATION_DECISION_STATE_KEY as CONFIRMATION_DECISION_STATE_KEY,

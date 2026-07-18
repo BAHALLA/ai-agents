@@ -6,16 +6,23 @@ import asyncio
 import logging
 from typing import Any
 
-from orrery_core import AgentGateway, classify_decision, set_user_role
+from orrery_core import (
+    AgentGateway,
+    AnyConfirmationStore,
+    ConfirmationStore,
+    approval_refusal,
+    classify_decision,
+    set_user_role,
+)
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
 from .chat_client import ChatClient
 from .config import GoogleChatBotConfig
 from .confirmation import (
-    AnyConfirmationStore,
-    ConfirmationStore,
     end_request_buffer,
+    space_of,
     start_request_buffer,
+    thread_of,
 )
 from .progress import ProgressTracker
 
@@ -392,17 +399,17 @@ class GoogleChatHandler:
         if decision is None:
             return None
         key = thread_name or space_name
-        pending = self.store.latest_for_thread(key)
+        pending = self.store.latest_for_scope(key)
         if pending is None:
             return None  # bare "approve"/"no" with nothing pending → normal turn
 
         if decision == "approve":
             if refusal := self._refuse_non_requester(pending, user_email):
                 return {"reply": refusal}
-            self.store.mark_latest_approved_for_thread(key)
+            self.store.mark_latest_approved_for_scope(key)
             method = "confirm_action"
         else:
-            self.store.pop_latest_for_thread(key)
+            self.store.pop_latest_for_scope(key)
             method = "deny_action"
 
         synthetic = self._build_click_synthetic(pending, method, user_email or "operator")
@@ -418,18 +425,18 @@ class GoogleChatHandler:
         progress_message_name: str | None = None
         try:
             progress_message_name = await self._post_initial_progress(
-                space_name=pending.space_name, thread_name=pending.thread_name
+                space_name=space_of(pending), thread_name=thread_of(pending)
             )
             tracker = self._make_tracker(progress_message_name)
 
             try:
                 result = await self._run_agent(
                     session_id=pending.session_id,
-                    user_id=pending.user_id,
+                    user_id=pending.requester,
                     user_text=synthetic_text,
-                    user_role=self.resolve_role(pending.user_id),
-                    space_name=pending.space_name,
-                    thread_name=pending.thread_name,
+                    user_role=self.resolve_role(pending.requester),
+                    space_name=space_of(pending),
+                    thread_name=thread_of(pending),
                     tracker=tracker,
                 )
             finally:
@@ -441,15 +448,15 @@ class GoogleChatHandler:
                 combined_text = f"{ack_text}\n\n{result['text']}"
 
             await self._update_or_post(
-                space_name=pending.space_name,
-                thread_name=pending.thread_name,
+                space_name=space_of(pending),
+                thread_name=thread_of(pending),
                 message_name=progress_message_name,
                 reply={"text": combined_text, "cardsV2": result.get("cardsV2")},
             )
         except Exception:
             logger.exception("Async decision processing failed")
             await self._post_async_error(
-                pending.space_name, pending.thread_name, message_name=progress_message_name
+                space_of(pending), thread_of(pending), message_name=progress_message_name
             )
 
     # ── MESSAGE ───────────────────────────────────────────────────────
@@ -470,11 +477,11 @@ class GoogleChatHandler:
             pending = decision["pending"]
             result = await self._run_agent(
                 session_id=pending.session_id,
-                user_id=pending.user_id,
+                user_id=pending.requester,
                 user_text=decision["synthetic_text"],
-                user_role=self.resolve_role(pending.user_id),
-                space_name=pending.space_name,
-                thread_name=pending.thread_name,
+                user_role=self.resolve_role(pending.requester),
+                space_name=space_of(pending),
+                thread_name=thread_of(pending),
             )
             combined = decision["ack_text"]
             if result.get("text"):
@@ -720,19 +727,17 @@ class GoogleChatHandler:
     def _refuse_non_requester(pending: Any, clicker: str | None) -> str | None:
         """Requester-only approval: the error text, or ``None`` when allowed.
 
-        Fail-closed — an unidentifiable clicker or one who isn't the verified
-        actor that triggered the action is refused, and the pending survives so
-        the real requester can still decide. Deny is deliberately broad (anyone
-        may stop an action; an accidental deny is harmless).
+        The fail-closed rule itself is ``orrery_core.approval_refusal`` —
+        shared with Slack and the HTTP strict mode; only the Chat-flavoured
+        message is built here. The pending survives a refusal so the real
+        requester can still decide; deny stays open to anyone.
         """
-        requester = getattr(pending, "user_id", None)
-        clicker_norm = (clicker or "").strip().lower()
-        if not clicker_norm or not requester or clicker_norm != str(requester).lower():
-            return (
-                f"Approval refused: only the requester ({requester or 'unknown'}) may "
-                f"approve `{pending.tool_name}`. Ask them to click Approve, or Deny it."
-            )
-        return None
+        if approval_refusal(pending, clicker) is None:
+            return None
+        return (
+            f"Approval refused: only the requester ({pending.requester or 'unknown'}) may "
+            f"approve `{pending.tool_name}`. Ask them to click Approve, or Deny it."
+        )
 
     # ── CARD_CLICKED ──────────────────────────────────────────────────
 
@@ -846,11 +851,11 @@ class GoogleChatHandler:
 
         result = await self._run_agent(
             session_id=pending.session_id,
-            user_id=pending.user_id,
+            user_id=pending.requester,
             user_text=synthetic_text,
-            user_role=self.resolve_role(pending.user_id),
-            space_name=pending.space_name,
-            thread_name=pending.thread_name,
+            user_role=self.resolve_role(pending.requester),
+            space_name=space_of(pending),
+            thread_name=thread_of(pending),
         )
 
         combined_text = ack_text
@@ -888,8 +893,8 @@ class GoogleChatHandler:
         synthetic = self._build_click_synthetic(pending, method, display_name)
         if synthetic is None:
             await self._post_async_reply(
-                space_name=pending.space_name,
-                thread_name=pending.thread_name,
+                space_name=space_of(pending),
+                thread_name=thread_of(pending),
                 reply={"text": f"Unknown action: {method}"},
             )
             return

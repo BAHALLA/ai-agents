@@ -110,8 +110,10 @@ async def list_audit_log() -> dict:
 
 Both bots replace text-based confirmation with an interactive surface. The handlers set `guardrail_mode="none"` on `default_plugins()` to skip the plugin's confirmation gate, then wire a custom `before_tool_callback` that emits the platform-native UI instead:
 
-- **Slack** (`agents/slack-bot/slack_bot/confirmation.py`) — Block Kit Approve/Deny buttons. The retry handshake uses an in-state `_guardrail_pending_<tool>` flag scoped to the channel/thread session.
-- **Google Chat** (`agents/google-chat-bot/google_chat_bot/confirmation.py`) — Card v2 whose decision channel is transport-dependent: reply **approve**/**deny** in the card's thread (default; the only channel that works over Pub/Sub, where button clicks can't complete their synchronous round-trip), or inline Approve/Deny buttons on HTTP deployments (`GOOGLE_CHAT_INTERACTIVE_BUTTONS=true`). Both carry the decider's verified email; approval is requester-only, fail-closed. The retry handshake lives on the bot's `ConfirmationStore`, keyed by `(thread_or_space, tool_name, args_hash)` rather than per-context state. This is load-bearing: many guarded tools live on `AgentTool`-wrapped specialist agents whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session, so an in-state retry flag would be lost. The store entry the click handler marks `approved=True` is consumed on the LLM's retry within a 120s validity window.
+Both bots run the same two-phase handshake over the **shared platform confirmation store** (`core/orrery_core/security/confirmation_store.py`, backend via `ORRERY_CONFIRMATION_BACKEND`): the callback registers a pending scoped by the conversation (thread/space for Chat, channel/thread for Slack), the decision handler verifies the decider **is the requester** (`orrery_core.approval_refusal` — fail-closed; deny is open to anyone) and marks the entry approved, and the LLM's retry consumes it by `(scope, tool_name, args_hash)` within a 120s validity window — one-shot, args-hash pinned. The store (not session state) is load-bearing: many guarded tools live on `AgentTool`-wrapped specialist agents whose ADK sub-sessions are ephemeral and don't propagate state writes back to the parent session, so an in-state retry flag would be lost. What differs per transport is only the surface:
+
+- **Slack** (`agents/slack-bot/slack_bot/confirmation.py`) — Block Kit Approve/Deny buttons; the refusal message renders the requester as an `<@id>` mention.
+- **Google Chat** (`agents/google-chat-bot/google_chat_bot/confirmation.py`) — Card v2 whose decision channel is transport-dependent: reply **approve**/**deny** in the card's thread (default; the only channel that works over Pub/Sub, where button clicks can't complete their synchronous round-trip), or inline Approve/Deny buttons on HTTP deployments (`GOOGLE_CHAT_INTERACTIVE_BUTTONS=true`). Both channels carry the decider's verified email.
 
 Sub-agents keep their per-agent `require_confirmation()` as a fallback for guarded tools reached without going through the root. `apply_chat_confirmation()` walks the agent tree and overrides every LlmAgent's `before_tool_callback` so guarded tools on sub-agents post a Card v2 too instead of falling back to the text prompt.
 
@@ -132,9 +134,17 @@ Consequences:
 - **Invocation scope.** The same "yes" cannot silently authorize a different destructive call later in the turn.
 - **No state leakage.** Confirmation lives in session state, so restarts invalidate pending approvals.
 
+In **requester-verified (strict) mode** — armed by `AgentGateway(verified_confirmation=True)`, i.e. every shipped exposition — the pending moves out of session state into the shared platform store (`core/orrery_core/security/confirmation_store.py`, the same one the Slack and Google Chat bots use), scoped by the requester. This is load-bearing: guarded tools are routinely reached through an `AgentTool` whose sub-session is throwaway, so the requester is the only identity visible on both sides of that boundary, and keying by requester is also what enforces "only the person who triggered the action may approve it". The human `approve`/`deny` recorded by the gateway consumes the pending **atomically** (a single check-and-remove), so one decision can never authorize two executions.
+
+The store has two backends, selected by `ORRERY_CONFIRMATION_BACKEND`:
+
+- `memory` (default) — process-local. Correct only for a **single replica**: a pending raised on pod A is invisible to the pod that receives the approval, and it dies with the pod on restart.
+- `postgres` — shares the handshake across replicas over the platform's existing `DATABASE_URL` (one `orrery_confirmations` table, created on startup; no new infrastructure) and survives restarts. The atomic consume is a single `DELETE … RETURNING`, so two replicas racing on the same approval cannot both win. **Required whenever any transport (HTTP front door, persistent runner, Slack bot, Chat Pub/Sub worker) runs more than one replica.** The gateway resolves the backend at startup and fails fast if `postgres` is selected without a usable `DATABASE_URL` — same contract as the session store.
+
 ## Related config
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `guardrail_mode` (arg to `default_plugins`) | `"confirm"` | `"dry_run"` preview mode, `"none"` for integrations with their own UX |
+| `ORRERY_CONFIRMATION_BACKEND` | `memory` | Strict-mode pending store: `postgres` shares approvals across replicas via `DATABASE_URL` (required for multi-replica HTTP) |
 | `role_policy` (arg to `default_plugins`) | `None` | Per-tool role overrides via `RolePolicy` |

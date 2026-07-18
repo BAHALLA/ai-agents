@@ -8,15 +8,35 @@ import pytest
 from google.genai import types
 from google_chat_bot.config import GoogleChatBotConfig
 from google_chat_bot.confirmation import (
-    ConfirmationStore,
-    PendingConfirmation,
     end_request_buffer,
     google_chat_confirmation,
+    space_of,
     start_request_buffer,
+    thread_of,
 )
 from google_chat_bot.handler import GoogleChatHandler
 
-from orrery_core import AgentGateway
+from orrery_core import AgentGateway, ConfirmationStore, PendingConfirmation
+
+
+def chat_pending(
+    *,
+    user_id: str,
+    space_name: str = "",
+    thread_name: str | None = None,
+    **fields: Any,
+) -> PendingConfirmation:
+    """Build a unified PendingConfirmation from Chat-shaped fields.
+
+    Mirrors the scope mapping the gchat callback applies: scope is the thread
+    when there is one (space rides along as parent scope), else the space.
+    """
+    return PendingConfirmation(
+        requester=user_id,
+        scope_key=thread_name or space_name,
+        parent_scope=space_name if thread_name else None,
+        **fields,
+    )
 
 
 @pytest.fixture
@@ -206,7 +226,7 @@ class TestHandleCardClick:
     @pytest.mark.asyncio
     async def test_confirm_action_runs_agent(self, handler, store, mock_runner):
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="abc123",
                 tool_name="restart_deployment",
                 user_id="user@example.com",
@@ -248,7 +268,7 @@ class TestHandleCardClick:
     @pytest.mark.asyncio
     async def test_deny_action_clears_pending(self, handler, store, mock_runner):
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="xyz",
                 tool_name="drop_topic",
                 user_id="user@example.com",
@@ -282,7 +302,7 @@ class TestHandleCardClick:
     async def test_addons_card_click_without_top_level_type(self, handler, store):
         """Add-ons payloads omit top-level 'type' — detection must still fire."""
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="addon1",
                 tool_name="scale_deployment",
                 user_id="user@example.com",
@@ -311,7 +331,7 @@ class TestHandleCardClick:
         misclassified as ADDED_TO_SPACE.
         """
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="space1",
                 tool_name="restart_deployment",
                 user_id="user@example.com",
@@ -342,7 +362,7 @@ class TestHandleCardClick:
     async def test_legacy_action_method_name_format(self, handler, store):
         """Handler should also accept the legacy actionMethodName payload."""
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="leg1",
                 tool_name="restart",
                 user_id="user@example.com",
@@ -414,8 +434,8 @@ class TestGoogleChatConfirmation:
         assert len(store._pending) == 1
         pending = next(iter(store._pending.values()))
         assert pending.tool_name == "my_tool"
-        assert pending.space_name == "spaces/abc"
-        assert pending.thread_name == "threads/1"
+        assert space_of(pending) == "spaces/abc"
+        assert thread_of(pending) == "threads/1"
         # The parent gchat session id must be reconstructed from state,
         # not borrowed from tool_context.session.id (which is the inner
         # AgentTool session and would lose conversation history on retry).
@@ -426,9 +446,7 @@ class TestGoogleChatConfirmation:
 
     def test_approved_pending_in_store_proceeds(self, store):
         """Click handler marks an entry approved → callback consumes it."""
-        from google_chat_bot.confirmation import _hash_args
-
-        from orrery_core import confirm
+        from orrery_core import confirm, hash_args
 
         callback = google_chat_confirmation(store)
 
@@ -445,7 +463,7 @@ class TestGoogleChatConfirmation:
         # approved.
         args = {"name": "A"}
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="ab",
                 tool_name="my_tool",
                 user_id="user@example.com",
@@ -454,7 +472,7 @@ class TestGoogleChatConfirmation:
                 thread_name="threads/1",
                 level="confirm",
                 args=args,
-                args_hash=_hash_args(args),
+                args_hash=hash_args(args),
                 approved=True,
                 approved_at=time.time(),
             )
@@ -468,9 +486,8 @@ class TestGoogleChatConfirmation:
 
     def test_stale_approval_does_not_proceed(self, store):
         """Approvals beyond the validity window must re-prompt."""
-        from google_chat_bot.confirmation import _APPROVAL_VALIDITY, _hash_args
-
-        from orrery_core import confirm
+        from orrery_core import confirm, hash_args
+        from orrery_core.security.confirmation_store import _APPROVAL_VALIDITY
 
         callback = google_chat_confirmation(store)
 
@@ -484,7 +501,7 @@ class TestGoogleChatConfirmation:
 
         args = {"name": "A"}
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="stale",
                 tool_name="my_tool",
                 user_id="user@example.com",
@@ -493,7 +510,7 @@ class TestGoogleChatConfirmation:
                 thread_name="threads/1",
                 level="confirm",
                 args=args,
-                args_hash=_hash_args(args),
+                args_hash=hash_args(args),
                 approved=True,
                 approved_at=time.time() - _APPROVAL_VALIDITY - 1,
             )
@@ -914,7 +931,7 @@ class TestRequesterOnlyApproval:
             args_hash="deadbeef",
         )
         defaults.update(overrides)
-        return PendingConfirmation(**defaults)
+        return chat_pending(**defaults)
 
     def test_card_click_requester_may_approve(self, handler, store):
         store.add(self._pending())
@@ -964,7 +981,7 @@ class TestThreadReplyDecisions:
 
     def _add_pending(self, store, requester="alice@example.com"):
         store.add(
-            PendingConfirmation(
+            chat_pending(
                 action_id="dec-1",
                 tool_name="remove_image",
                 user_id=requester,

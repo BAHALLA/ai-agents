@@ -79,9 +79,11 @@ spec:
               value: {{ .Values.pubsubWorker.idempotency.backend | quote }}
             - name: GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_TTL_SECONDS
               value: {{ .Values.pubsubWorker.idempotency.ttlSeconds | quote }}
-            # Confirmation store (pending approvals). Same replica rule as the
-            # idempotency guard; postgres reuses DATABASE_URL from the secret.
-            - name: GOOGLE_CHAT_CONFIRMATION_BACKEND
+            # Confirmation store (pending approvals) — the platform-wide env
+            # var shared with the HTTP front door and Slack bot. Same replica
+            # rule as the idempotency guard; postgres reuses DATABASE_URL from
+            # the secret.
+            - name: ORRERY_CONFIRMATION_BACKEND
               value: {{ .Values.pubsubWorker.confirmation.backend | quote }}
           ports:
             - name: health

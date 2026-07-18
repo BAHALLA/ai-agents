@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from google_chat_bot.confirmation import ConfirmationStore, apply_chat_confirmation
+from google_chat_bot.confirmation import apply_chat_confirmation
+
+from orrery_core import ConfirmationStore
 
 
 class _FakeTool:

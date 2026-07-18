@@ -2,9 +2,26 @@
 
 from orrery_core import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, confirm, destructive
 from slack_bot.confirmation import (
+    PendingConfirmation,
     build_confirmation_blocks,
+    channel_of,
     slack_confirmation,
+    slack_scope,
 )
+
+
+def slack_pending(
+    *,
+    channel: str,
+    thread_ts: str | None = None,
+    user_id: str,
+    **fields,
+) -> PendingConfirmation:
+    """Build a unified PendingConfirmation from Slack-shaped fields."""
+    scope_key, parent_scope = slack_scope(channel, thread_ts)
+    return PendingConfirmation(
+        requester=user_id, scope_key=scope_key, parent_scope=parent_scope, **fields
+    )
 
 
 def _safe_func():
@@ -41,7 +58,9 @@ class TestSlackConfirmation:
         result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert result is not None
         assert result["status"] == "confirmation_required"
-        assert ctx.state["_guardrail_pending_create_topic"] is True
+        # The pending lives in the shared store (not session state, which is
+        # lost across AgentTool sub-sessions).
+        assert len(store._pending) == 1
         fake_slack_client.chat_postMessage.assert_called_once()
 
     def test_destructive_tool_blocks_and_posts_buttons(
@@ -56,16 +75,53 @@ class TestSlackConfirmation:
         assert result["status"] == "confirmation_required"
         fake_slack_client.chat_postMessage.assert_called_once()
 
-    def test_confirmed_tool_proceeds_on_second_call(
+    def test_approved_pending_proceeds_on_retry(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
+        """Two-phase handshake: block → click marks approved → retry consumes."""
         cb = slack_confirmation(store, fake_slack_client, channel_ref)
         tool = fake_tool("create_topic", _confirm_func)
-        ctx = fake_ctx({"_guardrail_pending_create_topic": True})
+        ctx = fake_ctx()
+
+        blocked = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        assert blocked["status"] == "confirmation_required"
+        pending = next(iter(store._pending.values()))
+        store.mark_approved(pending.action_id)
 
         result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert result is None  # proceed
-        assert ctx.state["_guardrail_pending_create_topic"] is False
+        # Approval is one-shot: consumed from the store.
+        assert len(store._pending) == 0
+
+    def test_unapproved_retry_stays_blocked(
+        self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
+    ):
+        """A model re-call without a human decision must NOT pass (the old
+        state-flag handshake let any retry through)."""
+        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        tool = fake_tool("create_topic", _confirm_func)
+        ctx = fake_ctx()
+
+        cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        assert result is not None
+        assert result["status"] == "confirmation_required"
+
+    def test_approval_is_args_hash_pinned(
+        self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
+    ):
+        """A retry with different args than were approved must re-prompt."""
+        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        tool = fake_tool("create_topic", _confirm_func)
+        ctx = fake_ctx()
+
+        cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        pending = next(iter(store._pending.values()))
+        store.mark_approved(pending.action_id)
+
+        result = cb(tool=tool, args={"name": "OTHER"}, tool_context=ctx)
+        assert result is not None
+        assert result["status"] == "confirmation_required"
 
     def test_pending_confirmation_stored(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
@@ -79,7 +135,8 @@ class TestSlackConfirmation:
         assert len(store._pending) == 1
         pending = list(store._pending.values())[0]
         assert pending.tool_name == "delete_topic"
-        assert pending.channel == "C_TEST"
+        assert channel_of(pending) == "C_TEST"
+        assert pending.requester == "U_TEST"
 
     def test_tool_without_func_proceeds(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
@@ -94,9 +151,7 @@ class TestSlackConfirmation:
 
 class TestConfirmationStore:
     def test_add_and_pop(self, store):
-        from slack_bot.confirmation import PendingConfirmation
-
-        pc = PendingConfirmation(
+        pc = slack_pending(
             action_id="abc123",
             tool_name="test",
             args={},
@@ -144,9 +199,7 @@ class TestApprovalRefusal:
     """Approve is requester-only and fail-closed (deny stays open to anyone)."""
 
     def _confirmation(self):
-        from slack_bot.confirmation import PendingConfirmation
-
-        return PendingConfirmation(
+        return slack_pending(
             action_id="abc123",
             tool_name="delete_topic",
             args={"topic": "events"},

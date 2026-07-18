@@ -79,7 +79,7 @@ No commands need to be configured in the Chat API console.
 
 Destructive tools render with a warning banner; confirm tools render with an info banner. Approvals are valid for **120 seconds** after the click, after which the bot re-prompts with a fresh card; pending entries themselves expire after 300 s. If the LLM retries with arguments that differ from those shown on the card (different `args_hash`), the bot re-prompts — operators authorize specific arguments, not just a tool name.
 
-The handshake lives on the bot's `ConfirmationStore` rather than per-context session state so it survives across `AgentTool` sub-agents (whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session). See [`google_chat_bot/confirmation.py`](https://github.com/BAHALLA/orrery/blob/main/agents/google-chat-bot/google_chat_bot/confirmation.py) for the full callback.
+The handshake lives on the platform confirmation store (`orrery_core`, shared with the Slack bot and the HTTP server; backend via `ORRERY_CONFIRMATION_BACKEND`) rather than per-context session state, so it survives across `AgentTool` sub-agents (whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session). See [`google_chat_bot/confirmation.py`](https://github.com/BAHALLA/orrery/blob/main/agents/google-chat-bot/google_chat_bot/confirmation.py) for the Chat-specific callback.
 
 ### Session Management
 
@@ -98,7 +98,7 @@ Sessions are persisted in the shared Postgres store (same as Slack).
 |----------|---------|-------------|
 | `GOOGLE_CHAT_AUDIENCE` | — | JWT audience — must match the public URL byte-for-byte (HTTP mode only) |
 | `GOOGLE_CHAT_ASYNC_RESPONSE` | `true` | Enable async Chat REST API replies |
-| `GOOGLE_CHAT_CONFIRMATION_BACKEND` | `memory` | Pending-approval store — `postgres` (shared `DATABASE_URL`) required for multi-replica, survives restarts |
+| `ORRERY_CONFIRMATION_BACKEND` | `memory` | Platform-wide pending-approval store (shared with Slack/HTTP) — `postgres` (shared `DATABASE_URL`) required for multi-replica, survives restarts |
 | `GOOGLE_CHAT_INTERACTIVE_BUTTONS` | `false` | Approve/Deny buttons on cards — HTTP endpoint only; keep `false` on Pub/Sub (clicks can't complete there) |
 | `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` | — | SA key for async replies (required locally, uses ADC on GKE) |
 | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated admin emails |

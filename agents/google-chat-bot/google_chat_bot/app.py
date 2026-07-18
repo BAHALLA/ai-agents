@@ -42,7 +42,7 @@ config = GoogleChatBotConfig()
 _handler: GoogleChatHandler | None = None
 # Backend from config: 'memory' pins the bot to one replica; 'postgres'
 # shares pendings across replicas and survives restarts (DATABASE_URL).
-_store = create_confirmation_store(backend=config.google_chat_confirmation_backend)
+_store = create_confirmation_store(backend=config.orrery_confirmation_backend)
 
 
 def _build_chat_client(cfg: GoogleChatBotConfig) -> ChatClient | None:

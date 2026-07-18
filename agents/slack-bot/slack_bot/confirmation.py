@@ -2,16 +2,26 @@
 
 Replaces the CLI-based require_confirmation() with Slack interactive buttons.
 When a guarded tool is invoked, posts a Block Kit message with Approve/Deny
-buttons. The user's button click is handled in app.py.
+buttons and records the pending action in the platform confirmation store
+(``orrery_core``). The button click is handled in app.py / socket_mode.py:
+Approve marks the pending approved (requester-only, fail-closed) and re-enters
+the runner with a synthetic "proceed" message; on the LLM's retry the callback
+consumes the approved entry by ``(scope, tool_name, args_hash)`` within the
+shared validity window — so an approval is one-shot, pinned to the exact
+arguments it was granted for, and survives an ADK ``AgentTool`` sub-agent
+whose session state does not propagate to the parent.
+
+Store, backends (memory | postgres via ``ORRERY_CONFIRMATION_BACKEND``),
+TTL / approval validity, args-hash pinning, and the requester-only rule all
+live in ``orrery_core`` — shared with the Google Chat bot and the HTTP strict
+mode. This module keeps only what is Slack-specific: the Block Kit rendering,
+the channel/thread scope mapping, and the button-posting callback.
 """
 
 from __future__ import annotations
 
 import contextlib
-import threading
-import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 from google.adk.agents.context import Context
@@ -19,59 +29,58 @@ from google.adk.tools.base_tool import BaseTool
 
 from orrery_core import (
     LEVEL_DESTRUCTIVE,
+    AnyConfirmationStore,
+    ConfirmationStore,  # noqa: F401 — re-export for app.py / conftest
+    PendingConfirmation,
+    blocked_payload,
+    create_confirmation_store,  # noqa: F401 — re-export for app.py
     get_guard_level,
     get_guard_reason,
+    hash_args,
+    raise_pending,
+    wire_before_tool_callback,
+)
+from orrery_core import (
+    approval_refusal as _core_approval_refusal,
 )
 
-
-@dataclass
-class PendingConfirmation:
-    """Stores context for a tool awaiting user approval."""
-
-    action_id: str
-    tool_name: str
-    args: dict[str, Any]
-    channel: str
-    thread_ts: str
-    session_id: str
-    user_id: str
-    level: str
+# ── Scope mapping ────────────────────────────────────────────────────
+#
+# A pending's decision scope is the channel thread when there is one, else the
+# bare channel; the channel rides along as the parent scope so the store's
+# *_for_scope lookups can match either. Slack channel ids never contain ":".
 
 
-@dataclass
-class ConfirmationStore:
-    """Thread-safe store for pending confirmations."""
+def slack_scope(channel: str, thread_ts: str | None) -> tuple[str, str | None]:
+    """``(scope_key, parent_scope)`` for a Slack channel/thread."""
+    if thread_ts:
+        return f"{channel}:{thread_ts}", channel
+    return channel, None
 
-    _pending: dict[str, PendingConfirmation] = field(default_factory=dict)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def add(self, confirmation: PendingConfirmation) -> None:
-        with self._lock:
-            self._pending[confirmation.action_id] = confirmation
+def channel_of(pending: PendingConfirmation) -> str:
+    """The Slack channel a pending was raised in."""
+    return pending.parent_scope or pending.scope_key
 
-    def pop(self, action_id: str) -> PendingConfirmation | None:
-        with self._lock:
-            return self._pending.pop(action_id, None)
 
-    def get(self, action_id: str) -> PendingConfirmation | None:
-        with self._lock:
-            return self._pending.get(action_id)
+def thread_ts_of(pending: PendingConfirmation) -> str:
+    """The Slack thread a pending was raised in (empty for channel-level)."""
+    return pending.scope_key.split(":", 1)[1] if pending.parent_scope else ""
 
 
 def approval_refusal(confirmation: PendingConfirmation, clicker: str | None) -> str | None:
     """Requester-only approval: the refusal message, or ``None`` when allowed.
 
-    Fail-closed — an unidentifiable clicker, or one who is not the verified
-    user that triggered the action, may not approve it. Deny is deliberately
-    left open to anyone (an accidental deny is harmless; anyone should be able
-    to stop a destructive action).
+    The fail-closed rule itself is ``orrery_core.approval_refusal`` — shared
+    with Google Chat and the HTTP strict mode; only the Slack-flavoured
+    message (``<@id>`` mention) is built here.
     """
-    if not clicker or clicker != confirmation.user_id:
-        return (
-            f":no_entry: Approval refused: only the requester "
-            f"(<@{confirmation.user_id}>) may approve `{confirmation.tool_name}`."
-        )
-    return None
+    if _core_approval_refusal(confirmation, clicker) is None:
+        return None
+    return (
+        f":no_entry: Approval refused: only the requester "
+        f"(<@{confirmation.requester}>) may approve `{confirmation.tool_name}`."
+    )
 
 
 def build_confirmation_blocks(
@@ -121,14 +130,14 @@ def build_confirmation_blocks(
 
 
 def slack_confirmation(
-    store: ConfirmationStore,
+    store: AnyConfirmationStore,
     slack_client: Any,
     channel_ref: dict[str, str],
 ) -> Callable:
     """Create a before_tool_callback that posts Slack buttons for guarded tools.
 
     Args:
-        store: Shared ConfirmationStore for tracking pending approvals.
+        store: Shared confirmation store for tracking pending approvals.
         slack_client: The Slack WebClient for posting messages.
         channel_ref: Mutable dict with 'channel' and 'thread_ts' keys,
             updated per-message by the handler so the callback knows
@@ -144,92 +153,60 @@ def slack_confirmation(
         if level is None:
             return None  # not guarded, proceed
 
-        # If already confirmed (pending flag set), allow through
-        pending_key = f"_guardrail_pending_{tool.name}"
-        if tool_context.state.get(pending_key):
-            tool_context.state[pending_key] = False
-            return None  # user confirmed via button, proceed
+        channel = channel_ref.get("channel", "")
+        thread_ts = channel_ref.get("thread_ts", "") or None
+        scope_key, parent_scope = slack_scope(channel, thread_ts)
 
-        # Block and post Slack buttons
-        tool_context.state[pending_key] = True
+        args_hash = hash_args(args)
 
+        # Approve flow: an entry the click handler marked approved consumes
+        # here and lets the call through — one-shot, args-hash pinned, and
+        # only within the shared validity window. (A denied or never-decided
+        # pending never passes: the retry falls through and re-prompts.)
+        if scope_key:
+            approved = store.consume_approved(scope_key, tool.name, args_hash)
+            if approved is not None:
+                return None
+
+        # Block: register a fresh pending and post the buttons.
         reason = get_guard_reason(func)
-        action_id = uuid.uuid4().hex[:12]
-
         session_id = (
             tool_context.session.id
             if hasattr(tool_context, "session") and tool_context.session
             else "unknown"
         )
-        user_id = getattr(tool_context, "user_id", "unknown")
-
-        confirmation = PendingConfirmation(
-            action_id=action_id,
+        pending = raise_pending(
+            store,
             tool_name=tool.name,
             args=args,
-            channel=channel_ref.get("channel", ""),
-            thread_ts=channel_ref.get("thread_ts", ""),
+            requester=getattr(tool_context, "user_id", "unknown"),
+            scope_key=scope_key,
+            parent_scope=parent_scope,
             session_id=session_id,
-            user_id=user_id,
             level=level,
         )
-        store.add(confirmation)
 
-        blocks = build_confirmation_blocks(tool.name, args, reason, level, action_id)
+        blocks = build_confirmation_blocks(tool.name, args, reason, level, pending.action_id)
 
         with contextlib.suppress(Exception):
             slack_client.chat_postMessage(
-                channel=channel_ref.get("channel", ""),
+                channel=channel,
                 thread_ts=channel_ref.get("thread_ts", ""),
                 text=f"Confirmation required for `{tool.name}`",
                 blocks=blocks,
             )
 
-        reason_msg = f" This action {reason}." if reason else ""
-        return {
-            "status": "confirmation_required",
-            "message": (
-                f"The tool '{tool.name}' requires confirmation.{reason_msg} "
-                f"A Slack approval button has been sent. "
-                f"Waiting for user response."
-            ),
-        }
+        return blocked_payload(
+            tool.name,
+            level=level,
+            reason=reason,
+            notice="A Slack approval button has been sent. Waiting for user response.",
+        )
 
     return callback
 
 
-def wire_tool_callbacks(root: Any, callbacks: list[Callable[..., Any]]) -> int:
-    """Assign ``before_tool_callback`` to every tool-calling LlmAgent under *root*.
-
-    Handles both an ``LlmAgent`` root (walks ``sub_agents`` + ``AgentTool``s) and
-    a graph-based ``Workflow`` root (walks ``graph.nodes``), so Slack confirmation
-    buttons fire for guarded tools no matter where the tool-calling agent lives.
-    See ADR-003. Returns the number of agents wired.
-    """
-    seen: set[int] = set()
-    wired = 0
-
-    def visit(node: Any) -> None:
-        nonlocal wired
-        if node is None or id(node) in seen:
-            return
-        seen.add(id(node))
-
-        tools = getattr(node, "tools", None)
-        if tools is not None:
-            node.before_tool_callback = callbacks
-            wired += 1
-
-        for sub in getattr(node, "sub_agents", None) or ():
-            visit(sub)
-        for tool in tools or ():
-            inner = getattr(tool, "agent", None)
-            if inner is not None:
-                visit(inner)
-        graph = getattr(node, "graph", None)
-        if graph is not None:
-            for gnode in getattr(graph, "nodes", None) or ():
-                visit(gnode)
-
-    visit(root)
-    return wired
+#: The agent-tree walker (sub_agents + AgentTool + Workflow graph nodes) is
+#: the shared ``orrery_core`` implementation; kept under the historical name
+#: for the Slack entrypoints.
+wire_tool_callbacks = wire_before_tool_callback

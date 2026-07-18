@@ -430,10 +430,11 @@ def test_strict_records_requester_on_pending(fake_tool, fake_ctx):
     result = callback(tool=_danger(fake_tool), args={}, tool_context=ctx)
     assert result["status"] == "confirmation_required"
     assert "'approve'" in result["message"]
-    # The pending lives in the requester-keyed store, not session state.
-    pending = _pending_confirmations.get("alice@example.com", "danger_tool")
+    # The pending lives in the requester-scoped store, not session state.
+    pending = _pending_confirmations.latest_for_scope("alice@example.com")
     assert pending is not None
-    assert pending["requester"] == "alice@example.com"
+    assert pending.tool_name == "danger_tool"
+    assert pending.requester == "alice@example.com"
 
 
 def test_strict_recall_without_decision_stays_blocked(fake_tool, fake_ctx):
@@ -461,7 +462,7 @@ def test_strict_requester_approval_passes_and_consumes(fake_tool, fake_ctx):
 
     assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
     # Pending consumed from the store, decision consumed from state.
-    assert _pending_confirmations.get("alice@example.com", "danger_tool") is None
+    assert _pending_confirmations.latest_for_scope("alice@example.com") is None
     assert ctx.state[CONFIRMATION_DECISION_STATE_KEY] is None  # consumed
 
 
@@ -505,7 +506,7 @@ def test_strict_second_person_cannot_approve(fake_tool, fake_ctx):
     assert result["status"] == "confirmation_required"  # blocked, not executed
 
     # Alice's pending survives so the real requester can still decide.
-    assert _pending_confirmations.get("alice@example.com", "danger_tool") is not None
+    assert _pending_confirmations.latest_for_scope("alice@example.com") is not None
 
 
 def test_strict_unknown_requester_fails_closed(fake_tool, fake_ctx):
@@ -517,8 +518,8 @@ def test_strict_unknown_requester_fails_closed(fake_tool, fake_ctx):
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is not None
     assert result["status"] == "confirmation_required"
-    # Cannot key a pending without a requester — nothing persisted.
-    assert _pending_confirmations.get("", "danger_tool") is None
+    # Cannot scope a pending without a requester — nothing persisted.
+    assert _pending_confirmations.latest_for_scope("") is None
 
     # Even a stamped approval cannot unblock it.
     _stamp_decision(ctx, "approve", by="anyone@example.com")
@@ -535,7 +536,7 @@ def test_strict_deny_clears_pending(fake_tool, fake_ctx):
 
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result["status"] == "denied"
-    assert _pending_confirmations.get("alice@example.com", "danger_tool") is None
+    assert _pending_confirmations.latest_for_scope("alice@example.com") is None
 
 
 def test_strict_stale_approval_refused(fake_tool, fake_ctx):

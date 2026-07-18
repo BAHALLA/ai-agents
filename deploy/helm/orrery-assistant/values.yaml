@@ -105,6 +105,13 @@ probes:
 ## via envFrom. Secret keys (API tokens, DATABASE_URL) MUST go under
 ## `secrets` or be provided out-of-band via `existingSecret`.
 config:
+  ## Pending approvals for guarded tools (all transports share this store)
+  ## are process-local by default ("memory"). When this deployment serves the
+  ## HTTP front door with replicaCount > 1 (or autoscaling), set "postgres"
+  ## (needs DATABASE_URL) so an approval received on one replica resolves a
+  ## pending raised on another. The pubsubWorker template sets the same env
+  ## var from pubsubWorker.confirmation.backend.
+  # ORRERY_CONFIRMATION_BACKEND: postgres
   MODEL_PROVIDER: gemini
   MODEL_NAME: gemini-2.0-flash
   GEMINI_MODEL_VERSION: gemini-2.0-flash

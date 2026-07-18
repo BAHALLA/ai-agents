@@ -28,9 +28,11 @@ from orrery_core import (
 
 from .config import SlackBotConfig
 from .confirmation import (
-    ConfirmationStore,
     approval_refusal,
+    channel_of,
+    create_confirmation_store,
     slack_confirmation,
+    thread_ts_of,
     wire_tool_callbacks,
 )
 from .handler import APP_NAME, SlackAgentHandler
@@ -41,7 +43,10 @@ logger = logging.getLogger("slack_bot")
 # ── Shared state ──────────────────────────────────────────────────────
 
 config = SlackBotConfig()
-store = ConfirmationStore()
+# Backend from ORRERY_CONFIRMATION_BACKEND: 'memory' pins the bot to one
+# replica; 'postgres' shares pendings across replicas and survives restarts
+# (DATABASE_URL) — the same platform store the other transports use.
+store = create_confirmation_store()
 session_map = SessionMap()
 
 
@@ -242,17 +247,21 @@ async def handle_approve(ack, action, say, body):
     if refusal := approval_refusal(confirmation, clicker):
         await say(
             text=refusal,
-            thread_ts=confirmation.thread_ts,
-            channel=confirmation.channel,
+            thread_ts=thread_ts_of(confirmation),
+            channel=channel_of(confirmation),
         )
         return
 
-    store.pop(action_id)
+    # Mark approved through the store (not pop): the entry must survive until
+    # the callback consumes it on the LLM's retry — the handshake that works
+    # across AgentTool sub-sessions and, on postgres, across replicas.
+    if store.mark_approved(action_id) is None:
+        return
     approver = body.get("user", {}).get("username", "unknown")
     await say(
         text=f":white_check_mark: *Approved* by @{approver} — executing `{confirmation.tool_name}`",
-        thread_ts=confirmation.thread_ts,
-        channel=confirmation.channel,
+        thread_ts=thread_ts_of(confirmation),
+        channel=channel_of(confirmation),
     )
 
     # Send a "yes, proceed" message to the runner so the LLM re-invokes the tool
@@ -261,9 +270,9 @@ async def handle_approve(ack, action, say, body):
 
     await _handler.handle_message(
         text=f"Yes, proceed with {confirmation.tool_name}.",
-        channel=confirmation.channel,
-        thread_ts=confirmation.thread_ts,
-        user_id=confirmation.user_id,
+        channel=channel_of(confirmation),
+        thread_ts=thread_ts_of(confirmation),
+        user_id=confirmation.requester,
         say=say,
     )
 
@@ -281,8 +290,8 @@ async def handle_deny(ack, action, say, body):
     denier = body.get("user", {}).get("username", "unknown")
     await say(
         text=f":no_entry_sign: *Denied* by @{denier} — `{confirmation.tool_name}` was not executed.",
-        thread_ts=confirmation.thread_ts,
-        channel=confirmation.channel,
+        thread_ts=thread_ts_of(confirmation),
+        channel=channel_of(confirmation),
     )
 
     # Tell the agent the operation was cancelled
@@ -291,9 +300,9 @@ async def handle_deny(ack, action, say, body):
 
     await _handler.handle_message(
         text=f"No, cancel {confirmation.tool_name}. Do not proceed.",
-        channel=confirmation.channel,
-        thread_ts=confirmation.thread_ts,
-        user_id=confirmation.user_id,
+        channel=channel_of(confirmation),
+        thread_ts=thread_ts_of(confirmation),
+        user_id=confirmation.requester,
         say=say,
     )
 

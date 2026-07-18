@@ -47,6 +47,7 @@ from ..security.guardrails import (
     CONFIRMATION_DECISION_STATE_KEY,
     CONFIRMATION_STRICT_STATE_KEY,
     classify_decision,
+    ensure_pending_confirmation_store,
 )
 from .events import extract_reply_text
 
@@ -214,6 +215,11 @@ class AgentGateway:
         self.session_service = session_service or create_session_service(db_url)
         self.resolver: SessionResolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
+        if verified_confirmation:
+            # Strict mode leans on the pending-confirmation store; resolve its
+            # backend (ORRERY_CONFIRMATION_BACKEND) now so a misconfigured
+            # postgres backend fails at startup, not on the first guarded call.
+            ensure_pending_confirmation_store()
         app = App(
             name=app_name,
             root_agent=root_agent,
@@ -246,6 +252,8 @@ class AgentGateway:
         self.session_service = session_service  # type: ignore[assignment]
         self.resolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
+        if verified_confirmation:
+            ensure_pending_confirmation_store()
         return self
 
     async def run_in_session(

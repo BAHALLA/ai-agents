@@ -28,8 +28,6 @@ ADK calls before_tool_callback with keyword args:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 import time
 from collections.abc import Callable
@@ -37,6 +35,14 @@ from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
+
+from .confirmation_flow import LEVEL_CONFIRM as LEVEL_CONFIRM
+from .confirmation_flow import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
+from .confirmation_flow import hash_args, raise_pending
+from .confirmation_store import AnyConfirmationStore as AnyConfirmationStore
+from .confirmation_store import ConfirmationStore as ConfirmationStore
+from .confirmation_store import PendingConfirmation as PendingConfirmation
+from .confirmation_store import create_confirmation_store as create_confirmation_store
 
 _CONFIRMATION_TTL = 300  # 5 minutes
 
@@ -107,63 +113,84 @@ def _state_actor(state: Any) -> str | None:
 
 
 # ── Pending-confirmation store (strict mode) ───────────────────────────
+#
+# In strict mode the pending is keyed by ``(requester, tool_name)`` in a
+# process-level store rather than in ``tool_context.state``. This is
+# deliberate: guarded tools are routinely reached *through an AgentTool* (the
+# chat root delegates to a specialist), and every AgentTool call runs the
+# sub-agent in a **fresh, throwaway sub-session**. A session-scoped pending
+# written during the request turn is therefore gone by the turn the human's
+# approval arrives, so the handshake could never complete — the model would
+# re-prompt forever. The requester (the verified user id the gateway
+# forward-propagates into every sub-invocation) is the one identity that is
+# both stable across turns and visible on both sides of the AgentTool
+# boundary.
+#
+# Backends live in ``confirmation_store.py``: in-memory (single replica) or
+# PostgreSQL (multi-replica / durable), selected by ORRERY_CONFIRMATION_BACKEND.
 
 
-class PendingConfirmationStore:
-    """Process-local store of pending requester-verified confirmations.
+class _ActivePendingStore:
+    """Holder delegating to the configured store backend.
 
-    In strict mode the pending is keyed by ``(requester, tool_name)`` here
-    rather than in ``tool_context.state``. This is deliberate: guarded tools are
-    routinely reached *through an AgentTool* (the chat root delegates to a
-    specialist), and every AgentTool call runs the sub-agent in a **fresh,
-    throwaway sub-session**. A session-scoped pending written during the request
-    turn is therefore gone by the turn the human's approval arrives, so the
-    handshake could never complete — the model would re-prompt forever. The
-    requester (the verified user id the gateway forward-propagates into every
-    sub-invocation) is the one identity that is both stable across turns and
-    visible on both sides of the AgentTool boundary.
-
-    Single-process only. Multi-replica deployments must supply a shared backend
-    (mirrors ``google-chat-bot``'s ``ConfirmationStore``); the shipped HTTP
-    front door runs single-replica.
+    Every ``require_confirmation`` gate in the process shares this object; the
+    backend behind it is resolved lazily from the environment on first use
+    (``AgentGateway(verified_confirmation=True)`` forces resolution at
+    construction so a misconfigured ``postgres`` backend fails at startup, not
+    on the first guarded call). Delegation — rather than rebinding the module
+    global — keeps every existing reference valid when the backend is swapped.
     """
 
     def __init__(self) -> None:
-        self._store: dict[tuple[str, str], dict[str, Any]] = {}
+        self._backend: AnyConfirmationStore | None = None
 
-    def get(self, requester: str, tool_name: str) -> dict[str, Any] | None:
-        entry = self._store.get((requester, tool_name))
-        if entry is None:
-            return None
-        if (time.time() - entry.get("timestamp", 0)) >= _CONFIRMATION_TTL:
-            self._store.pop((requester, tool_name), None)
-            return None
-        return entry
+    def _resolve(self) -> AnyConfirmationStore:
+        if self._backend is None:
+            self._backend = create_confirmation_store()
+        return self._backend
 
-    def put(self, requester: str, tool_name: str, entry: dict[str, Any]) -> None:
-        self._store[(requester, tool_name)] = entry
+    def configure(self, store: AnyConfirmationStore | None) -> None:
+        """Install an explicit backend (``None`` re-resolves from env on next use)."""
+        self._backend = store
 
-    def clear(self, requester: str, tool_name: str) -> None:
-        self._store.pop((requester, tool_name), None)
+    def add(self, pending: PendingConfirmation) -> None:
+        self._resolve().add(pending)
+
+    def consume_pending(
+        self, scope_key: str, tool_name: str, args_hash: str
+    ) -> PendingConfirmation | None:
+        return self._resolve().consume_pending(scope_key, tool_name, args_hash)
+
+    def latest_for_scope(self, scope: str) -> PendingConfirmation | None:
+        return self._resolve().latest_for_scope(scope)
 
     def reset(self) -> None:
         """Drop all pendings (used by tests for isolation)."""
-        self._store.clear()
+        if self._backend is not None:
+            self._backend.reset()
 
 
-#: Module-level store shared by every ``require_confirmation`` gate in the
-#: process. Strict-mode pendings live here so they survive the AgentTool
-#: sub-session boundary.
-_pending_confirmations = PendingConfirmationStore()
+#: Process-level store shared by every ``require_confirmation`` gate.
+#: Strict-mode pendings live here so they survive the AgentTool sub-session
+#: boundary (and, on the postgres backend, replica boundaries and restarts).
+_pending_confirmations = _ActivePendingStore()
+
+
+def ensure_pending_confirmation_store() -> None:
+    """Resolve the store backend now (fail-fast hook for transports).
+
+    Called by ``AgentGateway`` when requester-verified confirmation is armed so
+    an unreachable/misconfigured ``postgres`` backend crashes at startup — the
+    same fail-fast contract as the session store — instead of erroring on the
+    first guarded tool call.
+    """
+    _pending_confirmations._resolve()
 
 
 # ── Tool classification markers ────────────────────────────────────────
 
 _GUARD_LEVEL_ATTR = "_guardrail_level"
 _GUARD_REASON_ATTR = "_guardrail_reason"
-
-LEVEL_CONFIRM = "confirm"
-LEVEL_DESTRUCTIVE = "destructive"
 
 
 def confirm(reason: str = "") -> Callable:
@@ -235,11 +262,8 @@ def is_guarded(tool_or_func: Any) -> bool:
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
-
-def _hash_args(args: dict[str, Any]) -> str:
-    """Deterministic hash of tool arguments for confirmation matching."""
-    canonical = json.dumps(args, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+#: Alias kept for callers/tests that predate ``confirmation_flow.hash_args``.
+_hash_args = hash_args
 
 
 # ── Callback factories ─────────────────────────────────────────────────
@@ -335,7 +359,8 @@ def _handle_strict(
 
     The pending lives in :data:`_pending_confirmations` keyed by the requester,
     so it survives the AgentTool sub-session boundary (see
-    :class:`PendingConfirmationStore`). A re-call alone proves nothing — an
+    ``confirmation_store.py``; the postgres backend extends this across
+    replicas and restarts). A re-call alone proves nothing — an
     explicit human ``approve``/``deny`` must have been stamped this turn (by the
     gateway) by the same verified actor who triggered the pending action.
     Fail-closed: an unknown requester, a stale decision, or a decider who is not
@@ -346,40 +371,41 @@ def _handle_strict(
         # No verified identity to attribute an approval to — cannot proceed.
         return _confirmation_prompt(tool=tool, func=func, args=args, level=level, strict=True)
 
-    pending = _pending_confirmations.get(requester, tool.name)
     decision = tool_context.state.get(CONFIRMATION_DECISION_STATE_KEY)
     decision = decision if isinstance(decision, dict) else {}
     decision_fresh = (time.time() - decision.get("timestamp", 0)) < _CONFIRMATION_TTL
 
-    if isinstance(pending, dict) and pending.get("args_hash") == args_hash:
-        # The pending store is keyed by requester, so a pending found here was
-        # necessarily raised by this same requester — the "only the requester
-        # may approve" rule is enforced by the key, not a by-field comparison.
-        if decision.get("decision") == "approve" and decision_fresh:
-            _pending_confirmations.clear(requester, tool.name)
-            tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
+    # Strict mode scopes the pending by the requester, so a consume here can
+    # only match a pending raised by this same requester — the "only the
+    # requester may approve" rule is enforced by the scope key, not a by-field
+    # comparison. ``consume_pending`` is the single-phase one-shot: a single
+    # atomic check-and-remove (one DELETE..RETURNING on the postgres backend),
+    # so a decision authorizes at most one execution even with replicas racing.
+    if (
+        decision.get("decision") in ("approve", "deny")
+        and decision_fresh
+        and _pending_confirmations.consume_pending(requester, tool.name, args_hash) is not None
+    ):
+        tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
+        if decision["decision"] == "approve":
             return None  # verified requester approved, proceed
-        if decision.get("decision") == "deny" and decision_fresh:
-            _pending_confirmations.clear(requester, tool.name)
-            tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
-            return {
-                "status": "denied",
-                "message": (
-                    f"The user denied the pending '{tool.name}' operation. "
-                    f"Do not retry it unless the user asks again."
-                ),
-            }
+        return {
+            "status": "denied",
+            "message": (
+                f"The user denied the pending '{tool.name}' operation. "
+                f"Do not retry it unless the user asks again."
+            ),
+        }
 
-    # No/stale/mismatched decision — (re-)store the pending and prompt.
-    _pending_confirmations.put(
-        requester,
-        tool.name,
-        {
-            "args_hash": args_hash,
-            "timestamp": time.time(),
-            "invocation_id": invocation_id,
-            "requester": requester,
-        },
+    # No/stale/mismatched decision — (re-)raise the pending and prompt.
+    raise_pending(
+        _pending_confirmations,
+        tool_name=tool.name,
+        args=args,
+        requester=requester,
+        scope_key=requester,
+        level=level,
+        invocation_id=invocation_id,
     )
     return _confirmation_prompt(tool=tool, func=func, args=args, level=level, strict=True)
 
