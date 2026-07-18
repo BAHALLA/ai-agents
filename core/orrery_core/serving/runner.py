@@ -37,16 +37,22 @@ def create_context_cache_config(
 
     Each parameter falls back to an environment variable, then to ADK defaults:
 
-    - ``CONTEXT_CACHE_MIN_LENGTH`` (default: 2048)
+    - ``CONTEXT_CACHE_MIN_LENGTH`` (default: 2048; the pre-0.2.1 name
+      ``CONTEXT_CACHE_MIN_TOKENS`` is still honored, with a deprecation warning)
     - ``CONTEXT_CACHE_TTL_SECONDS`` (default: 600)
     - ``CONTEXT_CACHE_INTERVALS`` (default: 10)
 
     Note: context caching is only supported for Gemini models.  When using
     Claude/OpenAI via LiteLLM, the config is accepted but has no effect.
     """
-    resolved_min_tokens = (
-        min_tokens if min_tokens is not None else int(os.getenv("CONTEXT_CACHE_MIN_LENGTH", "2048"))
-    )
+    min_length_env = os.getenv("CONTEXT_CACHE_MIN_LENGTH")
+    if min_length_env is None and (legacy := os.getenv("CONTEXT_CACHE_MIN_TOKENS")) is not None:
+        logger.warning(
+            "CONTEXT_CACHE_MIN_TOKENS is deprecated (renamed in 0.2.1); "
+            "set CONTEXT_CACHE_MIN_LENGTH instead."
+        )
+        min_length_env = legacy
+    resolved_min_tokens = min_tokens if min_tokens is not None else int(min_length_env or "2048")
     resolved_ttl = (
         ttl_seconds
         if ttl_seconds is not None

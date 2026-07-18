@@ -48,7 +48,7 @@ make run-slack-bot-socket  # start the bot (Socket Mode, no public URL needed)
 
 ![Slack Bot Thread](../images/slack-bot-thread.png)
 
-Each thread is a separate conversation. Guarded tools (marked with `@confirm` or `@destructive`) prompt for confirmation before executing.
+Each thread is a separate conversation. Guarded tools (marked with `@confirm` or `@destructive`) post an Approve/Deny prompt before executing. Approvals are **requester-only** (only the user who triggered the action can approve; anyone can deny), one-shot, pinned to the exact tool arguments, and expire after 5 minutes. The handshake rides the shared platform confirmation store — set `ORRERY_CONFIRMATION_BACKEND=postgres` (with `DATABASE_URL`) to share pending approvals across bot replicas. See [Guardrails](../guardrails.md) for the full flow.
 
 ## Role-Based Access Control
 

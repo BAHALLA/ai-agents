@@ -81,7 +81,8 @@ graph LR
 - **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
 
 ### 🔌 Integration & Observability
-- **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
+- **Multi-Interface** — Interact via the **Web Console**, **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
+- **Web Console** — Opt-in React SPA (`ORRERY_WEB_CONSOLE_ENABLED=true`) served by the FastAPI front door: token-gated chat against `POST /chat` with an identity + role badge. See [`web/README.md`](web/README.md).
 - **Observability** — Built-in Prometheus metrics for tool latency, error rates, and circuit breaker states.
 - **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
 

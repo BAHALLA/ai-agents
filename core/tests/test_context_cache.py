@@ -47,6 +47,18 @@ class TestCreateContextCacheConfig:
         config = create_context_cache_config(min_tokens=8192)
         assert config.min_tokens == 8192
 
+    def test_legacy_min_tokens_env_var_still_honored(self, monkeypatch):
+        monkeypatch.delenv("CONTEXT_CACHE_MIN_LENGTH", raising=False)
+        monkeypatch.setenv("CONTEXT_CACHE_MIN_TOKENS", "768")
+        config = create_context_cache_config()
+        assert config.min_tokens == 768
+
+    def test_new_env_var_wins_over_legacy(self, monkeypatch):
+        monkeypatch.setenv("CONTEXT_CACHE_MIN_LENGTH", "512")
+        monkeypatch.setenv("CONTEXT_CACHE_MIN_TOKENS", "768")
+        config = create_context_cache_config()
+        assert config.min_tokens == 512
+
     def test_returns_context_cache_config_instance(self):
         config = create_context_cache_config()
         assert isinstance(config, ContextCacheConfig)
