@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-18
+
+
 ### Added
 - **One platform-wide confirmation store and flow for guarded tools** (`core/orrery_core/security/confirmation_store.py` + `confirmation_flow.py`): the pending-approval handshake was implemented three times — core strict mode, the Google Chat bot, and the Slack bot — with drifting semantics (Slack had no TTL, no args-hash pinning, no approval-validity window, and a session-state retry flag that let *any* retry through once a pending was raised; the Postgres backend existed twice). All transports now share one `PendingConfirmation` record and one store (memory | postgres via **`ORRERY_CONFIRMATION_BACKEND`**, over the existing `DATABASE_URL`), scoped per transport (requester for HTTP/CLI strict mode; thread/space for Chat; channel/thread for Slack), plus shared flow primitives: `raise_pending`, `approval_refusal` (requester-only, fail-closed), `blocked_payload`, `hash_args`, and the agent-tree walker `wire_before_tool_callback`. One-shot guarantees are uniform and atomic (single `DELETE … RETURNING` on postgres — racing replicas cannot both consume a decision; a lock on memory), approvals are args-hash-pinned with a 120s validity window everywhere, and `AgentGateway(verified_confirmation=True)` resolves the backend eagerly so a misconfigured `postgres` backend fails at startup (same fail-fast contract as the session store). **Slack hardening**: the bot inherits TTL, args-hash pinning, the approval-validity window, the AgentTool-boundary-safe handshake, and the optional Postgres backend (multi-replica) for free. Breaking (unreleased surface only): `GOOGLE_CHAT_CONFIRMATION_BACKEND` is replaced by `ORRERY_CONFIRMATION_BACKEND` (the Helm value `pubsubWorker.confirmation.backend` is unchanged and now exports the new env var), and the unreleased `orrery_gchat_confirmations` / `orrery_pending_confirmations` tables are superseded by one `orrery_confirmations` table (entries are 5-minute-TTL ephemera; abandoned tables can be dropped).
 - **Postgres-backed confirmation store** (`agents/google-chat-bot/google_chat_bot/confirmation.py`): the pending-approval handshake for guarded tools was process-local, which quietly contradicted AEP-018's backlog HPA — scale the Pub/Sub worker past one replica and a pending raised on pod A is invisible to the pod that pulls the operator's `approve` reply (or the LLM's consuming retry), so the flow dies. New `PostgresConfirmationStore` shares the handshake across replicas over the platform's existing `DATABASE_URL` (no new infrastructure) with the same synchronous surface as the in-memory store; one-shot guarantees ride the database (`FOR UPDATE` + delete in one transaction, so racing replicas can't both consume an approval). Durability is a bonus: pendings now survive worker restarts. Selected via `GOOGLE_CHAT_CONFIRMATION_BACKEND` (`memory` | `postgres`, Helm `pubsubWorker.confirmation.backend`); the chart refuses to render a multi-replica worker while the backend is `memory`, mirroring the idempotency guard. Approval writes now go through the store (`mark_approved`) instead of mutating a fetched entry in place — required for any database-backed store to persist the decision.
@@ -327,7 +330,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.2.0...HEAD
+[0.2.1] - 2026-07-18
+
 [0.2.0]: https://github.com/BAHALLA/orrery/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/BAHALLA/orrery/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/BAHALLA/orrery/compare/v0.1.9...v0.1.10
