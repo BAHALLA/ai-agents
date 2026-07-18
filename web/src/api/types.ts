@@ -22,3 +22,29 @@ export interface ChatResponse {
 
 /** The three roles the platform's RBAC resolves to. */
 export type Role = "viewer" | "operator" | "admin";
+
+/** One recorded tool call (shape written by ActivityPlugin server-side). */
+export interface ActivityEntry {
+  operation: string;
+  details: string;
+  timestamp: string;
+}
+
+/** GET /session/{id}/activity response. */
+export interface ActivityResponse {
+  session_id: string;
+  entries: ActivityEntry[];
+}
+
+/** The caller's guarded action awaiting an approve/deny decision. */
+export interface PendingConfirmation {
+  tool_name: string;
+  level: string;
+  args: Record<string, unknown>;
+  created_at: number;
+}
+
+/** GET /confirmations/pending response. */
+export interface PendingResponse {
+  pending: PendingConfirmation | null;
+}

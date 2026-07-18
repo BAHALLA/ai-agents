@@ -77,6 +77,7 @@ from .security.guardrails import get_guard_level as get_guard_level
 from .security.guardrails import get_guard_reason as get_guard_reason
 from .security.guardrails import is_destructive as is_destructive
 from .security.guardrails import is_guarded as is_guarded
+from .security.guardrails import latest_pending_for_scope as latest_pending_for_scope
 from .security.guardrails import require_confirmation as require_confirmation
 from .security.rbac import Role as Role
 from .security.rbac import RolePolicy as RolePolicy

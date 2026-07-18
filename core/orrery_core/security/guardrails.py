@@ -187,6 +187,19 @@ def ensure_pending_confirmation_store() -> None:
     _pending_confirmations._resolve()
 
 
+def latest_pending_for_scope(scope: str) -> PendingConfirmation | None:
+    """Peek at the live pending confirmation for *scope*, if any.
+
+    Read-only view over the process/shared store (TTL-filtered). In strict
+    mode the scope is the verified requester id, so a transport can show the
+    caller *their own* pending action — e.g. the web console's Approve/Deny
+    panel. Rendering only: the decision itself must still travel through the
+    normal message flow so the requester-verified gate stays the sole
+    authority on who may approve.
+    """
+    return _pending_confirmations.latest_for_scope(scope)
+
+
 # ── Tool classification markers ────────────────────────────────────────
 
 _GUARD_LEVEL_ATTR = "_guardrail_level"

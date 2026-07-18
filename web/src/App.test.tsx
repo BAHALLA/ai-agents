@@ -60,4 +60,65 @@ describe("App auth flow", () => {
     expect(await screen.findByText("Kafka is healthy.")).toBeInTheDocument();
     await waitFor(() => expect(localStorage.getItem("orrery.console.sessionId")).toBe("s1"));
   });
+
+  it("renders the tool timeline and confirmation panel after a turn", async () => {
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/activity")) {
+        return json({
+          session_id: "s1",
+          entries: [
+            {
+              operation: "restart_deployment",
+              details: "[k8s] name=payment-api → confirmation_required",
+              timestamp: "2026-07-19T00:00:00+00:00",
+            },
+          ],
+        });
+      }
+      if (u.includes("/confirmations/pending")) {
+        return json({
+          pending: {
+            tool_name: "restart_deployment",
+            level: "destructive",
+            args: { name: "payment-api", namespace: "prod" },
+            created_at: 1,
+          },
+        });
+      }
+      return json({ session_id: "s1", response: "This action needs your approval." });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "restart payment-api");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    // Timeline pane, collapsed by default — expand it to see the recorded call.
+    const summary = await screen.findByText(/tool calls/i);
+    await user.click(summary);
+    expect(screen.getByText("restart_deployment", { selector: ".timeline__op" })).toBeVisible();
+
+    // Confirmation panel for the pending guarded action.
+    const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
+    expect(panel).toHaveTextContent("restart_deployment");
+    expect(panel).toHaveTextContent("payment-api");
+
+    // Approve sends the literal decision word through the normal chat flow —
+    // the server-side requester-verified gate stays the authority.
+    await user.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() => {
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      const last = chatCalls[chatCalls.length - 1];
+      expect(JSON.parse(String(last[1]?.body))).toMatchObject({ message: "approve" });
+    });
+  });
 });

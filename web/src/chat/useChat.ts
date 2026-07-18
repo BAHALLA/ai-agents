@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, ApiError } from "../api/client";
+import type { ActivityEntry, PendingConfirmation } from "../api/types";
 import { storageKeys } from "../config";
 import type { ChatError, ChatMessage } from "./types";
 
@@ -22,7 +23,13 @@ export interface ChatController {
   sessionId: string | null;
   isSending: boolean;
   error: ChatError | null;
+  /** Tool calls recorded for this session (the timeline pane). */
+  activity: ActivityEntry[];
+  /** The caller's guarded action awaiting approve/deny, if any. */
+  pending: PendingConfirmation | null;
   send: (text: string) => Promise<void>;
+  /** Send an approve/deny decision through the normal chat flow. */
+  decide: (word: "approve" | "deny") => Promise<void>;
   reset: () => void;
 }
 
@@ -40,6 +47,8 @@ export function useChat(token: string | null): ChatController {
   const [sessionId, setSessionId] = useState<string | null>(readStoredSession);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<ChatError | null>(null);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Keep the client's token current without recreating it (preserves identity).
@@ -59,6 +68,20 @@ export function useChat(token: string | null): ChatController {
       // ignore
     }
   }, []);
+
+  // Best-effort side panes: the timeline and pending-confirmation state are
+  // rendering data, so a failed refresh never surfaces as a chat error.
+  const refreshSidePanes = useCallback(
+    async (id: string) => {
+      const [act, pend] = await Promise.allSettled([
+        client.activity(id),
+        client.pendingConfirmation(),
+      ]);
+      if (act.status === "fulfilled") setActivity(act.value.entries ?? []);
+      if (pend.status === "fulfilled") setPending(pend.value.pending ?? null);
+    },
+    [client],
+  );
 
   const send = useCallback(
     async (raw: string) => {
@@ -83,6 +106,7 @@ export function useChat(token: string | null): ChatController {
           ...prev,
           { id: nextId(), role: "assistant", text: res.response, at: Date.now() },
         ]);
+        await refreshSidePanes(res.session_id);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         if (err instanceof ApiError) {
@@ -95,14 +119,20 @@ export function useChat(token: string | null): ChatController {
         abortRef.current = null;
       }
     },
-    [client, sessionId, isSending, persistSession],
+    [client, sessionId, isSending, persistSession, refreshSidePanes],
   );
+
+  // The decision is a plain chat message: the requester-verified gate on the
+  // server decides whether it authorizes anything. The panel is a renderer.
+  const decide = useCallback((word: "approve" | "deny") => send(word), [send]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
     setError(null);
     setSessionId(null);
+    setActivity([]);
+    setPending(null);
     try {
       localStorage.removeItem(storageKeys.sessionId);
     } catch {
@@ -110,5 +140,5 @@ export function useChat(token: string | null): ChatController {
     }
   }, []);
 
-  return { messages, sessionId, isSending, error, send, reset };
+  return { messages, sessionId, isSending, error, activity, pending, send, decide, reset };
 }

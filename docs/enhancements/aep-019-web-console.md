@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--blue">in-progress</span> (Milestone 1 chat console shipped; Milestones 2–3 remaining) |
+| **Status** | <span class="badge badge--blue">in-progress</span> (Milestone 1 complete — chat, tool-call timeline, confirmation UI; Milestones 2–3 remaining) |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High (8-12 days) |
 | **Impact** | Medium-High (adoption / onboarding) |
@@ -174,9 +174,9 @@ hand-authored assets — the source of truth is `web/`.
 
 ## Acceptance Criteria
 
-- [ ] Console is served by the existing FastAPI app, behind the JWT dependency, and is **off by default** (`ORRERY_WEB_CONSOLE_ENABLED`)
-- [ ] Milestone 1: a user can hold a chat conversation, see the tool-call timeline, and approve/deny a guarded action — with the approval enforced by the existing requester-verified gate (a second user cannot approve someone else's action)
-- [ ] The role + autonomy-level badge reflects the authenticated subject and blocks mutating tools for a viewer with a clear reason
+- [x] Console is served by the existing FastAPI app, behind the JWT dependency, and is **off by default** (`ORRERY_WEB_CONSOLE_ENABLED`)
+- [x] Milestone 1: a user can hold a chat conversation, see the tool-call timeline (`GET /session/{id}/activity`, owner-scoped by the JWT subject), and approve/deny a guarded action (`GET /confirmations/pending` renders it; the buttons send the literal decision words through `POST /chat`) — the approval is enforced by the existing requester-verified gate; a second user cannot approve someone else's action because pendings are requester-scoped and the gate, not the frontend, decides
+- [ ] The role + autonomy-level badge reflects the authenticated subject and blocks mutating tools for a viewer with a clear reason *(role badge shipped; surfacing the active autonomy level remains)*
 - [ ] Milestone 2: a triage run renders the five specialist statuses, the severity verdict, and the remediation loop iterations
 - [ ] Milestone 3: the onboarding connectivity check reports provider/model reachability and per-specialist read-only self-test status
 - [ ] No changes to agent, plugin, or guardrail logic — the console is a transport (`ChannelAdapter`) over `AgentGateway`

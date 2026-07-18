@@ -1,8 +1,10 @@
 import { useChat } from "../chat/useChat";
 import type { Identity } from "../auth/token";
+import { ConfirmationPanel } from "./ConfirmationPanel";
 import { IdentityBadge } from "./IdentityBadge";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
+import { ToolTimeline } from "./ToolTimeline";
 
 interface Props {
   token: string;
@@ -40,7 +42,16 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
 
       <main className="console__body">
         <MessageList messages={chat.messages} isSending={chat.isSending} />
+        <ToolTimeline entries={chat.activity} />
       </main>
+
+      {chat.pending ? (
+        <ConfirmationPanel
+          pending={chat.pending}
+          disabled={chat.isSending}
+          onDecide={(word) => void chat.decide(word)}
+        />
+      ) : null}
 
       {chat.error ? (
         <div

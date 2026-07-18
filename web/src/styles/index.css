@@ -356,3 +356,121 @@ body {
   max-height: 160px;
   min-height: 2.6rem;
 }
+
+/* ── Tool-call timeline (AEP-019) ─────────────────────────────────── */
+.timeline {
+  margin: 0.75rem auto 0;
+  max-width: 48rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+.timeline__summary {
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  color: var(--text-muted);
+  user-select: none;
+}
+.timeline__count {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.timeline__list {
+  margin: 0;
+  padding: 0.25rem 0.9rem 0.75rem;
+  list-style: none;
+}
+.timeline__item {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.25rem 0;
+  border-top: 1px solid var(--border);
+}
+.timeline__time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.timeline__op {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.timeline__details {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ── Confirmation panel (AEP-019) ─────────────────────────────────── */
+.confirm {
+  margin: 0 auto;
+  max-width: 48rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--admin);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 0.75rem 1rem;
+}
+.confirm__header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.confirm__level {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--error-bg);
+  color: var(--error);
+}
+.confirm__title code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.confirm__args {
+  margin: 0.6rem 0 0;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+.confirm__arg {
+  display: flex;
+  gap: 0.5rem;
+}
+.confirm__arg dt {
+  color: var(--text-muted);
+  min-width: 8rem;
+}
+.confirm__arg dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.confirm__actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.btn--approve {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border: none;
+}
+.btn--deny {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}

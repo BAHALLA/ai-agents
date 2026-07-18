@@ -345,3 +345,130 @@ def test_web_console_enabled_from_env(monkeypatch):
     assert ServerConfig.from_env().web_console_enabled is True
     monkeypatch.setenv("ORRERY_WEB_CONSOLE_ENABLED", "false")
     assert ServerConfig.from_env().web_console_enabled is False
+
+
+# ── GET /session/{id}/activity (AEP-019) ────────────────────────────
+
+
+def _alice_token() -> str:
+    return _hs256(
+        {"sub": "alice", "roles": ["operator"], "exp": int(time.time()) + 600, "aud": "orrery"}
+    )
+
+
+def test_activity_requires_auth(app_with_auth):
+    client = TestClient(app_with_auth)
+    assert client.get("/session/sess-1/activity").status_code == 401
+
+
+def test_activity_unknown_session_is_404(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    client = TestClient(app_with_auth)
+    r = client.get("/session/nope/activity", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 404
+
+
+def test_activity_lookup_is_pinned_to_the_verified_subject(app_with_auth, patched_runner):
+    """The user_id in the session lookup comes from the JWT, not the request."""
+    patched_runner.get_session = AsyncMock(return_value=None)
+    client = TestClient(app_with_auth)
+    client.get("/session/sess-1/activity", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert patched_runner.get_session.call_args.kwargs["user_id"] == "alice"
+
+
+def test_activity_returns_session_log_entries(app_with_auth, patched_runner, mock_session):
+    mock_session.state = {
+        "session_log": [
+            {
+                "operation": "check_cluster_health",
+                "details": "[kafka] (no args) → success",
+                "timestamp": "2026-07-19T00:00:00+00:00",
+            },
+            "not-a-dict-is-filtered",
+        ]
+    }
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    client = TestClient(app_with_auth)
+    r = client.get(
+        "/session/sess-1/activity", headers={"Authorization": f"Bearer {_alice_token()}"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == "sess-1"
+    assert body["entries"] == [
+        {
+            "operation": "check_cluster_health",
+            "details": "[kafka] (no args) → success",
+            "timestamp": "2026-07-19T00:00:00+00:00",
+        }
+    ]
+
+
+def test_activity_empty_log(app_with_auth, patched_runner, mock_session):
+    mock_session.state = {}
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    client = TestClient(app_with_auth)
+    r = client.get(
+        "/session/sess-1/activity", headers={"Authorization": f"Bearer {_alice_token()}"}
+    )
+    assert r.status_code == 200
+    assert r.json()["entries"] == []
+
+
+# ── GET /confirmations/pending (AEP-019) ────────────────────────────
+
+
+@pytest.fixture
+def pending_store():
+    """Fresh in-memory confirmation store installed for the test."""
+    from orrery_core.security.confirmation_store import ConfirmationStore
+    from orrery_core.security.guardrails import _pending_confirmations
+
+    store = ConfirmationStore()
+    _pending_confirmations.configure(store)
+    yield store
+    _pending_confirmations.configure(None)
+
+
+def test_pending_requires_auth(app_with_auth, pending_store):
+    client = TestClient(app_with_auth)
+    assert client.get("/confirmations/pending").status_code == 401
+
+
+def test_pending_none(app_with_auth, pending_store):
+    client = TestClient(app_with_auth)
+    r = client.get("/confirmations/pending", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 200
+    assert r.json() == {"pending": None}
+
+
+def test_pending_returns_own_action_only(app_with_auth, pending_store):
+    from orrery_core.security.confirmation_store import PendingConfirmation
+
+    pending_store.add(
+        PendingConfirmation(
+            action_id="a1",
+            tool_name="restart_deployment",
+            requester="alice",
+            scope_key="alice",
+            level="destructive",
+            args={"name": "payment-api", "namespace": "prod"},
+        )
+    )
+    pending_store.add(
+        PendingConfirmation(
+            action_id="b1",
+            tool_name="delete_topic",
+            requester="bob",
+            scope_key="bob",
+            level="destructive",
+            args={"topic": "orders"},
+        )
+    )
+    client = TestClient(app_with_auth)
+    r = client.get("/confirmations/pending", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.status_code == 200
+    pending = r.json()["pending"]
+    assert pending["tool_name"] == "restart_deployment"
+    assert pending["level"] == "destructive"
+    assert pending["args"] == {"name": "payment-api", "namespace": "prod"}

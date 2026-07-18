@@ -109,6 +109,32 @@ class ChatResponse(BaseModel):
     response: str
 
 
+class ActivityEntry(BaseModel):
+    """One recorded tool call (shape written by ``ActivityPlugin``)."""
+
+    operation: str
+    details: str
+    timestamp: str
+
+
+class ActivityResponse(BaseModel):
+    session_id: str
+    entries: list[ActivityEntry]
+
+
+class PendingConfirmationInfo(BaseModel):
+    """The caller's guarded action awaiting an approve/deny decision."""
+
+    tool_name: str
+    level: str
+    args: dict[str, object]
+    created_at: float
+
+
+class PendingResponse(BaseModel):
+    pending: PendingConfirmationInfo | None
+
+
 # ── App factory ─────────────────────────────────────────────────────
 
 
@@ -127,6 +153,10 @@ def create_app(
 
     - ``POST /chat`` — body ``{"message": str, "session_id": str | None}``;
       returns ``{"session_id": str, "response": str}``.
+    - ``GET /session/{id}/activity`` — the caller's tool-call timeline for
+      that session (404 for another user's session).
+    - ``GET /confirmations/pending`` — the caller's own guarded action
+      awaiting approve/deny, or ``{"pending": null}``.
     - ``GET /healthz`` — liveness (always 200 once the app is up).
     - ``GET /readyz`` — readiness (200 once the runner is initialised).
 
@@ -229,6 +259,61 @@ def create_app(
         )
         reply = await gateway.run(msg)
         return ChatResponse(session_id=reply.session_id, response=reply.text)
+
+    @api.get("/session/{session_id}/activity", response_model=ActivityResponse)
+    async def session_activity(
+        session_id: str,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> ActivityResponse:
+        """Tool-call timeline for one of the caller's sessions (AEP-019).
+
+        Sessions are keyed by ``(app_name, user_id, session_id)`` and the
+        lookup pins ``user_id`` to the verified subject, so another user's
+        session id resolves to nothing — a plain 404, indistinguishable from
+        a session that never existed.
+        """
+        session = await gateway.session_service.get_session(
+            app_name=app_name, user_id=auth.subject, session_id=session_id
+        )
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raw = session.state.get("session_log", []) if session.state else []
+        entries = [
+            ActivityEntry(
+                operation=str(e.get("operation", "")),
+                details=str(e.get("details", "")),
+                timestamp=str(e.get("timestamp", "")),
+            )
+            for e in raw
+            if isinstance(e, dict)
+        ]
+        return ActivityResponse(session_id=session_id, entries=entries)
+
+    @api.get("/confirmations/pending", response_model=PendingResponse)
+    async def pending_confirmation(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> PendingResponse:
+        """The caller's own pending guarded action, if any (AEP-019).
+
+        Rendering data only. The decision must go back through ``POST /chat``
+        as a plain 'approve'/'deny' message — the requester-verified gate
+        (not this endpoint, not the frontend) remains the sole authority on
+        who may approve. Strict-mode pendings are scoped by requester, so
+        the lookup can only ever surface the caller's own action.
+        """
+        from ..security.guardrails import latest_pending_for_scope
+
+        pending = latest_pending_for_scope(auth.subject)
+        if pending is None:
+            return PendingResponse(pending=None)
+        return PendingResponse(
+            pending=PendingConfirmationInfo(
+                tool_name=pending.tool_name,
+                level=pending.level,
+                args=dict(pending.args),
+                created_at=pending.created_at,
+            )
+        )
 
     # Mount the web console last so the explicit API routes above always win
     # over the catch-all static mount at "/".

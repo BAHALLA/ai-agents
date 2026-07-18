@@ -1,5 +1,5 @@
 import { config } from "../config";
-import type { ChatRequest, ChatResponse } from "./types";
+import type { ActivityResponse, ChatRequest, ChatResponse, PendingResponse } from "./types";
 
 /** A typed API error carrying the HTTP status so callers can branch on 401 etc. */
 export class ApiError extends Error {
@@ -39,16 +39,18 @@ export class ApiClient {
     this.token = token;
   }
 
+  /** `body === undefined` means a GET request; anything else is POSTed as JSON. */
   private async request<T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
     let res: Response;
     try {
       res = await fetch(`${config.apiBaseUrl}${path}`, {
-        method: "POST",
+        method: body !== undefined ? "POST" : "GET",
         headers,
-        body: JSON.stringify(body),
+        body: body !== undefined ? JSON.stringify(body) : null,
         signal: options.signal ?? null,
       });
     } catch (err) {
@@ -66,6 +68,20 @@ export class ApiClient {
   /** Send one chat turn. Pass the returned session_id back on the next call. */
   chat(req: ChatRequest, options?: RequestOptions): Promise<ChatResponse> {
     return this.request<ChatResponse>("/chat", req, options);
+  }
+
+  /** Tool-call timeline for one of the caller's sessions. */
+  activity(sessionId: string, options?: RequestOptions): Promise<ActivityResponse> {
+    return this.request<ActivityResponse>(
+      `/session/${encodeURIComponent(sessionId)}/activity`,
+      undefined,
+      options,
+    );
+  }
+
+  /** The caller's own guarded action awaiting approve/deny, if any. */
+  pendingConfirmation(options?: RequestOptions): Promise<PendingResponse> {
+    return this.request<PendingResponse>("/confirmations/pending", undefined, options);
   }
 }
 

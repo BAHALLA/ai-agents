@@ -10,12 +10,19 @@ same JWT auth as the API. `make test` (Python) never touches Node.
 
 ## Status
 
-Milestone 1 (MVP) — an authenticated chat console:
+Milestone 1 — an authenticated chat console:
 
 - Bearer-token gate (paste the dev JWT from `make run-assistant-api`)
 - Chat against `POST /chat`, threading the server-issued `session_id`
 - Identity + role badge (viewer / operator / admin), decoded client-side for
   display — the server remains authoritative for RBAC
+- **Tool-call timeline** (`GET /session/{id}/activity`): every recorded tool
+  execution for the session, collapsed under the transcript, so the
+  orchestration is visible instead of an opaque paragraph
+- **Confirmation panel** (`GET /confirmations/pending`): when a guarded tool
+  is awaiting the caller's decision, an Approve/Deny panel renders it. The
+  buttons send the literal words `approve`/`deny` through the normal chat
+  flow — the server's requester-verified gate stays the sole authority
 - Loading, error, and auth-expiry states
 
 Milestones 2 (triage/remediation view) and 3 (onboarding wizard) are tracked in
@@ -70,9 +77,9 @@ src/
 
 - **The console never makes access decisions.** The JWT is decoded client-side
   only to display the subject and role; every request is re-verified server-side
-  and RBAC re-derives the role. When the confirmation UI lands (Milestone 1
-  follow-up), it will be a thin renderer over the gate's pending payload — the
-  browser sends the decision word + token, the server decides who may approve.
+  and RBAC re-derives the role. The confirmation panel is a thin renderer over
+  the gate's pending payload — the browser sends the decision word + token, and
+  the server decides who may approve (requester-only, args-pinned, TTL'd).
 - **Same-origin by default.** `VITE_API_BASE_URL` is empty in production because
   FastAPI serves the bundle itself; a full URL is only for cross-origin dev.
 - **Types are hand-maintained for now.** `src/api/types.ts` mirrors the FastAPI

@@ -73,3 +73,70 @@ describe("ApiClient.chat", () => {
     expect((err as DOMException).name).toBe("AbortError");
   });
 });
+
+describe("ApiClient.activity", () => {
+  it("GETs the session timeline with the bearer token and no body", async () => {
+    const payload = {
+      session_id: "s1",
+      entries: [{ operation: "check_cluster_health", details: "[kafka] → ok", timestamp: "t" }],
+    };
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const res = await new ApiClient("tok").activity("s1");
+
+    expect(res).toEqual(payload);
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/session/s1/activity");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeNull();
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    expect(init.headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("URL-encodes the session id", async () => {
+    mockFetch(
+      async () => new Response(JSON.stringify({ session_id: "x", entries: [] }), { status: 200 }),
+    );
+    await new ApiClient("t").activity("a/b c");
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/session/a%2Fb%20c/activity");
+  });
+});
+
+describe("ApiClient.pendingConfirmation", () => {
+  it("returns the caller's pending action", async () => {
+    const payload = {
+      pending: {
+        tool_name: "restart_deployment",
+        level: "destructive",
+        args: { name: "payment-api" },
+        created_at: 1,
+      },
+    };
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const res = await new ApiClient("tok").pendingConfirmation();
+    expect(res).toEqual(payload);
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/confirmations/pending");
+    expect(init.method).toBe("GET");
+  });
+
+  it("returns null when nothing is pending", async () => {
+    mockFetch(async () => new Response(JSON.stringify({ pending: null }), { status: 200 }));
+    const res = await new ApiClient("tok").pendingConfirmation();
+    expect(res.pending).toBeNull();
+  });
+});
