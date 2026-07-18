@@ -61,6 +61,34 @@ describe("App auth flow", () => {
     await waitFor(() => expect(localStorage.getItem("orrery.console.sessionId")).toBe("s1"));
   });
 
+  it("renders assistant markdown as formatted output, not raw asterisks", async () => {
+    const reply = "Images:\n\n* **grafana/loki:3.7.3** (ID: `83dfa527a638`)\n* plain item";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ session_id: "s1", response: reply }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    localStorage.setItem("orrery.console.token", makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "list images");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    // Bold + inline code became real elements inside a real list…
+    const bold = await screen.findByText("grafana/loki:3.7.3");
+    expect(bold.tagName).toBe("STRONG");
+    expect(screen.getByText("83dfa527a638").tagName).toBe("CODE");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    // …and the raw markdown syntax is gone from the transcript.
+    expect(screen.queryByText(/\*\*grafana/)).not.toBeInTheDocument();
+  });
+
   it("renders the tool timeline and confirmation panel after a turn", async () => {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), {

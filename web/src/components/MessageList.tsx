@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../chat/types";
 
 interface Props {
@@ -39,7 +41,16 @@ export function MessageList({ messages, isSending }: Props) {
               {formatTime(m.at)}
             </time>
           </div>
-          <div className="bubble__text">{m.text}</div>
+          {m.role === "assistant" ? (
+            // Agents reply in markdown (lists, bold, code, tables). Render it
+            // instead of showing raw asterisks. react-markdown builds React
+            // elements — no dangerouslySetInnerHTML, so no sanitizer needed.
+            <div className="bubble__text bubble__text--md">
+              <Markdown remarkPlugins={[remarkGfm]}>{m.text}</Markdown>
+            </div>
+          ) : (
+            <div className="bubble__text">{m.text}</div>
+          )}
         </div>
       ))}
       {isSending ? (

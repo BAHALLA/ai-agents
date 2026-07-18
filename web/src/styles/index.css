@@ -474,3 +474,84 @@ body {
   color: var(--error);
   border: 1px solid var(--error);
 }
+
+/* ── Markdown in assistant replies ────────────────────────────────── */
+.bubble__text--md > :first-child {
+  margin-top: 0;
+}
+.bubble__text--md > :last-child {
+  margin-bottom: 0;
+}
+.bubble__text--md p,
+.bubble__text--md ul,
+.bubble__text--md ol {
+  margin: 0.4rem 0;
+}
+.bubble__text--md ul,
+.bubble__text--md ol {
+  padding-left: 1.25rem;
+}
+.bubble__text--md li {
+  margin: 0.15rem 0;
+}
+.bubble__text--md h1,
+.bubble__text--md h2,
+.bubble__text--md h3,
+.bubble__text--md h4 {
+  margin: 0.7rem 0 0.3rem;
+  font-size: 1em;
+  font-weight: 700;
+}
+.bubble__text--md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  overflow-wrap: anywhere;
+}
+.bubble__text--md pre {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.bubble__text--md pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.bubble__text--md table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+.bubble__text--md th,
+.bubble__text--md td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+}
+.bubble__text--md th {
+  background: var(--surface);
+}
+.bubble__text--md blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+.bubble__text--md a {
+  color: var(--primary);
+}
+.bubble__text--md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.7rem 0;
+}
