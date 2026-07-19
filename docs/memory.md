@@ -14,15 +14,15 @@ This is especially valuable for DevOps/SRE use cases:
 sequenceDiagram
     participant User
     participant Agent
-    participant PreloadMemoryTool
+    participant LoadMemoryTool
     participant MemoryPlugin
     participant SecureMemoryService
 
     User->>Agent: "Why is Kafka lagging again?"
-    Agent->>PreloadMemoryTool: Auto-load relevant past context
-    PreloadMemoryTool->>SecureMemoryService: search_memory(query)
-    SecureMemoryService-->>PreloadMemoryTool: Past incidents about Kafka lag
-    PreloadMemoryTool-->>Agent: Inject context into LLM prompt
+    Agent->>LoadMemoryTool: load_memory("Kafka consumer lag") (model decides to look)
+    LoadMemoryTool->>SecureMemoryService: search_memory(query)
+    SecureMemoryService-->>LoadMemoryTool: Past incidents about Kafka lag
+    LoadMemoryTool-->>Agent: Return matches as tool result
     Agent-->>User: "This looks similar to the lag spike on March 15..."
     Note over MemoryPlugin: After session completes
     MemoryPlugin->>SecureMemoryService: add_session_to_memory(session)
@@ -37,7 +37,7 @@ The memory system has these components:
 | **`DatabaseMemoryService`** | Persistent inner backend (PostgreSQL) — durable, cross-restart, shared across replicas |
 | **`create_memory_service()`** | Factory that assembles the two from a DB URL (Postgres when set, in-memory otherwise) |
 | **`MemoryPlugin`** | Auto-saves sessions to memory after the root agent completes |
-| **`PreloadMemoryTool`** | ADK tool that auto-loads relevant memories at the start of each turn |
+| **`LoadMemoryTool`** | ADK tool the model invokes (`load_memory`) to search past memories when it judges them relevant |
 
 `SecureMemoryService` is always the outer layer; its inner backend is either ADK's
 in-memory `InMemoryMemoryService` (default) or the Postgres-backed
@@ -126,22 +126,30 @@ memory = create_memory_service(db_url="postgresql+asyncpg://agents:…@localhost
 
 ### Add Memory Tools to Your Agent
 
-For the agent to actively use memory, add `PreloadMemoryTool` to its tools:
+For the agent to use memory, add `LoadMemoryTool` to its tools:
 
 ```python
-from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+from google.adk.tools.load_memory_tool import LoadMemoryTool
 from orrery_core import create_agent
 
 root_agent = create_agent(
     name="my_agent",
     description="...",
-    instruction="You have access to cross-session memory. Relevant context "
-        "from past sessions is automatically loaded.",
-    tools=[..., PreloadMemoryTool()],
+    instruction="You have a `load_memory` tool that searches past sessions. "
+        "Call it before diagnosing a symptom or when the user references an "
+        "earlier incident; skip it for greetings and simple status checks. "
+        "Pass a short, specific query (system + symptom), not the whole message.",
+    tools=[..., LoadMemoryTool()],
 )
 ```
 
-`PreloadMemoryTool` automatically searches memory at the start of each turn and injects relevant past context into the LLM prompt — no explicit tool call needed from the user.
+`LoadMemoryTool` exposes a `load_memory` function the model calls **only when it
+judges past context useful**, with a query it crafts itself. This keeps simple
+turns cheap, but recall quality depends on the instruction telling the model
+*when* to look — so be explicit about it (as above). The alternative,
+`PreloadMemoryTool`, searches memory on **every** turn and auto-injects the hits
+into the prompt with no model decision; prefer it only if guaranteed recall
+matters more than per-turn cost.
 
 ## Configuration
 

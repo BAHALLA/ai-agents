@@ -34,7 +34,7 @@ make run-triage              # Deterministic triage Workflow, one batch run
 ```
 
 **Exposed capabilities:**
-- `orrery_chat_agent` (interactive root) — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal` via `AgentTool`, plus `incident_triage_agent` for a single-turn full sweep and `PreloadMemoryTool` for cross-session recall
+- `orrery_chat_agent` (interactive root) — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal` via `AgentTool`, plus `incident_triage_agent` for a single-turn full sweep and `LoadMemoryTool` (model-invoked `load_memory`) for cross-session recall
 - `orrery_triage_workflow` (batch root) — `health_join` barriers the 5 parallel subsystem checkers, then `triage_summarizer` → `journal_writer` → `triage_route`
 - `remediation_actor` / `remediation_verifier` — closed-loop remediation subgraph that acts → verifies → retries up to 3 times via a `verify_route` state counter
 

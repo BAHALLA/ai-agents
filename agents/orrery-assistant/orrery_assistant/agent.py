@@ -14,7 +14,7 @@ entrypoint — `make run-triage` — because a ``Workflow`` cannot be a sub-agen
     orrery_chat_agent (chat-mode LlmAgent, ROOT)
       ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
       ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
-      └─ PreloadMemoryTool
+      └─ LoadMemoryTool (model-invoked recall of past incidents)
 
     orrery_triage_workflow (Workflow, separate entrypoint)
       START ─▶ [parallel] 5 health checkers ─▶ health_join (JoinNode)
@@ -29,7 +29,7 @@ from typing import Any
 from google.adk import Workflow
 from google.adk.agents.context import Context
 from google.adk.apps import App
-from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+from google.adk.tools.load_memory_tool import LoadMemoryTool
 from google.adk.tools.tool_context import ToolContext
 from google.adk.workflow import JoinNode
 
@@ -365,8 +365,21 @@ orrery_chat_agent = create_agent(
         "later turn should you re-invoke the specialist to carry out (or drop) the exact "
         "same action. A casual 'yes' is not an approval.\n\n"
         "After a significant investigation, offer once to save findings via "
-        "ops_journal_agent. Relevant context from past sessions is loaded automatically — "
-        "correlate with similar past incidents when it genuinely matches."
+        "ops_journal_agent.\n\n"
+        "## Past-incident recall (load_memory)\n"
+        "You have a `load_memory` tool that searches durable memory of earlier "
+        "sessions. Nothing from the past is loaded automatically — call it yourself "
+        "when past context would help. **When to call it:** before diagnosing a "
+        "reported problem, symptom, or alert (to check whether a similar incident "
+        "was seen before), or when the user references something earlier ('like last "
+        "time', 'the usual issue', 'again'). **When to skip it:** greetings, "
+        "capability questions, and simple one-off status checks ('is Kafka up?') — "
+        "don't spend a lookup there. **How to query:** pass a short, specific query "
+        "describing the system and symptom (e.g. 'Kafka consumer lag on orders "
+        "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
+        "message. Call it at most once per turn, then correlate with any genuine "
+        "match — cite it only when it actually fits; if nothing matches, proceed "
+        "normally without mentioning memory."
     ),
     tools=[
         AgentTool(agent=kafka_agent),
@@ -376,7 +389,7 @@ orrery_chat_agent = create_agent(
         AgentTool(agent=docker_agent_root),
         AgentTool(agent=journal_agent),
         AgentTool(agent=incident_triage_agent),
-        PreloadMemoryTool(),
+        LoadMemoryTool(),
     ],
 )
 

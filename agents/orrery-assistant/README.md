@@ -23,7 +23,7 @@ orrery_chat_agent (chat-mode LlmAgent, ROOT — interactive: web / CLI / Slack /
 ├── [AgentTool] docker_agent             — Containers, stats, logs, compose
 ├── [AgentTool] ops_journal_agent        — Notes, preferences, session tracking
 ├── [AgentTool] incident_triage_agent    — Single-turn full health sweep across ALL systems
-└── PreloadMemoryTool                    — Cross-session memory recall
+└── LoadMemoryTool                     — Cross-session memory recall (model-invoked)
 
 orrery_triage_workflow (graph Workflow, ROOT — batch: `make run-triage`)
   START ─▶ [parallel] kafka / k8s / docker / observability / elasticsearch checkers
@@ -58,8 +58,10 @@ Each specialist is the standalone agent reused as an `AgentTool`:
 | `ops_journal_agent` | [ops-journal](../ops-journal/) | Notes, preferences, session tracking, bookmarks |
 
 After a significant investigation, the coordinator proactively suggests saving
-findings via `ops_journal_agent`, and relevant context from past sessions is loaded
-automatically via `PreloadMemoryTool`.
+findings via `ops_journal_agent`. Relevant context from past sessions is recalled
+on demand via `LoadMemoryTool` — the coordinator calls `load_memory` when past
+context would help (e.g. before diagnosing a symptom or when the user references an
+earlier incident) rather than searching memory on every turn.
 
 ## How Delegation Works
 

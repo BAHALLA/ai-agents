@@ -91,7 +91,9 @@ There are **two roots** that reuse the same node agents (see
    history and routes free-form queries to the six specialist `AgentTool`s
    (kafka/k8s/observability/elasticsearch/docker/ops-journal), plus an
    `incident_triage_agent` `AgentTool` for single-turn full sweeps and a
-   `PreloadMemoryTool`. This is the root for `adk web` / CLI / Slack / Chat,
+   `LoadMemoryTool` (model-invoked `load_memory` for past-incident recall — the
+   coordinator decides when to search memory rather than preloading every turn).
+   This is the root for `adk web` / CLI / Slack / Chat,
    hosted by `App(root_agent=orrery_chat_agent)`. A chat-mode agent **must** be a
    root — ADK 2.0 forbids it as a routed node inside a graph.
 2. **Batch root** — `orrery_triage_workflow`, a graph `Workflow` run by
@@ -108,7 +110,7 @@ There are **two roots** that reuse the same node agents (see
 orrery_chat_agent (chat-mode LlmAgent, interactive root)
   ├─ AgentTool: kafka / k8s / observability / elasticsearch / docker / ops_journal
   ├─ AgentTool: incident_triage_agent (single-turn full health sweep)
-  └─ PreloadMemoryTool
+  └─ LoadMemoryTool (model-invoked past-incident recall)
 
 orrery_triage_workflow (Workflow, batch root — `make run-triage`)
   START ─▶ [parallel] kafka/k8s/docker/observability/elasticsearch checkers
