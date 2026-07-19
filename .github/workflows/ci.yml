@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           base-ref: ${{ github.event.pull_request.base.sha || github.event.before }}
