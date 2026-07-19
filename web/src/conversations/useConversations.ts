@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChatMessage } from "../chat/types";
 import { storageKeys } from "../config";
 import { NEW_CONVERSATION_TITLE, type Conversation } from "./types";
 
@@ -18,11 +19,38 @@ function emptyConversation(): Conversation {
   };
 }
 
+function isMessage(v: unknown): v is ChatMessage {
+  const m = v as ChatMessage | null;
+  return (
+    !!m &&
+    typeof m.id === "string" &&
+    (m.role === "user" || m.role === "assistant") &&
+    typeof m.text === "string" &&
+    typeof m.at === "number"
+  );
+}
+
+/** A stored conversation is only trusted if every field matches the current
+ * shape — a corrupt or old-schema entry is dropped rather than allowed to
+ * throw later during render (e.g. reading `.messages.length`). */
+function isConversation(v: unknown): v is Conversation {
+  const c = v as Conversation | null;
+  return (
+    !!c &&
+    typeof c.id === "string" &&
+    (c.sessionId === null || typeof c.sessionId === "string") &&
+    typeof c.title === "string" &&
+    typeof c.updatedAt === "number" &&
+    Array.isArray(c.messages) &&
+    c.messages.every(isMessage)
+  );
+}
+
 function load(): { list: Conversation[]; activeId: string } {
   try {
     const raw = localStorage.getItem(storageKeys.conversations);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
-    const list = Array.isArray(parsed) ? (parsed as Conversation[]) : [];
+    const list = Array.isArray(parsed) ? parsed.filter(isConversation) : [];
     if (list.length > 0) {
       const stored = localStorage.getItem(storageKeys.activeConversation);
       const activeId = list.some((c) => c.id === stored) ? stored! : list[0].id;

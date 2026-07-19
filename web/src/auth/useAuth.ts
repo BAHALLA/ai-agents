@@ -39,8 +39,12 @@ export function useAuth(): AuthState {
 
   const signOut = useCallback(() => {
     try {
+      // Clear everything user-scoped so a shared browser never leaks the prior
+      // user's transcripts to whoever signs in next.
       localStorage.removeItem(storageKeys.token);
       localStorage.removeItem(storageKeys.sessionId);
+      localStorage.removeItem(storageKeys.conversations);
+      localStorage.removeItem(storageKeys.activeConversation);
     } catch {
       // ignore
     }
