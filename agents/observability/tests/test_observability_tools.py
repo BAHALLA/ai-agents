@@ -17,9 +17,13 @@ from observability_agent.tools import (
     get_loki_label_values,
     get_loki_labels,
     get_prometheus_alerts,
+    get_prometheus_metadata,
+    get_prometheus_rules,
     get_prometheus_targets,
     get_silences,
+    list_prometheus_metrics,
     query_loki_logs,
+    query_loki_range,
     query_prometheus,
     query_prometheus_range,
 )
@@ -490,4 +494,120 @@ async def test_create_silence_rejects_huge_duration():
 @pytest.mark.asyncio
 async def test_delete_silence_rejects_empty_id():
     result = await delete_silence("")
+    assert result["status"] == "error"
+
+
+# ── Prometheus: metric & rule discovery ───────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_list_prometheus_metrics_success(mock_get):
+    mock_get.return_value = _mock_response(
+        {"status": "success", "data": ["up", "kafka_lag", "http_requests_total"]}
+    )
+    result = await list_prometheus_metrics()
+    assert result["status"] == "success"
+    assert result["count"] == 3
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_list_prometheus_metrics_filtered(mock_get):
+    mock_get.return_value = _mock_response(
+        {"status": "success", "data": ["up", "kafka_lag", "http_requests_total"]}
+    )
+    result = await list_prometheus_metrics(match="kafka")
+    assert result["metrics"] == ["kafka_lag"]
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_list_prometheus_metrics_error_status(mock_get):
+    mock_get.return_value = _mock_response({"status": "error", "error": "boom"})
+    result = await list_prometheus_metrics()
+    assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_get_prometheus_metadata_success(mock_get):
+    mock_get.return_value = _mock_response(
+        {"status": "success", "data": {"up": [{"type": "gauge", "help": "up=1 if healthy"}]}}
+    )
+    result = await get_prometheus_metadata(metric="up")
+    assert result["status"] == "success"
+    assert result["metadata"]["up"][0]["type"] == "gauge"
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_get_prometheus_rules_success(mock_get):
+    mock_get.return_value = _mock_response(
+        {
+            "status": "success",
+            "data": {
+                "groups": [
+                    {
+                        "name": "cpu",
+                        "file": "rules.yml",
+                        "rules": [
+                            {
+                                "name": "HighCPU",
+                                "type": "alerting",
+                                "state": "firing",
+                                "health": "ok",
+                                "query": "cpu > 0.9",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    result = await get_prometheus_rules()
+    assert result["status"] == "success"
+    assert result["count"] == 1
+    assert result["groups"][0]["rules"][0]["state"] == "firing"
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_get_prometheus_rules_connection_error(mock_get):
+    mock_get.side_effect = requests.ConnectionError("refused")
+    result = await get_prometheus_rules()
+    assert result["status"] == "error"
+
+
+# ── Loki: relative range query ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("observability_agent.tools._http_get")
+async def test_query_loki_range_success(mock_get):
+    mock_get.return_value = _mock_response(
+        {
+            "status": "success",
+            "data": {
+                "result": [
+                    {"stream": {"job": "api"}, "values": [["1700000000000000000", "error line"]]}
+                ]
+            },
+        }
+    )
+    result = await query_loki_range('{job="api"} |= "error"', hours=6)
+    assert result["status"] == "success"
+    assert result["window_hours"] == 6
+    assert result["total_entries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_query_loki_range_rejects_huge_window():
+    result = await query_loki_range('{job="api"}', hours=1000)
+    assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_query_loki_range_rejects_empty_query():
+    result = await query_loki_range("", hours=1)
     assert result["status"] == "error"

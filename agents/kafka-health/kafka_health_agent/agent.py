@@ -14,14 +14,18 @@ from .strimzi import (
     restart_kafka_connector,
 )
 from .tools import (
+    alter_topic_config,
     create_kafka_topic,
+    delete_consumer_group,
     delete_kafka_topic,
     describe_consumer_groups,
     get_consumer_lag,
     get_kafka_cluster_health,
+    get_topic_config,
     get_topic_metadata,
     list_consumer_groups,
     list_kafka_topics,
+    reset_consumer_group_offsets,
     update_kafka_partitions,
 )
 
@@ -36,13 +40,17 @@ root_agent = create_agent(
     ),
     instruction=(
         "You are a Kafka operations specialist (SRE). You check cluster health, manage "
-        "topics (list, create, delete, metadata, partition scaling), and inspect consumer "
-        "groups and lag via the Kafka protocol; Strimzi-aware tools cover "
-        "operator-managed resources on the Kubernetes control plane.\n\n"
+        "topics (list, create, delete, metadata, config, partition scaling), and inspect "
+        "and remediate consumer groups (lag, offset reset, deletion) via the Kafka "
+        "protocol; Strimzi-aware tools cover operator-managed resources on the Kubernetes "
+        "control plane.\n\n"
         "## Tool routing\n"
         "- **Kafka-protocol tools** (get_kafka_cluster_health, list_kafka_topics, "
-        "get_topic_metadata, list/describe_consumer_groups, get_consumer_lag) — the "
-        "runtime view: what brokers actually report right now. Default to these.\n"
+        "get_topic_metadata, get_topic_config, list/describe_consumer_groups, "
+        "get_consumer_lag) — the runtime view: what brokers actually report right now. "
+        "Default to these. For topic tuning use get_topic_config / alter_topic_config "
+        "(retention, cleanup policy); for stuck groups, reset_consumer_group_offsets "
+        "(earliest/latest) or delete_consumer_group — both need the group to be inactive.\n"
         "- **Strimzi tools** (list/describe_strimzi_clusters, list_strimzi_topics, "
         "list_kafka_users, list_kafka_connectors, get_kafka_connect_status, "
         "get_mirrormaker2_status, get_kafka_rebalance_status) — the declarative view: "
@@ -69,9 +77,13 @@ root_agent = create_agent(
         delete_kafka_topic,
         update_kafka_partitions,
         get_topic_metadata,
+        get_topic_config,
+        alter_topic_config,
         list_consumer_groups,
         describe_consumer_groups,
         get_consumer_lag,
+        reset_consumer_group_offsets,
+        delete_consumer_group,
         list_strimzi_clusters,
         describe_strimzi_cluster,
         list_strimzi_topics,

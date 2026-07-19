@@ -14,12 +14,19 @@ from docker_agent.tools import (
     get_container_logs,
     get_container_stats,
     inspect_container,
+    inspect_network,
+    inspect_volume,
     list_containers,
     list_images,
+    list_networks,
+    list_volumes,
+    prune_containers,
+    prune_images,
     remove_image,
     restart_container,
     start_container,
     stop_container,
+    system_df,
 )
 
 # ── list_containers ───────────────────────────────────────────────────
@@ -550,3 +557,142 @@ async def test_compose_status_rejects_path_traversal():
     result = await docker_compose_status(project_dir="../../etc")
     assert result["status"] == "error"
     assert "traversal" in result["message"]
+
+
+# ── networks ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_list_networks_success(mock_run):
+    nets = [{"Name": "bridge", "Driver": "bridge"}, {"Name": "host", "Driver": "host"}]
+    mock_run.return_value = (True, "\n".join(json.dumps(n) for n in nets))
+
+    result = await list_networks()
+    assert result["status"] == "success"
+    assert result["count"] == 2
+    assert result["networks"][0]["Name"] == "bridge"
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_network_success(mock_run):
+    net = [
+        {
+            "Name": "mynet",
+            "Driver": "bridge",
+            "Scope": "local",
+            "IPAM": {"Config": [{"Subnet": "172.20.0.0/16"}]},
+            "Containers": {"c1": {"Name": "web", "IPv4Address": "172.20.0.2/16"}},
+        }
+    ]
+    mock_run.return_value = (True, json.dumps(net))
+
+    result = await inspect_network("mynet")
+    assert result["status"] == "success"
+    assert result["subnets"] == ["172.20.0.0/16"]
+    assert result["containers"] == {"web": "172.20.0.2/16"}
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_network_not_found(mock_run):
+    mock_run.return_value = (True, "[]")
+    result = await inspect_network("ghost")
+    assert result["status"] == "error"
+    assert "not found" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_network_rejects_empty_name():
+    result = await inspect_network("")
+    assert result["status"] == "error"
+
+
+# ── volumes ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_list_volumes_success(mock_run):
+    vols = [{"Name": "data", "Driver": "local"}]
+    mock_run.return_value = (True, "\n".join(json.dumps(v) for v in vols))
+
+    result = await list_volumes()
+    assert result["status"] == "success"
+    assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_volume_success(mock_run):
+    vol = [
+        {
+            "Name": "data",
+            "Driver": "local",
+            "Mountpoint": "/var/lib/docker/volumes/data/_data",
+            "Scope": "local",
+            "Labels": {},
+        }
+    ]
+    mock_run.return_value = (True, json.dumps(vol))
+
+    result = await inspect_volume("data")
+    assert result["status"] == "success"
+    assert result["mountpoint"].endswith("_data")
+
+
+# ── disk usage ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_system_df_success(mock_run):
+    lines = [
+        {"Type": "Images", "TotalCount": "5", "Active": "3", "Reclaimable": "1.2GB"},
+        {"Type": "Containers", "TotalCount": "4", "Active": "2", "Reclaimable": "0B"},
+    ]
+    mock_run.return_value = (True, "\n".join(json.dumps(x) for x in lines))
+
+    result = await system_df()
+    assert result["status"] == "success"
+    assert len(result["usage"]) == 2
+    assert result["usage"][0]["Type"] == "Images"
+
+
+# ── pruning ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_prune_images_dangling_default(mock_run):
+    mock_run.return_value = (True, "Total reclaimed space: 512MB")
+    result = await prune_images()
+    assert result["status"] == "success"
+    args = mock_run.call_args[0][0]
+    assert "--all" not in args
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_prune_images_all_unused(mock_run):
+    mock_run.return_value = (True, "Total reclaimed space: 2GB")
+    await prune_images(all_unused=True)
+    args = mock_run.call_args[0][0]
+    assert "--all" in args
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_prune_containers_success(mock_run):
+    mock_run.return_value = (True, "Total reclaimed space: 0B")
+    result = await prune_containers()
+    assert result["status"] == "success"
+
+
+def test_prune_images_has_destructive_guardrail():
+    assert prune_images._guardrail_level == "destructive"
+
+
+def test_prune_containers_has_destructive_guardrail():
+    assert prune_containers._guardrail_level == "destructive"

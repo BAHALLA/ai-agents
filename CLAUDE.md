@@ -48,8 +48,8 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 - **`core/`** — Shared library (`orrery-core`): agent factory, multi-provider LLM support (Gemini/Claude/OpenAI/Ollama via LiteLLM), RBAC, config, guardrails, input validation, resilience (circuit breaker + retry), structured logging, audit trail, activity tracking, error handlers, persistent runner
 - **`agents/`** — Independent agent packages, each runnable standalone or composable:
-  - `kafka-health/` — Kafka cluster monitoring (8 tools, uses confluent-kafka) + Strimzi operator tools
-  - `k8s-health/` — Kubernetes cluster management (11 tools, uses kubernetes client) + operator-aware tools
+  - `kafka-health/` — Kafka cluster monitoring (12 tools inc. topic config get/alter + consumer-group offset reset/delete, uses confluent-kafka) + Strimzi operator tools
+  - `k8s-health/` — Kubernetes cluster management (17 tools inc. services/endpoints, configmaps, and `top_pods`/`top_nodes` resource usage, uses kubernetes client) + operator-aware tools
   - `elasticsearch/` — Elasticsearch cluster/index/shard diagnostics (19 REST tools) + ECK operator tools (5 tools)
   - `ops-journal/` — State management demo with 4 state scopes (session/user/app/temp)
   - `orrery-assistant/` — Multi-agent orchestrator that composes all above agents + Docker tools

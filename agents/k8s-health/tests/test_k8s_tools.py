@@ -12,19 +12,25 @@ from kubernetes.client.rest import ApiException
 import k8s_health_agent.tools as _tools_mod
 from k8s_health_agent.tools import (
     describe_pod,
+    describe_service,
     get_cluster_info,
+    get_configmap,
     get_deployment_status,
     get_events,
     get_nodes,
     get_pod_logs,
+    list_configmaps,
     list_deployments,
     list_namespaces,
     list_pods,
+    list_services,
     patch_deployment,
     patch_statefulset,
     restart_deployment,
     rollback_deployment,
     scale_deployment,
+    top_nodes,
+    top_pods,
 )
 
 
@@ -34,10 +40,12 @@ def _reset_client_cache():
     _tools_mod._kube_config_loaded = False
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
+    _tools_mod._custom_api_client = None
     yield
     _tools_mod._kube_config_loaded = False
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
+    _tools_mod._custom_api_client = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -682,3 +690,180 @@ async def test_get_events_rejects_huge_limit():
     result = await get_events(limit=99_999)
     assert result["status"] == "error"
     assert "limit" in result["message"]
+
+
+# ── Services ───────────────────────────────────────────────────────────
+
+
+def _make_service(name="web", ns="default", svc_type="ClusterIP", selector=None):
+    svc = MagicMock()
+    svc.metadata.name = name
+    svc.metadata.namespace = ns
+    svc.spec.type = svc_type
+    svc.spec.cluster_ip = "10.0.0.1"
+    svc.spec.selector = selector if selector is not None else {"app": name}
+    port = MagicMock()
+    port.port = 80
+    port.protocol = "TCP"
+    port.target_port = 8080
+    svc.spec.ports = [port]
+    return svc
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_list_services_success(mock_api):
+    services = MagicMock()
+    services.items = [_make_service("web"), _make_service("api")]
+    mock_api.return_value.list_namespaced_service.return_value = services
+
+    result = await list_services()
+    assert result["status"] == "success"
+    assert result["count"] == 2
+    assert result["services"][0]["ports"] == ["80/TCP→8080"]
+
+
+@pytest.mark.asyncio
+async def test_list_services_rejects_bad_namespace():
+    result = await list_services(namespace="Bad NS!")
+    assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_describe_service_healthy_endpoints(mock_api):
+    mock_api.return_value.read_namespaced_service.return_value = _make_service("web")
+    endpoints = MagicMock()
+    subset = MagicMock()
+    subset.addresses = [MagicMock(), MagicMock()]
+    subset.not_ready_addresses = []
+    endpoints.subsets = [subset]
+    mock_api.return_value.read_namespaced_endpoints.return_value = endpoints
+
+    result = await describe_service("web")
+    assert result["status"] == "success"
+    assert result["endpoints"] == {"ready": 2, "not_ready": 0, "healthy": True}
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_describe_service_no_ready_endpoints(mock_api):
+    mock_api.return_value.read_namespaced_service.return_value = _make_service("web")
+    endpoints = MagicMock()
+    subset = MagicMock()
+    subset.addresses = []
+    subset.not_ready_addresses = [MagicMock()]
+    endpoints.subsets = [subset]
+    mock_api.return_value.read_namespaced_endpoints.return_value = endpoints
+
+    result = await describe_service("web")
+    assert result["endpoints"]["ready"] == 0
+    assert result["endpoints"]["healthy"] is False
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_describe_service_not_found(mock_api):
+    mock_api.return_value.read_namespaced_service.side_effect = ApiException(status=404)
+    result = await describe_service("missing")
+    assert result["status"] == "error"
+    assert "not found" in result["message"]
+
+
+# ── ConfigMaps ─────────────────────────────────────────────────────────
+
+
+def _make_configmap(name="cfg", ns="default", data=None):
+    cm = MagicMock()
+    cm.metadata.name = name
+    cm.metadata.namespace = ns
+    cm.data = data if data is not None else {"key1": "value1"}
+    cm.binary_data = None
+    return cm
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_list_configmaps_success(mock_api):
+    cms = MagicMock()
+    cms.items = [_make_configmap("cfg", data={"a": "1", "b": "2"})]
+    mock_api.return_value.list_namespaced_config_map.return_value = cms
+
+    result = await list_configmaps()
+    assert result["status"] == "success"
+    assert result["configmaps"][0]["keys"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_get_configmap_truncates_long_values(mock_api):
+    big = "x" * 5000
+    mock_api.return_value.read_namespaced_config_map.return_value = _make_configmap(
+        "cfg", data={"small": "hi", "big": big}
+    )
+    result = await get_configmap("cfg")
+    assert result["status"] == "success"
+    assert result["data"]["small"] == "hi"
+    assert "truncated" in result["data"]["big"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_get_configmap_not_found(mock_api):
+    mock_api.return_value.read_namespaced_config_map.side_effect = ApiException(status=404)
+    result = await get_configmap("missing")
+    assert result["status"] == "error"
+    assert "not found" in result["message"]
+
+
+# ── Resource usage (metrics-server) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._metrics_api")
+async def test_top_nodes_success(mock_api):
+    mock_api.return_value.list_cluster_custom_object.return_value = {
+        "items": [
+            {"metadata": {"name": "node-1"}, "usage": {"cpu": "500m", "memory": "2048Mi"}},
+            {"metadata": {"name": "node-2"}, "usage": {"cpu": "1", "memory": "1Gi"}},
+        ]
+    }
+    result = await top_nodes()
+    assert result["status"] == "success"
+    assert result["nodes"][0] == {"name": "node-1", "cpu_millicores": 500, "memory_mib": 2048}
+    assert result["nodes"][1] == {"name": "node-2", "cpu_millicores": 1000, "memory_mib": 1024}
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._metrics_api")
+async def test_top_nodes_metrics_server_absent(mock_api):
+    mock_api.return_value.list_cluster_custom_object.side_effect = ApiException(status=404)
+    result = await top_nodes()
+    assert result["status"] == "error"
+    assert "metrics-server" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._metrics_api")
+async def test_top_pods_sums_containers(mock_api):
+    mock_api.return_value.list_namespaced_custom_object.return_value = {
+        "items": [
+            {
+                "metadata": {"name": "pod-1", "namespace": "default"},
+                "containers": [
+                    {"usage": {"cpu": "100m", "memory": "64Mi"}},
+                    {"usage": {"cpu": "150m", "memory": "128Mi"}},
+                ],
+            }
+        ]
+    }
+    result = await top_pods()
+    assert result["status"] == "success"
+    assert result["pods"][0]["cpu_millicores"] == 250
+    assert result["pods"][0]["memory_mib"] == 192
+
+
+@pytest.mark.asyncio
+async def test_top_pods_rejects_bad_namespace():
+    result = await top_pods(namespace="Bad NS!")
+    assert result["status"] == "error"

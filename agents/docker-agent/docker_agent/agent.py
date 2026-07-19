@@ -6,12 +6,19 @@ from .tools import (
     get_container_logs,
     get_container_stats,
     inspect_container,
+    inspect_network,
+    inspect_volume,
     list_containers,
     list_images,
+    list_networks,
+    list_volumes,
+    prune_containers,
+    prune_images,
     remove_image,
     restart_container,
     start_container,
     stop_container,
+    system_df,
 )
 
 load_agent_env(__file__)
@@ -20,13 +27,20 @@ root_agent = create_agent(
     name="docker_agent",
     description=(
         "Specialist for Docker container and image operations. Use this agent for "
-        "anything related to containers and images: listing, inspecting, logs, stats, "
-        "lifecycle management (start/stop/restart), and compose status."
+        "anything related to containers, images, networks, volumes, and disk usage: "
+        "listing, inspecting, logs, stats, lifecycle (start/stop/restart), pruning, "
+        "and compose status."
     ),
     instruction=(
         "You are a Docker operations specialist (SRE). You inspect containers, read "
-        "logs, check resource usage, manage container lifecycle, list images, and "
-        "report Docker Compose service status.\n\n"
+        "logs, check resource usage, manage container lifecycle, list images/networks/"
+        "volumes, report disk usage, and report Docker Compose service status.\n\n"
+        "## Disk & cleanup\n"
+        "For 'what's using disk' use system_df first to see images vs containers vs "
+        "volumes vs build cache. prune_images (dangling by default; all_unused only if "
+        "asked) and prune_containers (stopped only) reclaim space — both are guarded and "
+        "need approval. list_networks / inspect_network answer connectivity questions "
+        "(which containers share a network); list_volumes / inspect_volume cover storage.\n\n"
         "## Diagnosis\n"
         "For a named container, go straight to inspect_container / get_container_logs / "
         "get_container_stats. For an open-ended question, list_containers first, then "
@@ -51,6 +65,13 @@ root_agent = create_agent(
         restart_container,
         list_images,
         remove_image,
+        list_networks,
+        inspect_network,
+        list_volumes,
+        inspect_volume,
+        system_df,
+        prune_images,
+        prune_containers,
     ],
     # Human-in-the-loop gate for @confirm/@destructive tools (stop/restart/
     # remove). Every specialist with guarded tools must wire this — the

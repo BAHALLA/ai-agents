@@ -479,3 +479,157 @@ async def delete_silence(silence_id: str) -> dict[str, Any]:
     except requests.RequestException as e:
         logger.exception("Failed to connect to Alertmanager")
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
+
+
+# ── Metric & rule discovery ────────────────────────────────────────────
+
+
+async def list_prometheus_metrics(match: str | None = None) -> dict[str, Any]:
+    """Lists metric names known to Prometheus (the values of the __name__ label).
+
+    Use this to discover what to query when you don't know the exact metric name.
+
+    Args:
+        match: Optional case-insensitive substring filter (e.g. "kafka", "http").
+
+    Returns:
+        A dictionary with the matching metric names.
+    """
+    if match is not None and (err := validate_string(match, "match", max_len=200)):
+        return err
+
+    try:
+        resp = await _http_get(_config.prometheus_url, "/api/v1/label/__name__/values")
+        data = resp.json()
+        if data.get("status") != "success":
+            return {
+                "status": "error",
+                "message": f"Prometheus request failed: {data.get('error', 'unknown error')}",
+            }
+        names = data.get("data", [])
+        if match:
+            needle = match.lower()
+            names = [n for n in names if needle in n.lower()]
+        return {"status": "success", "metrics": names, "count": len(names)}
+    except requests.RequestException as e:
+        logger.exception("Failed to connect to Prometheus")
+        return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
+
+
+async def get_prometheus_metadata(metric: str | None = None) -> dict[str, Any]:
+    """Returns metadata (type, help text, unit) for Prometheus metrics.
+
+    Args:
+        metric: Optional exact metric name. Omit to return metadata for all metrics.
+
+    Returns:
+        A dictionary mapping metric name to its type/help/unit.
+    """
+    if metric is not None and (err := validate_string(metric, "metric", max_len=200)):
+        return err
+
+    try:
+        params = {"metric": metric} if metric else None
+        resp = await _http_get(_config.prometheus_url, "/api/v1/metadata", params)
+        data = resp.json()
+        if data.get("status") != "success":
+            return {
+                "status": "error",
+                "message": f"Prometheus request failed: {data.get('error', 'unknown error')}",
+            }
+        return {"status": "success", "metadata": data.get("data", {})}
+    except requests.RequestException as e:
+        logger.exception("Failed to connect to Prometheus")
+        return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
+
+
+async def get_prometheus_rules() -> dict[str, Any]:
+    """Lists configured Prometheus alerting and recording rules and their state.
+
+    A firing alert here is defined by a rule; a recording rule precomputes an
+    expression. Use it to see what alerts *can* fire and which are active.
+
+    Returns:
+        A dictionary with rule groups, each rule's name, type, and health/state.
+    """
+    try:
+        resp = await _http_get(_config.prometheus_url, "/api/v1/rules")
+        data = resp.json()
+        if data.get("status") != "success":
+            return {
+                "status": "error",
+                "message": f"Prometheus request failed: {data.get('error', 'unknown error')}",
+            }
+        groups = []
+        for group in data.get("data", {}).get("groups", []):
+            rules = [
+                {
+                    "name": r.get("name"),
+                    "type": r.get("type"),
+                    "state": r.get("state"),  # alerting rules: inactive/pending/firing
+                    "health": r.get("health"),
+                    "query": r.get("query"),
+                }
+                for r in group.get("rules", [])
+            ]
+            groups.append({"name": group.get("name"), "file": group.get("file"), "rules": rules})
+        return {"status": "success", "groups": groups, "count": len(groups)}
+    except requests.RequestException as e:
+        logger.exception("Failed to connect to Prometheus")
+        return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
+
+
+async def query_loki_range(query: str, hours: int = 1, limit: int = 100) -> dict[str, Any]:
+    """Runs a LogQL query over a relative time window (the last N hours).
+
+    A convenience over query_loki_logs when you want "the last few hours" without
+    computing timestamps yourself.
+
+    Args:
+        query: LogQL expression (e.g., '{job="nginx"} |= "error"').
+        hours: How many hours back to search from now (1-168).
+        limit: Maximum number of log lines to return.
+
+    Returns:
+        A dictionary with matching log entries or an error message.
+    """
+    if err := validate_string(query, "query", max_len=MAX_QUERY_LENGTH):
+        return err
+    if err := validate_positive_int(hours, "hours", max_value=168):
+        return err
+    if err := validate_positive_int(limit, "limit", max_value=MAX_LOG_LINES):
+        return err
+
+    now = datetime.now(UTC)
+    start_ns = int((now - timedelta(hours=hours)).timestamp() * 1_000_000_000)
+    end_ns = int(now.timestamp() * 1_000_000_000)
+
+    try:
+        params: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "start": start_ns,
+            "end": end_ns,
+        }
+        resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
+        data = resp.json()
+        if data.get("status") != "success":
+            return {
+                "status": "error",
+                "message": f"Loki query failed: {data.get('error', 'unknown error')}",
+            }
+        streams = data.get("data", {}).get("result", [])
+        entries = []
+        for stream in streams:
+            labels = stream["stream"]
+            for ts, line in stream["values"]:
+                entries.append({"labels": labels, "timestamp": ts, "line": line})
+        return {
+            "status": "success",
+            "window_hours": hours,
+            "total_entries": len(entries),
+            "entries": entries[:limit],
+        }
+    except requests.RequestException as e:
+        logger.exception("Failed to connect to Loki")
+        return {"status": "error", "message": f"Failed to connect to Loki: {e}"}

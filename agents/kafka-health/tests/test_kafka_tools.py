@@ -10,14 +10,18 @@ from confluent_kafka import KafkaException
 
 import kafka_health_agent.tools as _tools_mod
 from kafka_health_agent.tools import (
+    alter_topic_config,
     create_kafka_topic,
+    delete_consumer_group,
     delete_kafka_topic,
     describe_consumer_groups,
     get_consumer_lag,
     get_kafka_cluster_health,
+    get_topic_config,
     get_topic_metadata,
     list_consumer_groups,
     list_kafka_topics,
+    reset_consumer_group_offsets,
     update_kafka_partitions,
 )
 
@@ -495,3 +499,161 @@ async def test_describe_consumer_groups_rejects_empty_list():
 async def test_get_consumer_lag_rejects_empty_group_id():
     result = await get_consumer_lag("")
     assert result["status"] == "error"
+
+
+# ── Topic configuration ────────────────────────────────────────────────
+
+
+def _make_config_entry(value, is_default=False, is_sensitive=False):
+    e = MagicMock()
+    e.value = value
+    e.is_default = is_default
+    e.is_sensitive = is_sensitive
+    return e
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_get_topic_config_splits_overridden_and_defaults(mock_admin):
+    future = MagicMock()
+    future.result.return_value = {
+        "retention.ms": _make_config_entry("604800000", is_default=False),
+        "cleanup.policy": _make_config_entry("delete", is_default=True),
+    }
+    mock_admin.return_value.describe_configs.return_value = {MagicMock(): future}
+
+    result = await get_topic_config("orders")
+    assert result["status"] == "success"
+    assert result["overridden"] == {"retention.ms": "604800000"}
+    assert result["defaults"] == {"cleanup.policy": "delete"}
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_get_topic_config_masks_sensitive(mock_admin):
+    future = MagicMock()
+    future.result.return_value = {
+        "some.secret": _make_config_entry("hunter2", is_sensitive=True),
+    }
+    mock_admin.return_value.describe_configs.return_value = {MagicMock(): future}
+
+    result = await get_topic_config("orders")
+    assert result["overridden"]["some.secret"] == "***"
+
+
+@pytest.mark.asyncio
+async def test_get_topic_config_rejects_bad_name():
+    result = await get_topic_config("bad topic!")
+    assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_alter_topic_config_success(mock_admin):
+    future = MagicMock()
+    future.result.return_value = None
+    mock_admin.return_value.incremental_alter_configs.return_value = {MagicMock(): future}
+
+    result = await alter_topic_config("orders", "retention.ms", "3600000")
+    assert result["status"] == "success"
+    assert "retention.ms=3600000" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_alter_topic_config_error(mock_admin):
+    future = MagicMock()
+    future.result.side_effect = KafkaException("policy violation")
+    mock_admin.return_value.incremental_alter_configs.return_value = {MagicMock(): future}
+
+    result = await alter_topic_config("orders", "retention.ms", "3600000")
+    assert result["status"] == "error"
+
+
+# ── Consumer group remediation ─────────────────────────────────────────
+
+
+def _topic_meta_with_partitions(*partition_ids, error=None):
+    tm = MagicMock()
+    tm.error = error
+    tm.partitions = dict.fromkeys(partition_ids, MagicMock())
+    return tm
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_reset_consumer_group_offsets_earliest(mock_admin):
+    admin = mock_admin.return_value
+    metadata = MagicMock()
+    metadata.topics = {"orders": _topic_meta_with_partitions(0, 1)}
+    admin.list_topics.return_value = metadata
+
+    def _offset_future(offset):
+        f = MagicMock()
+        f.result.return_value = MagicMock(offset=offset)
+        return f
+
+    tp0, tp1 = MagicMock(partition=0), MagicMock(partition=1)
+    admin.list_offsets.return_value = {tp0: _offset_future(0), tp1: _offset_future(0)}
+
+    alter_future = MagicMock()
+    alter_future.result.return_value = None
+    admin.alter_consumer_group_offsets.return_value = {"g1": alter_future}
+
+    result = await reset_consumer_group_offsets("g1", "orders", to="earliest")
+    assert result["status"] == "success"
+    assert result["offsets"] == {0: 0, 1: 0}
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_reset_consumer_group_offsets_topic_not_found(mock_admin):
+    metadata = MagicMock()
+    metadata.topics = {}
+    mock_admin.return_value.list_topics.return_value = metadata
+
+    result = await reset_consumer_group_offsets("g1", "missing")
+    assert result["status"] == "error"
+    assert "not found" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_reset_consumer_group_offsets_rejects_bad_target():
+    result = await reset_consumer_group_offsets("g1", "orders", to="middle")
+    assert result["status"] == "error"
+    assert "earliest" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_delete_consumer_group_success(mock_admin):
+    future = MagicMock()
+    future.result.return_value = None
+    mock_admin.return_value.delete_consumer_groups.return_value = {"g1": future}
+
+    result = await delete_consumer_group("g1")
+    assert result["status"] == "success"
+    assert "g1" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_delete_consumer_group_error(mock_admin):
+    future = MagicMock()
+    future.result.side_effect = KafkaException("group not empty")
+    mock_admin.return_value.delete_consumer_groups.return_value = {"g1": future}
+
+    result = await delete_consumer_group("g1")
+    assert result["status"] == "error"
+
+
+def test_alter_topic_config_has_confirm_guardrail():
+    assert alter_topic_config._guardrail_level == "confirm"
+
+
+def test_reset_consumer_group_offsets_has_destructive_guardrail():
+    assert reset_consumer_group_offsets._guardrail_level == "destructive"
+
+
+def test_delete_consumer_group_has_destructive_guardrail():
+    assert delete_consumer_group._guardrail_level == "destructive"

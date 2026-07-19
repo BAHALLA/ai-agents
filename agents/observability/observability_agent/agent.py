@@ -9,9 +9,13 @@ from .tools import (
     get_loki_label_values,
     get_loki_labels,
     get_prometheus_alerts,
+    get_prometheus_metadata,
+    get_prometheus_rules,
     get_prometheus_targets,
     get_silences,
+    list_prometheus_metrics,
     query_loki_logs,
+    query_loki_range,
     query_prometheus,
     query_prometheus_range,
 )
@@ -30,6 +34,9 @@ root_agent = create_agent(
         "scrape-target health, investigate firing alerts, search Loki logs, and manage "
         "Alertmanager silences.\n\n"
         "## Tool routing\n"
+        "When you don't know the exact metric name, use list_prometheus_metrics (filter "
+        "by substring) and get_prometheus_metadata (type/help) to discover it before "
+        "querying; get_prometheus_rules shows which alerts *can* fire and their state. "
         "For a targeted question, call the one matching tool directly: alert questions → "
         "get_active_alerts / get_prometheus_alerts; a specific metric → query_prometheus "
         "(query_prometheus_range for trends); log questions → query_loki_logs; silence "
@@ -59,9 +66,13 @@ root_agent = create_agent(
     tools=[
         query_prometheus,
         query_prometheus_range,
+        list_prometheus_metrics,
+        get_prometheus_metadata,
+        get_prometheus_rules,
         get_prometheus_alerts,
         get_prometheus_targets,
         query_loki_logs,
+        query_loki_range,
         get_loki_labels,
         get_loki_label_values,
         get_active_alerts,

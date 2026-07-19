@@ -6,7 +6,15 @@ from functools import partial
 from typing import Any
 
 from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
-from confluent_kafka.admin import AdminClient, NewPartitions, NewTopic, OffsetSpec
+from confluent_kafka.admin import (
+    AdminClient,
+    AlterConfigOpType,
+    ConfigEntry,
+    ConfigResource,
+    NewPartitions,
+    NewTopic,
+    OffsetSpec,
+)
 
 from orrery_core import AgentConfig, confirm, destructive, with_retry
 from orrery_core.security.validation import (
@@ -442,3 +450,162 @@ async def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict
     except Exception as e:
         logger.exception("Failed to calculate lag for group '%s'", group_id)
         return {"status": "error", "message": f"Failed to calculate lag: {str(e)}"}
+
+
+# ── Topic configuration ────────────────────────────────────────────────
+
+
+async def get_topic_config(topic_name: str) -> dict[str, Any]:
+    """Reads a topic's configuration (retention, cleanup policy, etc.).
+
+    Args:
+        topic_name: Name of the topic.
+
+    Returns:
+        A dictionary of config entries. Non-default (explicitly set) values are
+        listed separately so drift from cluster defaults is obvious.
+    """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+
+    admin = _get_admin_client()
+    resource = ConfigResource(ConfigResource.Type.TOPIC, topic_name)
+    try:
+        futures = admin.describe_configs([resource])
+        entries = await _run_sync(next(iter(futures.values())).result)
+        overridden = {}
+        defaults = {}
+        for name, entry in entries.items():
+            value = "***" if getattr(entry, "is_sensitive", False) else entry.value
+            (defaults if getattr(entry, "is_default", False) else overridden)[name] = value
+        return {
+            "status": "success",
+            "topic": topic_name,
+            "overridden": overridden,
+            "defaults": defaults,
+        }
+    except Exception as e:
+        logger.exception("Failed to describe config for topic '%s'", topic_name)
+        return {"status": "error", "message": f"Failed to read topic config: {str(e)}"}
+
+
+@confirm("changes a topic's configuration (e.g. retention, cleanup policy)")
+async def alter_topic_config(
+    topic_name: str, config_name: str, config_value: str
+) -> dict[str, Any]:
+    """Sets a single configuration value on a topic (incremental — other configs untouched).
+
+    Args:
+        topic_name: Name of the topic.
+        config_name: Config key to set (e.g. "retention.ms", "cleanup.policy").
+        config_value: New value for the config key.
+
+    Returns:
+        A dictionary with the operation result.
+    """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+    if err := validate_string(config_name, "config_name", max_len=200):
+        return err
+    if err := validate_string(config_value, "config_value", max_len=1000):
+        return err
+
+    admin = _get_admin_client()
+    entry = ConfigEntry(config_name, config_value, incremental_operation=AlterConfigOpType.SET)
+    resource = ConfigResource(ConfigResource.Type.TOPIC, topic_name, incremental_configs=[entry])
+    try:
+        futures = admin.incremental_alter_configs([resource])
+        await _run_sync(next(iter(futures.values())).result)
+        return {
+            "status": "success",
+            "message": f"Set {config_name}={config_value} on topic '{topic_name}'.",
+        }
+    except Exception as e:
+        logger.exception("Failed to alter config for topic '%s'", topic_name)
+        return {"status": "error", "message": f"Failed to alter topic config: {str(e)}"}
+
+
+# ── Consumer group remediation ─────────────────────────────────────────
+
+
+@destructive("resets a consumer group's committed offsets, changing what it reprocesses or skips")
+async def reset_consumer_group_offsets(
+    group_id: str, topic_name: str, to: str = "earliest"
+) -> dict[str, Any]:
+    """Resets a consumer group's committed offsets for a topic to earliest or latest.
+
+    The group must be inactive (no live members) for the reset to take effect.
+    Resetting to "earliest" reprocesses all retained messages; "latest" skips to
+    the end (drops the backlog).
+
+    Args:
+        group_id: Consumer group id.
+        topic_name: Topic whose offsets to reset.
+        to: "earliest" (reprocess everything) or "latest" (skip the backlog).
+
+    Returns:
+        A dictionary with the per-partition offsets the group was reset to.
+    """
+    if err := validate_string(group_id, "group_id", max_len=255):
+        return err
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+    if to not in ("earliest", "latest"):
+        return {"status": "error", "message": "to must be 'earliest' or 'latest'"}
+
+    admin = _get_admin_client()
+    try:
+        metadata = await _run_sync(admin.list_topics, topic=topic_name, timeout=10)
+        topic_meta = metadata.topics.get(topic_name)
+        if topic_meta is None or topic_meta.error is not None:
+            return {"status": "error", "message": f"Topic '{topic_name}' not found."}
+
+        spec = OffsetSpec.earliest() if to == "earliest" else OffsetSpec.latest()
+        request = {TopicPartition(topic_name, p): spec for p in topic_meta.partitions}
+        offsets_future = admin.list_offsets(request)
+
+        targets = []
+        resolved = {}
+        for tp, future in offsets_future.items():
+            res = await _run_sync(future.result)
+            targets.append(TopicPartition(topic_name, tp.partition, res.offset))
+            resolved[tp.partition] = res.offset
+
+        alter_future = admin.alter_consumer_group_offsets(
+            [ConsumerGroupTopicPartitions(group_id, targets)]
+        )
+        await _run_sync(alter_future[group_id].result)
+        return {
+            "status": "success",
+            "message": f"Reset group '{group_id}' on '{topic_name}' to {to}.",
+            "offsets": resolved,
+        }
+    except Exception as e:
+        logger.exception("Failed to reset offsets for group '%s'", group_id)
+        return {"status": "error", "message": f"Failed to reset offsets: {str(e)}"}
+
+
+@destructive("permanently deletes a consumer group and its committed offsets")
+async def delete_consumer_group(group_id: str) -> dict[str, Any]:
+    """Deletes an inactive consumer group and its committed offsets.
+
+    The group must have no active members. Deleting a group that a stopped
+    consumer will restart just recreates it from scratch (offsets lost).
+
+    Args:
+        group_id: Consumer group id to delete.
+
+    Returns:
+        A dictionary with the operation result.
+    """
+    if err := validate_string(group_id, "group_id", max_len=255):
+        return err
+
+    admin = _get_admin_client()
+    try:
+        futures = admin.delete_consumer_groups([group_id])
+        await _run_sync(futures[group_id].result)
+        return {"status": "success", "message": f"Deleted consumer group '{group_id}'."}
+    except Exception as e:
+        logger.exception("Failed to delete consumer group '%s'", group_id)
+        return {"status": "error", "message": f"Failed to delete consumer group: {str(e)}"}

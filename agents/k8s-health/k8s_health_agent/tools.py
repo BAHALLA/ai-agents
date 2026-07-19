@@ -31,6 +31,7 @@ _config = K8sConfig()
 _kube_config_loaded = False
 _core_api_client: client.CoreV1Api | None = None
 _apps_api_client: client.AppsV1Api | None = None
+_custom_api_client: client.CustomObjectsApi | None = None
 
 
 def _load_kube_config() -> None:
@@ -694,3 +695,324 @@ async def list_namespaces() -> dict[str, Any]:
     except ApiException as e:
         logger.exception("Failed to list namespaces")
         return {"status": "error", "message": f"Failed to list namespaces: {e.reason}"}
+
+
+# ── Services ───────────────────────────────────────────────────────────
+
+
+async def list_services(
+    namespace: str = "default", label_selector: str | None = None
+) -> dict[str, Any]:
+    """Lists Services in a namespace with their type, cluster IP, and ports.
+
+    Args:
+        namespace: Kubernetes namespace. Use "all" for all namespaces.
+        label_selector: Optional label selector (e.g., "app=nginx").
+
+    Returns:
+        A dictionary with service details.
+    """
+    if err := _validate_namespace(namespace):
+        return err
+
+    try:
+        v1 = _core_api()
+        kwargs = {}
+        if label_selector:
+            kwargs["label_selector"] = label_selector
+
+        if namespace == "all":
+            services = await asyncio.to_thread(v1.list_service_for_all_namespaces, **kwargs)
+        else:
+            services = await asyncio.to_thread(v1.list_namespaced_service, namespace, **kwargs)
+
+        svc_list = []
+        for svc in services.items:
+            ports = [
+                f"{p.port}/{p.protocol}" + (f"→{p.target_port}" if p.target_port else "")
+                for p in (svc.spec.ports or [])
+            ]
+            svc_list.append(
+                {
+                    "name": svc.metadata.name,
+                    "namespace": svc.metadata.namespace,
+                    "type": svc.spec.type,
+                    "cluster_ip": svc.spec.cluster_ip,
+                    "ports": ports,
+                    "selector": svc.spec.selector or {},
+                }
+            )
+        return {"status": "success", "services": svc_list, "count": len(svc_list)}
+    except ApiException as e:
+        logger.exception("Failed to list services in namespace '%s'", namespace)
+        return {"status": "error", "message": f"Failed to list services: {e.reason}"}
+
+
+async def describe_service(service_name: str, namespace: str = "default") -> dict[str, Any]:
+    """Describes a Service and whether its Endpoints have ready backends.
+
+    A Service with no ready endpoints is a common cause of 'connection refused'
+    even when pods look healthy — the selector may not match, or the pods may be
+    failing their readiness probe.
+
+    Args:
+        service_name: Name of the Service.
+        namespace: Kubernetes namespace.
+
+    Returns:
+        A dictionary with the service spec plus a count of ready/not-ready endpoints.
+    """
+    if err := validate_string(service_name, "service_name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN):
+        return err
+
+    try:
+        v1 = _core_api()
+        svc = await asyncio.to_thread(v1.read_namespaced_service, service_name, namespace)
+
+        ready_addrs = 0
+        not_ready_addrs = 0
+        try:
+            endpoints = await asyncio.to_thread(
+                v1.read_namespaced_endpoints, service_name, namespace
+            )
+            for subset in endpoints.subsets or []:
+                ready_addrs += len(subset.addresses or [])
+                not_ready_addrs += len(subset.not_ready_addresses or [])
+        except ApiException:
+            pass  # No Endpoints object — report zero backends rather than failing.
+
+        ports = [
+            {"port": p.port, "protocol": p.protocol, "target_port": str(p.target_port)}
+            for p in (svc.spec.ports or [])
+        ]
+        return {
+            "status": "success",
+            "service": {
+                "name": svc.metadata.name,
+                "namespace": svc.metadata.namespace,
+                "type": svc.spec.type,
+                "cluster_ip": svc.spec.cluster_ip,
+                "selector": svc.spec.selector or {},
+                "ports": ports,
+            },
+            "endpoints": {
+                "ready": ready_addrs,
+                "not_ready": not_ready_addrs,
+                "healthy": ready_addrs > 0 and not_ready_addrs == 0,
+            },
+        }
+    except ApiException as e:
+        if e.status == 404:
+            return {
+                "status": "error",
+                "message": f"Service '{service_name}' not found in namespace '{namespace}'",
+            }
+        logger.exception("Failed to describe service '%s'", service_name)
+        return {"status": "error", "message": f"Failed to describe service: {e.reason}"}
+
+
+# ── ConfigMaps ─────────────────────────────────────────────────────────
+
+
+async def list_configmaps(namespace: str = "default") -> dict[str, Any]:
+    """Lists ConfigMaps in a namespace with their data keys (not values).
+
+    Args:
+        namespace: Kubernetes namespace. Use "all" for all namespaces.
+
+    Returns:
+        A dictionary with each ConfigMap's name and the keys it holds.
+    """
+    if err := _validate_namespace(namespace):
+        return err
+
+    try:
+        v1 = _core_api()
+        if namespace == "all":
+            cms = await asyncio.to_thread(v1.list_config_map_for_all_namespaces)
+        else:
+            cms = await asyncio.to_thread(v1.list_namespaced_config_map, namespace)
+
+        cm_list = [
+            {
+                "name": cm.metadata.name,
+                "namespace": cm.metadata.namespace,
+                "keys": sorted((cm.data or {}).keys()),
+            }
+            for cm in cms.items
+        ]
+        return {"status": "success", "configmaps": cm_list, "count": len(cm_list)}
+    except ApiException as e:
+        logger.exception("Failed to list configmaps in namespace '%s'", namespace)
+        return {"status": "error", "message": f"Failed to list configmaps: {e.reason}"}
+
+
+async def get_configmap(name: str, namespace: str = "default") -> dict[str, Any]:
+    """Reads a ConfigMap's data. Long values are truncated for readability.
+
+    Args:
+        name: Name of the ConfigMap.
+        namespace: Kubernetes namespace.
+
+    Returns:
+        A dictionary with the ConfigMap's data (values over 2000 chars truncated).
+    """
+    if err := validate_string(name, "name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN):
+        return err
+
+    try:
+        v1 = _core_api()
+        cm = await asyncio.to_thread(v1.read_namespaced_config_map, name, namespace)
+
+        data = {}
+        for key, value in (cm.data or {}).items():
+            if isinstance(value, str) and len(value) > 2000:
+                data[key] = value[:2000] + f"… (truncated, {len(value)} chars total)"
+            else:
+                data[key] = value
+        return {
+            "status": "success",
+            "name": cm.metadata.name,
+            "namespace": cm.metadata.namespace,
+            "data": data,
+            "binary_keys": sorted((cm.binary_data or {}).keys()),
+        }
+    except ApiException as e:
+        if e.status == 404:
+            return {
+                "status": "error",
+                "message": f"ConfigMap '{name}' not found in namespace '{namespace}'",
+            }
+        logger.exception("Failed to read configmap '%s'", name)
+        return {"status": "error", "message": f"Failed to read configmap: {e.reason}"}
+
+
+# ── Resource usage (metrics-server) ────────────────────────────────────
+
+
+def _metrics_api() -> client.CustomObjectsApi:
+    global _custom_api_client
+    if _custom_api_client is None:
+        _load_kube_config()
+        _custom_api_client = client.CustomObjectsApi()
+    return _custom_api_client
+
+
+def _parse_cpu_millicores(quantity: str) -> int | None:
+    """Parse a Kubernetes CPU quantity (e.g. '250m', '1', '500000000n') to millicores."""
+    try:
+        if quantity.endswith("n"):
+            return round(int(quantity[:-1]) / 1_000_000)
+        if quantity.endswith("u"):
+            return round(int(quantity[:-1]) / 1_000)
+        if quantity.endswith("m"):
+            return int(quantity[:-1])
+        return round(float(quantity) * 1000)
+    except ValueError, TypeError:
+        return None
+
+
+def _parse_mem_mib(quantity: str) -> int | None:
+    """Parse a Kubernetes memory quantity (e.g. '128Mi', '1Gi', '1024Ki') to MiB."""
+    units = {"Ki": 1 / 1024, "Mi": 1, "Gi": 1024, "Ti": 1024 * 1024}
+    try:
+        for suffix, factor in units.items():
+            if quantity.endswith(suffix):
+                return round(int(quantity[: -len(suffix)]) * factor)
+        # Bytes with no unit suffix.
+        return round(int(quantity) / (1024 * 1024))
+    except ValueError, TypeError:
+        return None
+
+
+async def top_nodes() -> dict[str, Any]:
+    """Reports current CPU and memory usage per node (like `kubectl top nodes`).
+
+    Requires the metrics-server to be installed in the cluster.
+
+    Returns:
+        A dictionary with each node's CPU (millicores) and memory (MiB) usage.
+    """
+    try:
+        api = _metrics_api()
+        result = await asyncio.to_thread(
+            api.list_cluster_custom_object, "metrics.k8s.io", "v1beta1", "nodes"
+        )
+        nodes = []
+        for item in result.get("items", []):
+            usage = item.get("usage", {})
+            nodes.append(
+                {
+                    "name": item.get("metadata", {}).get("name"),
+                    "cpu_millicores": _parse_cpu_millicores(usage.get("cpu", "")),
+                    "memory_mib": _parse_mem_mib(usage.get("memory", "")),
+                }
+            )
+        return {"status": "success", "nodes": nodes, "count": len(nodes)}
+    except ApiException as e:
+        if e.status == 404:
+            return {
+                "status": "error",
+                "message": "metrics-server not available (metrics.k8s.io API not found)",
+            }
+        logger.exception("Failed to get node metrics")
+        return {"status": "error", "message": f"Failed to get node metrics: {e.reason}"}
+
+
+async def top_pods(namespace: str = "default") -> dict[str, Any]:
+    """Reports current CPU and memory usage per pod (like `kubectl top pods`).
+
+    Requires the metrics-server to be installed in the cluster.
+
+    Args:
+        namespace: Kubernetes namespace. Use "all" for all namespaces.
+
+    Returns:
+        A dictionary with each pod's summed CPU (millicores) and memory (MiB) usage.
+    """
+    if err := _validate_namespace(namespace):
+        return err
+
+    try:
+        api = _metrics_api()
+        if namespace == "all":
+            result = await asyncio.to_thread(
+                api.list_cluster_custom_object, "metrics.k8s.io", "v1beta1", "pods"
+            )
+        else:
+            result = await asyncio.to_thread(
+                api.list_namespaced_custom_object,
+                "metrics.k8s.io",
+                "v1beta1",
+                namespace,
+                "pods",
+            )
+        pods = []
+        for item in result.get("items", []):
+            cpu = 0
+            mem = 0
+            for container in item.get("containers", []):
+                usage = container.get("usage", {})
+                cpu += _parse_cpu_millicores(usage.get("cpu", "")) or 0
+                mem += _parse_mem_mib(usage.get("memory", "")) or 0
+            pods.append(
+                {
+                    "name": item.get("metadata", {}).get("name"),
+                    "namespace": item.get("metadata", {}).get("namespace"),
+                    "cpu_millicores": cpu,
+                    "memory_mib": mem,
+                }
+            )
+        return {"status": "success", "pods": pods, "count": len(pods)}
+    except ApiException as e:
+        if e.status == 404:
+            return {
+                "status": "error",
+                "message": "metrics-server not available (metrics.k8s.io API not found)",
+            }
+        logger.exception("Failed to get pod metrics in namespace '%s'", namespace)
+        return {"status": "error", "message": f"Failed to get pod metrics: {e.reason}"}

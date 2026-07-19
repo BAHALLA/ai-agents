@@ -344,3 +344,174 @@ async def remove_image(image_name: str, force: bool = False) -> dict[str, Any]:
         return {"status": "error", "message": output}
 
     return {"status": "success", "image": image_name, "action": "removed", "details": output}
+
+
+# ── Networks ─────────────────────────────────────────────────────────
+
+
+async def list_networks() -> dict[str, Any]:
+    """Lists Docker networks with their driver and scope.
+
+    Returns:
+        A dictionary with the list of networks.
+    """
+    ok, output = await _run_docker(["network", "ls", "--format", "json"])
+    if not ok:
+        return {"status": "error", "message": output}
+
+    networks = [json.loads(line) for line in output.splitlines() if line.strip()]
+    return {"status": "success", "networks": networks, "count": len(networks)}
+
+
+async def inspect_network(network_name: str) -> dict[str, Any]:
+    """Inspects a Docker network: driver, subnet, and connected containers.
+
+    Args:
+        network_name: Name or ID of the network.
+
+    Returns:
+        A dictionary with the network's configuration and attached containers.
+    """
+    if err := validate_string(network_name, "network_name", max_len=128):
+        return err
+
+    ok, output = await _run_docker(["network", "inspect", network_name])
+    if not ok:
+        return {"status": "error", "message": output}
+
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "Could not parse docker network inspect output"}
+    if not data:
+        return {"status": "error", "message": f"Network '{network_name}' not found"}
+
+    net = data[0]
+    ipam = net.get("IPAM", {}).get("Config", [])
+    containers = {
+        c.get("Name"): c.get("IPv4Address") for c in (net.get("Containers", {}) or {}).values()
+    }
+    return {
+        "status": "success",
+        "name": net.get("Name"),
+        "driver": net.get("Driver"),
+        "scope": net.get("Scope"),
+        "subnets": [c.get("Subnet") for c in ipam],
+        "containers": containers,
+    }
+
+
+# ── Volumes ──────────────────────────────────────────────────────────
+
+
+async def list_volumes() -> dict[str, Any]:
+    """Lists Docker volumes with their driver.
+
+    Returns:
+        A dictionary with the list of volumes.
+    """
+    ok, output = await _run_docker(["volume", "ls", "--format", "json"])
+    if not ok:
+        return {"status": "error", "message": output}
+
+    volumes = [json.loads(line) for line in output.splitlines() if line.strip()]
+    return {"status": "success", "volumes": volumes, "count": len(volumes)}
+
+
+async def inspect_volume(volume_name: str) -> dict[str, Any]:
+    """Inspects a Docker volume: driver, mountpoint, and labels.
+
+    Args:
+        volume_name: Name of the volume.
+
+    Returns:
+        A dictionary with the volume's configuration.
+    """
+    if err := validate_string(volume_name, "volume_name", max_len=128):
+        return err
+
+    ok, output = await _run_docker(["volume", "inspect", volume_name])
+    if not ok:
+        return {"status": "error", "message": output}
+
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "Could not parse docker volume inspect output"}
+    if not data:
+        return {"status": "error", "message": f"Volume '{volume_name}' not found"}
+
+    vol = data[0]
+    return {
+        "status": "success",
+        "name": vol.get("Name"),
+        "driver": vol.get("Driver"),
+        "mountpoint": vol.get("Mountpoint"),
+        "scope": vol.get("Scope"),
+        "labels": vol.get("Labels") or {},
+    }
+
+
+# ── Disk usage ───────────────────────────────────────────────────────
+
+
+async def system_df() -> dict[str, Any]:
+    """Reports Docker disk usage by images, containers, volumes, and build cache.
+
+    The Docker equivalent of `docker system df` — use it to find what's eating
+    disk before deciding what to prune.
+
+    Returns:
+        A dictionary with per-type total/active counts, size, and reclaimable space.
+    """
+    ok, output = await _run_docker(["system", "df", "--format", "json"])
+    if not ok:
+        return {"status": "error", "message": output}
+
+    entries = []
+    for line in output.splitlines():
+        if line.strip():
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return {"status": "success", "usage": entries}
+
+
+# ── Pruning ──────────────────────────────────────────────────────────
+
+
+@destructive("permanently deletes unused Docker images to reclaim disk space")
+async def prune_images(all_unused: bool = False) -> dict[str, Any]:
+    """Removes unused Docker images to reclaim disk space.
+
+    Args:
+        all_unused: If True, remove ALL images not used by a container (not just
+            dangling ones). Defaults to False (dangling only — safer).
+
+    Returns:
+        A dictionary with the prune output (deleted images and reclaimed space).
+    """
+    args = ["image", "prune", "--force"]
+    if all_unused:
+        args.append("--all")
+
+    ok, output = await _run_docker(args, timeout=60)
+    if not ok:
+        return {"status": "error", "message": output}
+    return {"status": "success", "output": output or "Nothing to reclaim."}
+
+
+@destructive("permanently deletes all stopped Docker containers")
+async def prune_containers() -> dict[str, Any]:
+    """Removes all stopped containers to reclaim disk space.
+
+    Running containers are never affected.
+
+    Returns:
+        A dictionary with the prune output (deleted containers and reclaimed space).
+    """
+    ok, output = await _run_docker(["container", "prune", "--force"], timeout=60)
+    if not ok:
+        return {"status": "error", "message": output}
+    return {"status": "success", "output": output or "Nothing to reclaim."}

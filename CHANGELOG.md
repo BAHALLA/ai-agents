@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **21 new tools across four specialist agents** (fully validated, guarded, and tested — 45+ new unit tests, all suites green):
+  - **k8s-health** (+6, read-only): `list_services` / `describe_service` (reports ready vs not-ready **Endpoints** — the usual cause of "connection refused" when pods look fine), `list_configmaps` / `get_configmap` (values truncated), and `top_nodes` / `top_pods` (live CPU-millicores / memory-MiB via the metrics API, with a clear message when metrics-server is absent).
+  - **kafka-health** (+4): `get_topic_config` (splits overridden vs default, masks sensitive), `alter_topic_config` (`@confirm`, incremental — other configs untouched), `reset_consumer_group_offsets` (`@destructive`, earliest/latest), `delete_consumer_group` (`@destructive`).
+  - **docker-agent** (+7): `list_networks` / `inspect_network`, `list_volumes` / `inspect_volume`, `system_df` (disk usage by type), and `prune_images` / `prune_containers` (`@destructive`, dangling/stopped by default).
+  - **observability** (+4, read-only): `list_prometheus_metrics` (discover metric names by substring), `get_prometheus_metadata` (type/help), `get_prometheus_rules` (alerting + recording rules and their state), and `query_loki_range` (LogQL over a relative last-N-hours window).
+  - Each agent's instruction gained a short routing note so the model reaches for the new tools appropriately; all mutating tools flow through the existing `@confirm`/`@destructive` + requester-verified confirmation gate.
+
 ## [0.2.2] - 2026-07-19
 
 ### Changed
