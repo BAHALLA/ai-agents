@@ -92,6 +92,10 @@
               {
                 "name": "get_consumer_lag",
                 "args": {"group_id": "order-processor", "topic_name": "orders"}
+              },
+              {
+                "name": "describe_consumer_groups",
+                "args": {"group_ids": ["order-processor"]}
               }
             ],
             "intermediate_responses": []

@@ -222,11 +222,15 @@ async def test_agent_eval():
 
     core_api, apps_api, version_info = _setup_k8s_mocks()
 
+    # The agent also exposes operator-aware tools (detect_operators, etc.) that talk
+    # to the CustomObjectsApi. Mock that client too so a stray operator call never
+    # hits a live cluster and pollutes the tool trajectory.
     with (
         patch("k8s_health_agent.tools._core_api", return_value=core_api),
         patch("k8s_health_agent.tools._apps_api", return_value=apps_api),
         patch("k8s_health_agent.tools._load_kube_config"),
         patch("k8s_health_agent.tools.client") as mock_client,
+        patch("k8s_health_agent.operators._custom_objects_api", return_value=MagicMock()),
     ):
         mock_client.VersionApi.return_value.get_code.return_value = version_info
         await AgentEvaluator.evaluate(

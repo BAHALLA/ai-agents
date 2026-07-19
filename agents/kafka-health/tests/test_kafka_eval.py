@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.adk.evaluation.agent_evaluator import AgentEvaluator
 
+import kafka_health_agent.strimzi as _strimzi_mod
 import kafka_health_agent.tools as _tools_mod
 from orrery_core import load_agent_env
 
@@ -193,7 +194,15 @@ async def test_agent_eval():
     # This works because the tool functions call _get_admin_client() at invocation
     # time, whereas patching the tool functions themselves would not intercept the
     # references already captured by ADK's FunctionTool wrappers at import time.
-    with patch("kafka_health_agent.tools._get_admin_client", return_value=_make_admin_client()):
+    #
+    # The agent also exposes Strimzi operator tools, which talk to Kubernetes. The
+    # model may reach for them on broad "cluster health" prompts, so mock that
+    # client too — otherwise a stray operator call hits a live cluster, errors, and
+    # pollutes the tool trajectory, failing the exact-match score non-deterministically.
+    with (
+        patch("kafka_health_agent.tools._get_admin_client", return_value=_make_admin_client()),
+        patch.object(_strimzi_mod, "_custom_objects_api", return_value=MagicMock()),
+    ):
         await AgentEvaluator.evaluate(
             agent_module="kafka_health_agent.agent",
             eval_dataset_file_path_or_dir=EVAL_DIR,

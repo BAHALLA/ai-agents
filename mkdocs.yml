@@ -112,6 +112,7 @@ nav:
     - Guardrails & RBAC: guardrails.md
     - Structured Tool Results: tool-results.md
     - Testing RBAC: rbac-testing.md
+    - Agent Evaluations: evals.md
     - Cross-Session Memory: memory.md
     - Observability (Metrics & Tracing): metrics.md
   - Operations:
