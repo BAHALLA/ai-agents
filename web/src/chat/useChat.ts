@@ -61,6 +61,11 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   const messages = active.messages;
   const sessionId = active.sessionId;
 
+  // Which conversation the UI is showing *right now*, tracked synchronously so
+  // an in-flight side-pane refresh can tell if the user has since switched away.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
   // Keep the client's token current without recreating it (preserves identity).
   useEffect(() => {
     client.setToken(token);
@@ -75,11 +80,16 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // chat error.
   const refreshSidePanes = useCallback(
     async (id: string) => {
+      // Whose refresh this is. If the user switches conversations while the
+      // requests are in flight, discard the results — otherwise a slow response
+      // for the previous conversation clobbers the one now on screen.
+      const forConversation = activeIdRef.current;
       const [act, pend, tri] = await Promise.allSettled([
         client.activity(id),
         client.pendingConfirmation(),
         client.triage(id),
       ]);
+      if (activeIdRef.current !== forConversation) return;
       if (act.status === "fulfilled") setActivity(act.value.entries ?? []);
       if (pend.status === "fulfilled") setPending(pend.value.pending ?? null);
       if (tri.status === "fulfilled") setTriage(tri.value.severity ? tri.value : null);

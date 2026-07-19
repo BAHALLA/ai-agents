@@ -13,7 +13,9 @@ export const config = {
 /** localStorage keys — namespaced to avoid collisions with other apps on the host. */
 export const storageKeys = {
   token: "orrery.console.token",
-  sessionId: "orrery.console.sessionId",
   conversations: "orrery.console.conversations",
   activeConversation: "orrery.console.activeConversation",
 } as const;
+
+/** Legacy keys cleared on sign-out but no longer written (kept for migration). */
+export const legacyStorageKeys = ["orrery.console.sessionId"] as const;

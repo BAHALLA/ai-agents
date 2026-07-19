@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Web console reliability cleanups** (`web/`): four issues from the app-shell review — (1) a **side-pane refresh race** where a slow `activity`/`triage`/`pending` fetch for a previous conversation could clobber the one now on screen (`useChat` now tags each refresh with the conversation it was for and drops stale results); (2) removed the **dead `sessionId` localStorage key** (no longer written — sign-out still clears it and any legacy keys); (3) the **`setState`-inside-updater** anti-pattern in `useConversations` (`newConversation`/`deleteConversation` no longer call `setActiveId` inside the `setConversations` updater — impure under StrictMode); (4) **capped conversation history at 50** so `localStorage` can't grow unbounded and silently stop persisting. 8 new hook tests (`useConversations`, `useAuth` sign-out); tsc / eslint / prettier / build all clean.
+
 ### Added
 - **21 new tools across four specialist agents** (fully validated, guarded, and tested — 45+ new unit tests, all suites green):
   - **k8s-health** (+6, read-only): `list_services` / `describe_service` (reports ready vs not-ready **Endpoints** — the usual cause of "connection refused" when pods look fine), `list_configmaps` / `get_configmap` (values truncated), and `top_nodes` / `top_pods` (live CPU-millicores / memory-MiB via the metrics API, with a clear message when metrics-server is absent).

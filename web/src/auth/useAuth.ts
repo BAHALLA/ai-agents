@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { storageKeys } from "../config";
+import { legacyStorageKeys, storageKeys } from "../config";
 import { identityFromToken, isExpired, type Identity } from "./token";
 
 export interface AuthState {
@@ -40,11 +40,11 @@ export function useAuth(): AuthState {
   const signOut = useCallback(() => {
     try {
       // Clear everything user-scoped so a shared browser never leaks the prior
-      // user's transcripts to whoever signs in next.
+      // user's transcripts to whoever signs in next (plus any legacy keys).
       localStorage.removeItem(storageKeys.token);
-      localStorage.removeItem(storageKeys.sessionId);
       localStorage.removeItem(storageKeys.conversations);
       localStorage.removeItem(storageKeys.activeConversation);
+      legacyStorageKeys.forEach((k) => localStorage.removeItem(k));
     } catch {
       // ignore
     }

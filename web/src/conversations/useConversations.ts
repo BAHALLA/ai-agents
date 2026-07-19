@@ -3,6 +3,10 @@ import type { ChatMessage } from "../chat/types";
 import { storageKeys } from "../config";
 import { NEW_CONVERSATION_TITLE, type Conversation } from "./types";
 
+/** Cap on stored conversations so localStorage can't grow without bound and
+ * silently start failing to persist. Oldest (least-recently-inserted) drop. */
+const MAX_CONVERSATIONS = 50;
+
 let seq = 0;
 function newId(): string {
   seq += 1;
@@ -50,7 +54,10 @@ function load(): { list: Conversation[]; activeId: string } {
   try {
     const raw = localStorage.getItem(storageKeys.conversations);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
-    const list = Array.isArray(parsed) ? parsed.filter(isConversation) : [];
+    const list = (Array.isArray(parsed) ? parsed.filter(isConversation) : []).slice(
+      0,
+      MAX_CONVERSATIONS,
+    );
     if (list.length > 0) {
       const stored = localStorage.getItem(storageKeys.activeConversation);
       const activeId = list.some((c) => c.id === stored) ? stored! : list[0].id;
@@ -105,33 +112,33 @@ export function useConversations(): ConversationsController {
   );
 
   const newConversation = useCallback(() => {
-    setConversations((prev) => {
-      // Reuse an existing empty conversation instead of piling up blanks.
-      const blank = prev.find((c) => c.messages.length === 0);
-      if (blank) {
-        setActiveId(blank.id);
-        return prev;
-      }
-      const fresh = emptyConversation();
-      setActiveId(fresh.id);
-      return [fresh, ...prev];
-    });
-  }, []);
+    // Reuse an existing empty conversation instead of piling up blanks.
+    const blank = conversations.find((c) => c.messages.length === 0);
+    if (blank) {
+      setActiveId(blank.id);
+      return;
+    }
+    const fresh = emptyConversation();
+    setConversations([fresh, ...conversations].slice(0, MAX_CONVERSATIONS));
+    setActiveId(fresh.id);
+  }, [conversations]);
 
   const selectConversation = useCallback((id: string) => setActiveId(id), []);
 
-  const deleteConversation = useCallback((id: string) => {
-    setConversations((prev) => {
-      const next = prev.filter((c) => c.id !== id);
+  const deleteConversation = useCallback(
+    (id: string) => {
+      const next = conversations.filter((c) => c.id !== id);
       if (next.length === 0) {
         const fresh = emptyConversation();
+        setConversations([fresh]);
         setActiveId(fresh.id);
-        return [fresh];
+        return;
       }
+      setConversations(next);
       setActiveId((cur) => (cur === id ? next[0].id : cur));
-      return next;
-    });
-  }, []);
+    },
+    [conversations],
+  );
 
   const patchActive = useCallback(
     (
