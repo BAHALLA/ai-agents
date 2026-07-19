@@ -20,6 +20,10 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--amber">proposed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--amber">proposed</span> | Low | High |
+| <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--amber">proposed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-021](aep-021-provider-fallback.md) | LLM Provider Fallback Chain | <span class="badge badge--amber">proposed</span> | Low-Medium | High |
+| <span class="badge badge--blue">P2</span> | [AEP-022](aep-022-trajectory-capture.md) | Trajectory Capture & Eval Harvesting | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
+| <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--amber">proposed</span> | Medium | Medium |
@@ -64,6 +68,8 @@ make agents truly autonomous and operable in production:
 - **AEP-010 ✅**: OpenTelemetry distributed tracing across agent calls *(completed 2026-06-21)*
 - **AEP-015**: Per-tenant LLM cost tracking and budget alerts
 - **AEP-017**: Runbooks for common incidents (circuit breaker open, loop storm, session DB full)
+- **AEP-020**: Conversation context compaction so long incident sessions don't overflow the model window
+- **AEP-021**: LLM provider fallback chain so a provider outage/quota isn't a full platform outage
 
 ### Phase 3 - Extended Features (P2)
 
@@ -76,6 +82,13 @@ tool organization, and load/chaos coverage:
 - **AEP-009**: Streaming responses for real-time agent output
 - **AEP-016**: Load and chaos testing harness (Locust, LLM flakiness, circuit breaker exercises)
 - **AEP-019**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter
+- **AEP-022**: Trajectory capture — harvest real runs into eval scenarios (and a fine-tune corpus)
+- **AEP-023**: First-class scheduled agent tasks — recurring triage sweeps with persisted run history
+
+> **AEP-020 – 023** were identified by benchmarking Orrery against the mature
+> [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture):
+> context compaction, provider fallback, trajectory capture, and first-class
+> scheduling were the patterns worth adapting to Orrery's ADK/Postgres model.
 
 ### Phase 4 - Advanced Patterns (P3)
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Four new enhancement proposals from a Hermes-architecture benchmark** (`docs/enhancements/aep-020..023`): comparing Orrery against the mature [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) surfaced four production-readiness gaps worth adapting to the ADK/Postgres model — **AEP-020** conversation context compaction (a pluggable summarizing context engine so long incident sessions don't overflow the model window, with lossless lineage), **AEP-021** LLM provider fallback chain (`FallbackLlm` around `resolve_model()` reusing the existing circuit breaker so a provider outage/quota isn't a full platform outage), **AEP-022** trajectory capture (export real runs → `*.test.json` eval scenarios + a fine-tune corpus, downstream of PII redaction), and **AEP-023** first-class scheduled agent tasks (persisted recurring triage sweeps with run history, L2 read-only by construction). All proposed; wired into the enhancements index, roadmap, and nav.
+
 ### Fixed
 - **Agent evals were failing because the harness didn't mock operator clients** (`agents/{kafka-health,k8s-health}/tests/test_*_eval.py`): the kafka and k8s eval runners mocked only the primary client (Kafka `AdminClient` / K8s core+apps APIs) but not the operator client (`strimzi._custom_objects_api` / `operators._custom_objects_api`). On runs where the model reached for an operator tool, the call hit a **live cluster**, errored, and polluted the tool trajectory — so exact-match (`tool_trajectory_avg_score` must be 1.0) collapsed to 0.0 non-deterministically. Both harnesses now mock the operator client too, making the evals hermetic. (Elasticsearch already mocked its ECK client; docker and observability had no operator layer.)
 

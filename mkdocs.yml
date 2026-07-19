@@ -160,6 +160,10 @@ nav:
     - "AEP-017: Runbooks & On-Call": enhancements/aep-017-runbooks-oncall.md
     - "AEP-018: Pub/Sub Idempotency & HPA": enhancements/aep-018-pubsub-idempotency-hpa.md
     - "AEP-019: Web Console": enhancements/aep-019-web-console.md
+    - "AEP-020: Context Compaction": enhancements/aep-020-context-compaction.md
+    - "AEP-021: Provider Fallback": enhancements/aep-021-provider-fallback.md
+    - "AEP-022: Trajectory Capture": enhancements/aep-022-trajectory-capture.md
+    - "AEP-023: Scheduled Tasks": enhancements/aep-023-scheduled-tasks.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md
