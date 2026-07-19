@@ -1,6 +1,6 @@
 [project]
 name = "orrery"
-version = "0.2.1"
+version = "0.2.2"
 description = "A collection of autonomous AI agents"
 readme = "README.md"
 license = "MIT"

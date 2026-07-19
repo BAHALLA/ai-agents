@@ -1,6 +1,6 @@
 [project]
 name = "k8s-health-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "Agent for monitoring and managing Kubernetes clusters"
 requires-python = ">=3.14"
 dependencies = [
