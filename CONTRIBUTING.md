@@ -1,123 +1,146 @@
-# Contributing to AI Agents
+# Contributing to Orrery
 
-Thanks for your interest in contributing! This project aims to build a collection of useful, autonomous DevOps/SRE agents using Google ADK.
+Thanks for your interest! Orrery is a platform of autonomous DevOps/SRE agents
+built on [Google ADK](https://google.github.io/adk-docs/) and managed as a
+[uv workspace](https://docs.astral.sh/uv/concepts/workspaces/). The most valuable
+contributions are **new specialist agents**, **new tools on existing agents**, and
+**hardening of the shared core**.
 
 ## Getting Started
 
-1. **Fork and clone** the repository
-2. **Install dependencies**:
+1. **Fork and clone** the repository.
+2. **Install everything** (all workspace packages + dev tools):
    ```bash
-   make install
+   make install          # uv sync --all-extras
    ```
-3. **Start infrastructure** (if working on agents that need Kafka, etc.):
+3. **Configure your LLM** — copy the root env file and set a provider + key:
+   ```bash
+   cp .env.example .env   # set MODEL_PROVIDER / MODEL_NAME + the matching API key
+   ```
+4. **Start infrastructure** (only if you're working on agents that need Kafka,
+   Postgres, Prometheus, …):
    ```bash
    make infra-up
    ```
-4. **Run an agent** to verify your setup:
+5. **Run the orchestrator** to verify your setup:
    ```bash
-   make run-kafka-health
+   make run-assistant     # ADK Dev UI at http://localhost:8000
    ```
+   Agents are composed by `orrery-assistant`, so you generally run the
+   orchestrator rather than each agent standalone. `make help` lists every run
+   target (`run-assistant-cli`, `run-console`, `run-slack-bot`, `run-triage`, …).
 
 ## Project Structure
 
 ```
 orrery/
-├── core/                  # Shared library (orrery-core)
-│   └── tests/             # Core tests (guardrails, audit, config)
-├── agents/                # Each agent is a separate workspace package
-│   ├── kafka-health/
-│   │   └── tests/         # Kafka tools tests
-│   ├── k8s-health/
-│   │   └── tests/         # Kubernetes tools tests
-│   ├── orrery-assistant/
-│   │   └── tests/         # Docker tools tests
-│   └── ops-journal/
-│       └── tests/         # Journal & state tools tests
-└── docs/                  # Per-agent and core documentation
+├── core/                    # Shared library (orrery-core): agent factory,
+│   └── tests/               #   plugins, RBAC, guardrails, validation, resilience
+├── agents/                  # Each agent is its own workspace package
+│   ├── kafka-health/        #   Kafka + Strimzi
+│   ├── k8s-health/          #   Kubernetes + operators
+│   ├── elasticsearch/       #   Elasticsearch + ECK
+│   ├── observability/       #   Prometheus / Loki / Alertmanager
+│   ├── docker-agent/        #   Docker + Compose
+│   ├── ops-journal/         #   State-management demo
+│   ├── orrery-assistant/    #   Root orchestrator + triage/remediation workflow
+│   ├── slack-bot/           #   Slack transport
+│   └── google-chat-bot/     #   Google Chat transport
+│       └── tests/           #   Every package keeps its tests beside it
+├── web/                     # React + TypeScript web console
+└── docs/                    # MkDocs site (guides, ADRs, AEP roadmap)
 ```
 
-See [core/README.md](core/README.md) for the shared library API (agent factory, guardrails, audit, config).
+See [`core/README.md`](core/README.md) for the shared-library API (agent factory,
+guardrails, RBAC, validation, plugins).
 
 ## How to Contribute
 
 ### Adding a New Agent
 
-This is the most impactful way to contribute. See the [Adding a New Agent](docs/adding-an-agent.md) guide for the step-by-step walkthrough. Key points:
+The most impactful contribution. Follow the
+[Adding a New Agent](docs/adding-an-agent.md) walkthrough. Key points:
 
-- Create a new directory under `agents/`
-- Use `create_agent()` from `orrery_core` — don't reinvent the factory
-- Define all tools as `async def` — use `asyncio.to_thread()` for blocking I/O
-- Mark destructive tools with `@destructive("reason")`
-- Separate tools (`tools.py`) from agent wiring (`agent.py`)
-- No callback wiring needed — cross-cutting concerns are handled by plugins on the Runner
-- Add tests in `agents/your-agent/tests/`
-- Add a `README.md` in your agent package
-- Add Makefile targets for running the agent
+- Create a package under `agents/` and register it in the root `pyproject.toml`
+  workspace sources.
+- Use `create_agent()` from `orrery_core` — don't reinvent the factory.
+- Define every tool as `async def`; offload blocking I/O with
+  `asyncio.to_thread()` (or `create_subprocess_exec`).
+- Separate tools (`tools.py`) from agent wiring (`agent.py`).
+- Mark mutating tools `@confirm("reason")` and destructive tools
+  `@destructive("reason")` — RBAC and the confirmation gate are inferred from these.
+- **No callback wiring needed** — cross-cutting concerns (RBAC, guardrails, audit,
+  metrics, PII redaction, …) are applied globally by plugins on the Runner.
+- Add tests under `agents/<your-agent>/tests/` and a `README.md` in the package.
+- Compose the agent into `orrery-assistant` as an `AgentTool` so it's reachable
+  from the chat root and the triage workflow.
 
-### Improving Existing Agents
+### Improving Existing Agents & Core
 
-- Add new tools to existing agents
-- Improve agent instructions for better LLM behavior
-- Add error handling for edge cases
+- New tools on an existing agent, or sharper agent instructions (they directly
+  drive tool-selection quality — see [Agent Evaluations](docs/evals.md)).
+- New guardrail strategies, plugins, validators, or resilience improvements in
+  `core/`. A change that benefits multiple agents belongs in the core, not copied.
 
-### Improving the Core Library
+### Proposing a Larger Change
 
-- New guardrail strategies
-- Better audit logging (e.g., structured logging backends)
-- Config improvements
-- Utility functions that benefit multiple agents
+Substantial features are tracked as **Agent Enhancement Proposals (AEP)** under
+[`docs/enhancements/`](docs/enhancements/README.md). If you're planning something
+big (a new subsystem, a cross-cutting behavior), open an AEP first so the design
+can be discussed before code — follow the structure of an existing one.
 
 ## Development Workflow
 
-1. **Create a branch** for your work:
+1. **Branch off `main`:**
    ```bash
-   git checkout -b feature/my-new-agent
+   git checkout -b feat/my-new-agent
    ```
-
-2. **Make your changes** following the patterns in existing agents
-
-3. **Add tests** for your tools in `agents/your-agent/tests/`:
+2. **Make your changes** following the patterns in existing agents.
+3. **Run the checks** before pushing:
    ```bash
-   # Run all tests
-   make test
-
-   # Run tests for your agent only
-   uv run pytest agents/your-agent/tests/ -v
+   make fmt          # auto-fix lint + formatting (ruff)
+   make lint         # ruff check + format --check (what CI runs)
+   make test         # all unit tests, fully mocked (~930)
+   make eval         # OPTIONAL: agent eval scenarios — needs LLM credentials
    ```
-
-4. **Test your changes manually**:
-   ```bash
-   make install
-   cd agents/your-agent && uv run adk web
-   ```
-
-5. **Submit a pull request** with:
-   - A clear description of what the agent/feature does
-   - Screenshots from the ADK Dev UI if applicable
-   - Tests for new tools
-   - Updated docs and Makefile targets
+4. **Update the docs and CHANGELOG.** Add a `[Unreleased]` entry to
+   [`CHANGELOG.md`](CHANGELOG.md) (this project keeps it current per change) and
+   touch any affected page under `docs/`.
+5. **Open a pull request** with:
+   - A [Conventional Commit](https://www.conventionalcommits.org/) title
+     (`feat(kafka): …`, `fix(security): …`, `docs: …`) — the history uses them.
+   - A clear description of what changed and why.
+   - Tests for new tools, and a screenshot from the ADK Dev UI if it's user-facing.
 
 ## Testing Guidelines
 
-- **Tests live next to each package** — add a `tests/` directory inside your agent package
-- **All tool tests are async** — use `@pytest.mark.asyncio` and `async def` for every test that calls an async tool function
-- **Mock external dependencies** — no test should require a running Kafka broker, Kubernetes cluster, or Docker daemon
-- **Use `@patch`** to mock API clients at the tool level (e.g., `@patch("my_agent.tools._get_client")`). For async helpers, use `AsyncMock`
-- **Test both success and error paths** — every tool should have at least one success test and one error/exception test
-- **Test input validation** — add tests verifying that invalid inputs return `{"status": "error", ...}` (empty strings, oversized values, path traversal, bad patterns)
-- **Verify guardrails** — if your tool uses `@confirm` or `@destructive`, add a test asserting the `_guardrail_level` attribute
-- **Use conftest fixtures** — if your tools need ADK's `ToolContext`, add a `conftest.py` with a `FakeToolContext` class (see `core/tests/conftest.py` or `agents/ops-journal/tests/conftest.py` for examples)
+- **Tests live beside each package** — add a `tests/` directory in your agent.
+- **All tool tests are async** — `@pytest.mark.asyncio` + `async def`.
+- **Mock external dependencies** — no test may require a live Kafka broker, K8s
+  cluster, Docker daemon, or HTTP backend. Mock at the client-getter layer
+  (`@patch("my_agent.tools._get_client")`); use `AsyncMock` for async helpers.
+- **Mock *every* client the agent can touch**, including operator clients
+  (Strimzi/ECK/Kubernetes) — not just the primary one. An unmocked operator call
+  reaches live infrastructure and makes tests non-deterministic (see
+  [Agent Evaluations](docs/evals.md)).
+- **Cover success and error paths** — every tool needs at least one success test
+  and one error/exception test.
+- **Test input validation** — assert invalid inputs return `{"status": "error", …}`
+  (empty strings, oversized values, path traversal, bad patterns).
+- **Verify guardrails** — for a `@confirm`/`@destructive` tool, assert the
+  `_guardrail_level` attribute is set.
+- **Reuse fixtures** — if a tool needs ADK's `ToolContext`, add a `conftest.py`
+  with a `FakeToolContext` (see `core/tests/conftest.py`).
 
 ## Code Style
 
-- Tools are `async def` Python functions returning `dict` with a `status` field
-- Use `asyncio.to_thread()` to offload blocking I/O (API clients, subprocess calls)
-- Use type hints
-- Keep tools focused — one function per operation
-- Follow existing patterns (look at `kafka-health` as the reference)
-- **Validate all inputs** at the top of every tool function using validators from `orrery_core.validation`. Use the walrus operator for concise early-return:
+- **Ruff** for linting and formatting (line length 100, target py314); CI runs
+  both `ruff check` and `ruff format --check`. Run `make fmt` before committing.
+- Tools are `async def` functions returning a `dict` with a `status` field.
+- Use type hints; keep each tool focused on one operation.
+- **Validate every input** at the top of each tool, using the walrus pattern:
   ```python
-  from orrery_core.validation import validate_string, validate_positive_int
+  from orrery_core.security.validation import validate_string, validate_positive_int
 
   async def my_tool(name: str, count: int = 10) -> dict:
       if err := validate_string(name, "name", max_len=200):
@@ -126,23 +149,26 @@ This is the most impactful way to contribute. See the [Adding a New Agent](docs/
           return err
       ...
   ```
-- Mark mutating tools with `@confirm("reason")` and destructive tools with `@destructive("reason")`
+- Follow the existing patterns — `kafka-health` is the reference implementation.
 
 ## Agent Design Guidelines
 
-- **Tools should be read-only by default.** Mark anything that modifies state with `@destructive()`
-- **Agent instructions matter.** Spend time crafting clear instructions — they directly affect how well the LLM uses your tools
-- **Sub-agent descriptions are routing signals.** When composing agents into an orchestrator, the `description` field determines when the orchestrator delegates to your agent
-- **Return structured data.** Tools should return dicts, not formatted strings — let the LLM format the response for the user
+- **Read-only by default.** Mark anything that mutates state `@confirm`/`@destructive`.
+- **Instructions are the product.** Clear, specific instructions drive good
+  tool-selection; ambiguous ones make behavior non-deterministic and evals flaky.
+  Tell the agent which tool family owns which question and to call only what the
+  question needs.
+- **Descriptions are routing signals.** A sub-agent's `description` decides when
+  the orchestrator delegates to it.
+- **Return structured data**, not formatted strings — let the model format the reply.
 
 ## Reporting Issues
 
-Open an issue on GitHub with:
-- What you were trying to do
-- What happened instead
-- Steps to reproduce
-- Agent logs or ADK Dev UI screenshots if relevant
+Open a GitHub issue with what you were trying to do, what happened instead, steps
+to reproduce, and any agent logs or ADK Dev UI screenshots. For **security**
+issues, follow [`SECURITY.md`](SECURITY.md) instead — do not open a public issue.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree your contributions are licensed under the
+[MIT License](LICENSE).

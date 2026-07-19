@@ -1,6 +1,6 @@
 # 🏁 Getting Started
 
-Welcome! This guide will help you set up the AI Agents platform and perform your first system triage in under 5 minutes.
+Welcome! This guide will help you set up Orrery and perform your first system triage in under 5 minutes.
 
 ## 📋 Prerequisites
 

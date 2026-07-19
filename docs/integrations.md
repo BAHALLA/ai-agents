@@ -1,6 +1,6 @@
 # Platform Integrations
 
-The AI Agents platform is designed to be interface-agnostic. A single agent runner can be exposed through multiple frontends, each inheriting the same RBAC, guardrails, and observability plugins.
+Orrery is designed to be interface-agnostic. A single agent runner can be exposed through multiple frontends, each inheriting the same RBAC, guardrails, and observability plugins.
 
 ## Current Integrations
 

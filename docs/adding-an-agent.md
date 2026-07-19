@@ -183,4 +183,7 @@ make lint      # ruff check + format check
 make fmt       # auto-fix linting and formatting
 ```
 
-If you added a new agent, also register a `make run-<name>` / `make run-<name>-cli` target in the root `Makefile` so it shows up alongside the others (`make help` lists them) — follow the pattern of the existing agents like `run-kafka-health`.
+Agents are normally reached through the orchestrator (`make run-assistant`) rather
+than run standalone, so you don't need a per-agent run target. If your agent is
+also useful on its own, add a `make run-<name>` target to the root `Makefile`
+following the pattern of `run-assistant` / `run-console` (`make help` lists them all).

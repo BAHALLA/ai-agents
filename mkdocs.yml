@@ -6,8 +6,12 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  font:
+    text: Inter
+    code: JetBrains Mono
   icon:
     logo: material/robot-outline
+    repo: fontawesome/brands/github
   palette:
     # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
@@ -34,10 +38,13 @@ theme:
     - navigation.top
     - navigation.tracking
     - navigation.indexes
+    - navigation.prune
     - navigation.footer
     - navigation.instant
     - navigation.instant.prefetch
+    - navigation.instant.progress
     - toc.follow
+    - content.code.annotate
     - search.suggest
     - search.highlight
     - search.share

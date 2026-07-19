@@ -1,6 +1,6 @@
 # Agent Enhancement Proposals (AEP)
 
-This directory contains enhancement proposals for the AI Agents DevOps platform.
+This directory contains enhancement proposals for the Orrery DevOps platform.
 Each proposal documents a gap identified by comparing the current implementation
 against the [Google ADK documentation](https://google.github.io/adk-docs/) and
 enterprise-grade requirements for autonomous DevOps systems.
