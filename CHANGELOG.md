@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-19
+
 ### Fixed
 - **Web console reliability cleanups** (`web/`): four issues from the app-shell review — (1) a **side-pane refresh race** where a slow `activity`/`triage`/`pending` fetch for a previous conversation could clobber the one now on screen (`useChat` now tags each refresh with the conversation it was for and drops stale results); (2) removed the **dead `sessionId` localStorage key** (no longer written — sign-out still clears it and any legacy keys); (3) the **`setState`-inside-updater** anti-pattern in `useConversations` (`newConversation`/`deleteConversation` no longer call `setActiveId` inside the `setConversations` updater — impure under StrictMode); (4) **capped conversation history at 50** so `localStorage` can't grow unbounded and silently stop persisting. 8 new hook tests (`useConversations`, `useAuth` sign-out); tsc / eslint / prettier / build all clean.
 
