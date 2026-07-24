@@ -27,6 +27,7 @@ anything. Opt in with ``redact_ips=True`` (``ORRERY_REDACT_IPS`` via
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -35,7 +36,24 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from ..payload import text_volume
+
 logger = logging.getLogger("orrery.pii")
+
+#: Above this many characters, redaction moves to a worker thread.
+#:
+#: Scanning costs roughly 60 ms per MiB (several regex passes over the same
+#: text), and this callback is ``async`` but does pure CPU work — so on a big
+#: payload it holds the event loop and every other in-flight request stalls
+#: with it. A `get_pod_logs` or wide Elasticsearch result of 20 MiB measured
+#: ~1.3 s of blocking. Note this runs on the *uncapped* result:
+#: ``ToolOutputCapPlugin`` must stay last in the chain (it returns a
+#: replacement, which early-exits ADK's after-tool chain), so its 4 MiB cap
+#: never bounds what arrives here.
+#:
+#: The threshold keeps the common case — small status dicts — inline, where a
+#: thread hop would cost more than the scan itself.
+OFFLOAD_THRESHOLD_CHARS = 256 * 1024
 
 REDACTED = "[REDACTED]"
 
@@ -68,21 +86,44 @@ def _normalize_key(key: str) -> str:
 KEY_ALLOWLIST = frozenset({"next_page_token", "page_token", "continue_token", "resume_token"})
 
 # Secret shapes inside free-form string values (log lines, config dumps, ...).
-SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+#
+# Each entry pairs a pattern with the case-sensitive literals it cannot match
+# without. Every pattern otherwise scans the full text, and on the multi-MiB log
+# payloads this platform routinely handles that is the dominant cost of the
+# whole after-tool chain — while the provider-token shapes almost never fire.
+# ``"AKIA" in text`` is a memchr-style scan, far cheaper than running the regex
+# engine over the same bytes, so an absent literal skips its pattern outright.
+# Measured 2x faster on clean log text with byte-identical output.
+#
+# A literal here is a **correctness claim**: it must appear in every string the
+# pattern can match. Anchor it on the fixed prefix, never on a character class.
+# An empty tuple means "always run" — the right choice for the case-insensitive
+# key=value pattern, whose triggers would need the text lowercased first (a full
+# copy, which costs more than it saves).
+SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     # key=value / key: value credential pairs
-    re.compile(
-        r"(?i)\b(password|passwd|pwd|secret|token|api[_\-]?key|apikey|"
-        r"credential|authorization|bearer)\b\s*[:=]\s*\S+"
+    (
+        re.compile(
+            r"(?i)\b(password|passwd|pwd|secret|token|api[_\-]?key|apikey|"
+            r"credential|authorization|bearer)\b\s*[:=]\s*\S+"
+        ),
+        (),
     ),
     # PEM private-key blocks
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
+    (
+        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
+        ("-----BEGIN",),
+    ),
     # Provider token prefixes: AWS access key, GitHub, Slack, OpenAI-style
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9\-_]{20,}\b"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), ("AKIA",)),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), ("ghp_", "gho_", "ghu_", "ghs_", "ghr_")),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"), ("xox",)),
+    (re.compile(r"\bsk-[A-Za-z0-9\-_]{20,}\b"), ("sk-",)),
     # JWT: three dot-separated base64url segments
-    re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+        ("eyJ",),
+    ),
 )
 
 IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -94,7 +135,10 @@ _MAX_DEPTH = 32
 def _redact_text(text: str, *, redact_ips: bool) -> tuple[str, int]:
     """Return *text* with secret shapes replaced, plus the replacement count."""
     count = 0
-    for pattern in SECRET_VALUE_PATTERNS:
+    for pattern, triggers in SECRET_VALUE_PATTERNS:
+        # Skip the regex entirely when a literal the pattern requires is absent.
+        if triggers and not any(trigger in text for trigger in triggers):
+            continue
         text, n = pattern.subn(REDACTED, text)
         count += n
     if redact_ips:
@@ -158,7 +202,12 @@ class PIIRedactionPlugin(BasePlugin):
     ) -> None:
         # In-place + return None: a non-None return would early-exit ADK's
         # after-tool chain and skip every observer registered after this one.
-        count = redact_structure(result, redact_ips=self._redact_ips)
+        # Mutating in a worker thread is safe for the same reason it is safe
+        # here — nothing else touches the result until this callback returns.
+        if text_volume(result, OFFLOAD_THRESHOLD_CHARS) >= OFFLOAD_THRESHOLD_CHARS:
+            count = await asyncio.to_thread(redact_structure, result, redact_ips=self._redact_ips)
+        else:
+            count = redact_structure(result, redact_ips=self._redact_ips)
         if count:
             logger.warning("redacted %d secret value(s) from '%s' result", count, tool.name)
         return None

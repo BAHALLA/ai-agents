@@ -18,6 +18,7 @@ from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.workflow import Workflow
 
+from ..concurrency import configure_default_executor
 from ..observability.log import mask_dsn
 from ..persistence.db import create_session_service
 from ..security.rbac import set_user_role
@@ -109,6 +110,11 @@ async def run_persistent(
        multi-replica deployments.
     3. No URL → an in-memory session store (single process, lost on restart).
     """
+    # Size the pool the blocking tool layer runs on. asyncio's default is built
+    # from the *host* CPU count, which in a container bears no relation to the
+    # quota the process is actually limited to.
+    configure_default_executor()
+
     resolved_db_url = db_url or os.getenv("DATABASE_URL")
     # Probe first; fall back to an in-memory session store (with a warning) if
     # PostgreSQL is configured but unreachable, instead of crashing on startup.

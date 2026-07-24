@@ -28,7 +28,26 @@ from typing import Any
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
 
+from ..payload import text_volume
+
 logger = logging.getLogger("orrery.audit")
+
+#: Largest tool response (in characters) written verbatim into an audit entry.
+#:
+#: Audit runs *before* ``ToolOutputCapPlugin`` — deliberately, so that the cap's
+#: replacement value doesn't early-exit the after-tool chain and rob audit of
+#: the call. The consequence is that the response reaching this logger is
+#: uncapped: a chatty ``get_pod_logs`` or a wide Elasticsearch result produces a
+#: multi-megabyte log *line*, per tool call, shipped to whatever aggregator
+#: collects stdout. That is the single largest driver of log-ingestion cost on a
+#: busy agent, and it copies infrastructure output into a store whose readership
+#: is usually much wider than the agent's own.
+#:
+#: What audit actually needs is the outcome, not the payload: the status is kept
+#: whatever the size, ordinary results (small status dicts) are kept in full for
+#: debugging, and anything larger is replaced by its measured size. The full
+#: result still reaches the model — this bounds the log, not the tool.
+MAX_AUDIT_RESPONSE_CHARS = 4096
 
 
 def _resolve_log_path(log_path: str | Path | None) -> Path | None:
@@ -125,17 +144,15 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         tool_context: Context,
         tool_response: dict,
     ) -> dict | None:
-        sanitized_response = _sanitize(tool_response) if isinstance(tool_response, dict) else None
+        status = tool_response.get("status", "unknown") if isinstance(tool_response, dict) else "ok"
 
         entry = {
             "timestamp": datetime.now(UTC).isoformat(),
             "agent": tool_context.agent_name if hasattr(tool_context, "agent_name") else "unknown",
             "tool": tool.name,
             "args": _sanitize(args),
-            "status": sanitized_response.get("status", "unknown")
-            if sanitized_response is not None
-            else "ok",
-            "response": sanitized_response,
+            "status": status,
+            "response": _audit_response(tool_response),
             "user_id": tool_context.user_id if hasattr(tool_context, "user_id") else "unknown",
             "session_id": tool_context.session.id
             if hasattr(tool_context, "session") and tool_context.session
@@ -164,6 +181,32 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         return None  # don't modify the result
 
     return callback
+
+
+def _audit_response(tool_response: Any) -> Any:
+    """The response as it should appear in the audit trail: bounded, redacted.
+
+    Small results (the overwhelming majority — status dicts, counts, short
+    summaries) are kept verbatim so the trail stays useful for debugging.
+    Anything over :data:`MAX_AUDIT_RESPONSE_CHARS` is replaced by its status and
+    measured size rather than serialized in full. Size is measured with a walk
+    that sums string lengths, not by serializing — serializing to decide would
+    reintroduce the cost being avoided.
+    """
+    if not isinstance(tool_response, dict):
+        return None
+
+    volume = text_volume(tool_response)
+    if volume <= MAX_AUDIT_RESPONSE_CHARS:
+        return _sanitize(tool_response)
+    return {
+        "status": tool_response.get("status", "unknown"),
+        "_elided": (
+            f"response of ~{volume} chars omitted from the audit entry "
+            f"(over the {MAX_AUDIT_RESPONSE_CHARS}-char audit limit)"
+        ),
+        "response_chars": volume,
+    }
 
 
 _SENSITIVE_KEYS = {"password", "secret", "token", "api_key", "credential"}

@@ -118,3 +118,39 @@ def test_activity_tracker_handles_missing_agent_name():
     entry = ctx.state["session_log"][0]
     assert "unknown" in entry["details"]
     assert "error" in entry["details"]
+
+
+def test_session_log_is_bounded(fake_tool, fake_ctx):
+    """The log is rewritten whole on every call and ADK copies the assigned
+    value into the event's state delta, so an unbounded list makes a session's
+    write volume grow with the square of its length."""
+    callback = activity_tracker(max_entries=5)
+    tool = fake_tool(name="list_pods")
+    ctx = fake_ctx()
+
+    for i in range(20):
+        callback(tool=tool, args={"i": i}, tool_context=ctx, tool_response={"status": "ok"})
+
+    log = ctx.state["session_log"]
+    assert len(log) == 5
+    # The most recent survive — the log is read for what just happened.
+    assert [entry["details"].split("i=")[1].split(" ")[0] for entry in log] == [
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+    ]
+
+
+def test_default_bound_is_applied(fake_tool, fake_ctx):
+    from orrery_core.observability.activity import MAX_SESSION_LOG_ENTRIES
+
+    callback = activity_tracker()
+    tool = fake_tool(name="list_pods")
+    ctx = fake_ctx()
+
+    for i in range(MAX_SESSION_LOG_ENTRIES + 25):
+        callback(tool=tool, args={"i": i}, tool_context=ctx, tool_response={"status": "ok"})
+
+    assert len(ctx.state["session_log"]) == MAX_SESSION_LOG_ENTRIES

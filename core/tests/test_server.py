@@ -517,3 +517,99 @@ def test_triage_lookup_is_pinned_to_the_verified_subject(app_with_auth, patched_
     client = TestClient(app_with_auth)
     client.get("/session/sess-1/triage", headers={"Authorization": f"Bearer {_alice_token()}"})
     assert patched_runner.get_session.call_args.kwargs["user_id"] == "alice"
+
+
+# ── Rate limiting, CORS, executor ───────────────────────────────────
+
+
+def _limited_app(patched_runner, limit: str = "2/minute"):
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+        chat_rate_limit=limit,
+    )
+    return create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
+
+
+def _bearer(sub: str = "alice") -> dict:
+    token = _hs256({"sub": sub, "aud": "orrery", "exp": time.time() + 300})
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_chat_is_rate_limited(patched_runner):
+    """A /chat turn spends LLM tokens and can fan out to every specialist, so
+    one credential must not be able to drive unbounded cost."""
+    client = TestClient(_limited_app(patched_runner))
+    headers = _bearer()
+
+    assert client.post("/chat", json={"message": "hi"}, headers=headers).status_code == 200
+    assert client.post("/chat", json={"message": "hi"}, headers=headers).status_code == 200
+
+    blocked = client.post("/chat", json={"message": "hi"}, headers=headers)
+    assert blocked.status_code == 429
+    assert blocked.json()["error"] == "rate_limited"
+
+
+def test_rate_limit_is_per_credential_not_per_ip(patched_runner):
+    """Behind an ingress every caller shares a source address, so limiting by
+    IP would let one noisy user throttle everyone else."""
+    client = TestClient(_limited_app(patched_runner))
+
+    for _ in range(2):
+        assert (
+            client.post("/chat", json={"message": "hi"}, headers=_bearer("alice")).status_code
+            == 200
+        )
+    assert client.post("/chat", json={"message": "hi"}, headers=_bearer("alice")).status_code == 429
+
+    # Same IP, different credential — unaffected.
+    assert client.post("/chat", json={"message": "hi"}, headers=_bearer("bob")).status_code == 200
+
+
+def test_rate_limit_survives_a_token_refresh(patched_runner):
+    """Keying on the raw credential would hand out a fresh quota every time the
+    client refreshed its token — the limit has to follow the identity."""
+    client = TestClient(_limited_app(patched_runner))
+
+    for _ in range(2):
+        # A new token each call: same subject, different signature.
+        assert (
+            client.post("/chat", json={"message": "hi"}, headers=_bearer("alice")).status_code
+            == 200
+        )
+    assert client.post("/chat", json={"message": "hi"}, headers=_bearer("alice")).status_code == 429
+
+
+def test_wildcard_cors_origin_disables_credentials(patched_runner, caplog):
+    """`*` plus credentials makes Starlette echo any origin back as permitted."""
+    config = ServerConfig(
+        auth_enabled=False,
+        jwt=JWTConfig(algorithm="HS256", secret="x"),
+        cors_origins=("*",),
+    )
+    app = create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
+    client = TestClient(app)
+    resp = client.get("/healthz", headers={"Origin": "https://evil.example"})
+    assert resp.headers.get("access-control-allow-credentials") is None
+
+
+def test_explicit_cors_origin_keeps_credentials(patched_runner):
+    config = ServerConfig(
+        auth_enabled=False,
+        jwt=JWTConfig(algorithm="HS256", secret="x"),
+        cors_origins=("https://console.example",),
+    )
+    app = create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
+    client = TestClient(app)
+    resp = client.get("/healthz", headers={"Origin": "https://console.example"})
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_startup_sizes_the_worker_pool(patched_runner):
+    """The blocking tool layer must not inherit asyncio's host-CPU default."""
+    with (
+        patch("orrery_core.serving.server.configure_default_executor") as configure,
+        TestClient(_limited_app(patched_runner)),
+    ):
+        pass
+    configure.assert_called_once()

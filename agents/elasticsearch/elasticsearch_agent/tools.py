@@ -37,6 +37,13 @@ class ElasticsearchConfig(AgentConfig):
     elasticsearch_verify_certs: bool = True
     elasticsearch_ca_certs: str | None = None
     elasticsearch_http_timeout: int = 15
+    #: Server-side ceiling on a search, as an Elasticsearch time value. The HTTP
+    #: timeout above only bounds *our* wait — when it fires, the query carries on
+    #: burning cluster resources with nobody left to read the answer. The model
+    #: writes the query DSL, so a deep aggregation or a leading-wildcard match is
+    #: one plausible tool call away from pinning production Elasticsearch. This
+    #: makes the cluster stop as well.
+    elasticsearch_search_timeout: str = "10s"
 
 
 # Loaded once at import time; agent.py calls load_agent_env() first.
@@ -458,7 +465,16 @@ async def search(
             "query must be a dict in Elasticsearch Query DSL format",
             error_type="InvalidArgument",
         ).to_dict()
-    body: dict[str, Any] = {"query": query, "size": size}
+    # `timeout` bounds the search on the cluster side, so abandoning the HTTP
+    # request doesn't leave the query running. A hit of the ceiling comes back
+    # as a partial result flagged `timed_out`, which is surfaced below — the
+    # model needs to know its answer is incomplete rather than assume it is
+    # authoritative.
+    body: dict[str, Any] = {
+        "query": query,
+        "size": size,
+        "timeout": _config.elasticsearch_search_timeout,
+    }
     if sort:
         body["sort"] = sort
     try:

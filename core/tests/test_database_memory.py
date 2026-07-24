@@ -103,6 +103,43 @@ async def test_search_keyword_and_user_scoping(pg_app):
 
 
 @pytest.mark.asyncio
+async def test_search_is_bounded_and_keeps_the_newest(pg_app):
+    """Recall cost must not grow with the age of a deployment.
+
+    Memory is append-only, every returned row is JSON-parsed and then sent to
+    the model, so an unbounded recall on a common word gets slower every week.
+    The bound keeps the *newest* matches, since recent context is the useful
+    context.
+    """
+    url, app = pg_app
+    svc = DatabaseMemoryService(db_url=url, max_search_results=5)
+    events = [_make_event(f"incident number {i}", f"e{i}") for i in range(20)]
+    for i, event in enumerate(events):
+        event.timestamp = float(i)  # oldest first
+    await svc.add_session_to_memory(_make_session(events, app))
+
+    found = await svc.search_memory(app_name=app, user_id="test_user", query="incident")
+
+    assert len(found.memories) == 5
+    texts = [_text(m) for m in found.memories]
+    # The five newest, and still oldest → newest for the reader.
+    assert texts == [f"incident number {i}" for i in range(15, 20)]
+
+
+@pytest.mark.asyncio
+async def test_search_returns_chronological_order(pg_app):
+    url, app = pg_app
+    svc = DatabaseMemoryService(db_url=url)
+    events = [_make_event(f"incident {i}", f"e{i}") for i in range(3)]
+    for i, event in enumerate(events):
+        event.timestamp = float(i)
+    await svc.add_session_to_memory(_make_session(events, app))
+
+    found = await svc.search_memory(app_name=app, user_id="test_user", query="incident")
+    assert [_text(m) for m in found.memories] == ["incident 0", "incident 1", "incident 2"]
+
+
+@pytest.mark.asyncio
 async def test_add_session_is_idempotent(pg_app):
     """Re-adding the same session replaces its events (no duplicates)."""
     url, app = pg_app
