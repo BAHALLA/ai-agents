@@ -25,6 +25,12 @@ clone required.
 
 The quickest way to open the web UI and chat with the agent:
 
+!!! tip "Start with the operator console"
+    Once it is up, the [web console](integrations/web-console.md) has a
+    **Check my environment** button that reports which integrations are actually
+    wired — and what to configure when one is not. That is usually the fastest
+    way past a first-run failure.
+
 ```bash
 docker pull ghcr.io/bahalla/orrery:latest
 

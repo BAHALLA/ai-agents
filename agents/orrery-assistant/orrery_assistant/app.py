@@ -1,4 +1,5 @@
 from orrery_assistant.agent import root_agent
+from orrery_assistant.probes import default_probes
 from orrery_core import create_memory_service, default_plugins
 from orrery_core.serving.runner import create_context_cache_config
 from orrery_core.serving.server import ServerConfig, create_app
@@ -13,4 +14,7 @@ api = create_app(
     # (via DATABASE_URL); falls back to in-memory recall otherwise.
     memory_service=create_memory_service(db_url=config.database_url),
     context_cache_config=create_context_cache_config(),
+    # Powers the console's first-run self-test: which integrations are actually
+    # wired. Core stays agent-agnostic, so the probe list is supplied here.
+    integration_probes=default_probes(),
 )

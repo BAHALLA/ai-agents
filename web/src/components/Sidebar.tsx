@@ -1,3 +1,4 @@
+import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { ConversationsController } from "../conversations/useConversations";
 import { IdentityBadge } from "./IdentityBadge";
@@ -5,9 +6,11 @@ import { IdentityBadge } from "./IdentityBadge";
 interface Props {
   conversations: ConversationsController;
   identity: Identity | null;
+  me: MeResponse | null;
   isSending: boolean;
   onNewChat: () => void;
   onRunTriage: () => void;
+  onOpenSystem: () => void;
   onSignOut: () => void;
 }
 
@@ -25,9 +28,11 @@ function relativeTime(ts: number): string {
 export function Sidebar({
   conversations,
   identity,
+  me,
   isSending,
   onNewChat,
   onRunTriage,
+  onOpenSystem,
   onSignOut,
 }: Props) {
   const { conversations: list, activeId, selectConversation, deleteConversation } = conversations;
@@ -57,6 +62,14 @@ export function Sidebar({
           title="Run a full health sweep across Kafka, K8s, Docker, Observability, and Elasticsearch"
         >
           Run triage
+        </button>
+        <button
+          type="button"
+          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          onClick={onOpenSystem}
+          title="Check which integrations are wired and what this deployment will let you do"
+        >
+          Check my environment
         </button>
       </div>
 
@@ -103,7 +116,7 @@ export function Sidebar({
       </nav>
 
       <div className="border-t border-slate-200 p-3 dark:border-slate-800">
-        <IdentityBadge identity={identity} onSignOut={onSignOut} />
+        <IdentityBadge identity={identity} me={me} onSignOut={onSignOut} />
       </div>
     </aside>
   );

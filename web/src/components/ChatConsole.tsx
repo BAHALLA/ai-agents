@@ -8,6 +8,7 @@ import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { severityBadge } from "./severity";
 import { Sidebar } from "./Sidebar";
+import { useSystem } from "../system/useSystem";
 
 interface Props {
   token: string;
@@ -19,6 +20,7 @@ interface Props {
 export function ChatConsole({ token, identity, onSignOut }: Props) {
   const conversations = useConversations();
   const chat = useChat(token, conversations);
+  const system = useSystem(token);
 
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("tools");
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -55,9 +57,11 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       <Sidebar
         conversations={conversations}
         identity={identity}
+        me={system.me}
         isSending={chat.isSending}
         onNewChat={conversations.newConversation}
         onRunTriage={() => void chat.runTriage()}
+        onOpenSystem={() => toggleInspector("system")}
         onSignOut={onSignOut}
       />
 
@@ -115,20 +119,40 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 role="alert"
                 className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
               >
-                <span>{chat.error.message}</span>
-                {chat.error.isAuth ? (
+                <span className="min-w-0">{chat.error.message}</span>
+                <span className="flex shrink-0 items-center gap-3">
+                  {chat.error.isAuth ? (
+                    <button type="button" className="font-medium underline" onClick={onSignOut}>
+                      Re-enter token
+                    </button>
+                  ) : chat.error.canRetry ? (
+                    <button
+                      type="button"
+                      className="font-medium underline disabled:opacity-50"
+                      disabled={chat.isSending}
+                      onClick={() => void chat.retry()}
+                    >
+                      Retry
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className="shrink-0 font-medium underline"
-                    onClick={onSignOut}
+                    aria-label="Dismiss error"
+                    className="text-lg leading-none opacity-60 hover:opacity-100"
+                    onClick={chat.clearError}
                   >
-                    Re-enter token
+                    ✕
                   </button>
-                ) : null}
+                </span>
               </div>
             ) : null}
 
-            <MessageInput disabled={chat.isSending} onSend={(text) => void chat.send(text)} />
+            <MessageInput
+              disabled={chat.isSending}
+              isSending={chat.isSending}
+              onSend={(text) => void chat.send(text)}
+              onStop={chat.stop}
+            />
           </section>
 
           {inspectorOpen ? (
@@ -138,6 +162,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               onClose={() => setInspectorOpen(false)}
               activity={chat.activity}
               triage={chat.triage}
+              system={system}
             />
           ) : null}
         </div>

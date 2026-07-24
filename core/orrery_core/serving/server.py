@@ -60,8 +60,14 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
 
 from ..concurrency import configure_default_executor
 from ..persistence.db import create_session_service
+from ..plugins import _resolve_autonomy_level
 from ..security.auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
+from .onboarding import (
+    IntegrationProbe,
+    check_model_connectivity,
+    run_probes,
+)
 
 logger = logging.getLogger("orrery.server")
 
@@ -79,6 +85,7 @@ class ServerConfig:
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"
+    selftest_rate_limit: str = "10/minute"
 
     @classmethod
     def from_env(cls) -> ServerConfig:
@@ -94,6 +101,8 @@ class ServerConfig:
           web console (AEP-019) from the packaged ``serving/static`` bundle.
         - ``ORRERY_CHAT_RATE_LIMIT`` (default ``30/minute``) — per-caller limit
           on ``POST /chat``.
+        - ``ORRERY_SELFTEST_RATE_LIMIT`` (default ``10/minute``) — per-caller
+          limit on ``POST /onboarding/selftest``.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         return cls(
@@ -104,6 +113,7 @@ class ServerConfig:
             web_console_enabled=os.getenv("ORRERY_WEB_CONSOLE_ENABLED", "false").lower()
             in ("1", "true", "yes"),
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
+            selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
         )
 
 
@@ -154,6 +164,42 @@ class TriageResponse(BaseModel):
     report: str | None
 
 
+class MeResponse(BaseModel):
+    """Who the caller is and what this deployment will let them do.
+
+    The role is the server's own resolution, not the browser's reading of the
+    token — the console decodes the JWT for display, but this is the value RBAC
+    will actually enforce, so the two can be compared.
+    """
+
+    subject: str
+    role: str
+    #: ``"L2"``/``"L3"``/``"L4"``, or ``null`` when the autonomy gate is off.
+    autonomy_level: str | None
+    model_provider: str
+    model_name: str
+    #: Whether this deployment can run the onboarding self-test.
+    self_test_available: bool
+
+
+class CheckResultModel(BaseModel):
+    """One integration or connectivity check."""
+
+    name: str
+    label: str
+    ok: bool
+    detail: str
+    hint: str
+    duration_ms: int
+
+
+class SelfTestResponse(BaseModel):
+    """Result of the first-run environment check (AEP-019 Milestone 3)."""
+
+    ok: bool
+    checks: list[CheckResultModel]
+
+
 # ── App factory ─────────────────────────────────────────────────────
 
 
@@ -165,6 +211,7 @@ def create_app(
     config: ServerConfig | None = None,
     memory_service: BaseMemoryService | None = None,
     context_cache_config: ContextCacheConfig | None = None,
+    integration_probes: Sequence[IntegrationProbe] | None = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves *root_agent* over authenticated HTTP.
 
@@ -178,13 +225,23 @@ def create_app(
       (``incident_severity`` + ``triage_report``), or nulls.
     - ``GET /confirmations/pending`` — the caller's own guarded action
       awaiting approve/deny, or ``{"pending": null}``.
+    - ``GET /me`` — the caller's server-resolved role, the active autonomy
+      level, and the configured provider/model.
+    - ``POST /onboarding/selftest`` — model connectivity plus each supplied
+      integration probe (AEP-019 Milestone 3).
     - ``GET /healthz`` — liveness (always 200 once the app is up).
     - ``GET /readyz`` — readiness (200 once the runner is initialised).
 
     Sessions are persisted to ``config.database_url`` when set (Postgres
     recommended for multi-replica), otherwise an in-memory store is used
     — fine for single-process testing, **not** safe for production scale.
+
+    Args:
+        integration_probes: Read-only reachability checks surfaced by the
+            self-test. Supplied by the caller because core has no dependency on
+            any agent package — see ``orrery_assistant/app.py``.
     """
+    probes = list(integration_probes or [])
     cfg = config or ServerConfig.from_env()
 
     # Validate JWT config eagerly when auth is on — fail fast at startup
@@ -423,6 +480,54 @@ def create_app(
                 args=dict(pending.args),
                 created_at=pending.created_at,
             )
+        )
+
+    @api.get("/me", response_model=MeResponse)
+    async def me(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> MeResponse:
+        """The caller's identity and this deployment's safety posture.
+
+        The console decodes the JWT locally to render a badge, but that reading
+        is advisory. This returns the role the *server* resolved and the autonomy
+        level actually in force, so a viewer can see up front why mutating tools
+        are unavailable — rather than discovering it when a tool is refused.
+        """
+        return MeResponse(
+            subject=auth.subject,
+            role=auth.role,
+            autonomy_level=_resolve_autonomy_level(None),
+            model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
+            model_name=os.getenv("MODEL_NAME", ""),
+            self_test_available=bool(probes),
+        )
+
+    @api.post("/onboarding/selftest", response_model=SelfTestResponse)
+    @limiter.limit(cfg.selftest_rate_limit)
+    async def selftest(
+        request: Request,  # noqa: ARG001 — slowapi resolves the limiter key from it
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> SelfTestResponse:
+        """Check the model provider and every wired integration (AEP-019 M3).
+
+        Read-only and model-free apart from a single one-token round-trip, so a
+        new user can tell "nothing is configured" from "the agent is wrong"
+        without reading a stack trace. Rate limited separately from chat: the
+        checks are cheap but they do reach out to real infrastructure.
+        """
+        model_check, probe_results = await asyncio.gather(
+            check_model_connectivity(), run_probes(probes)
+        )
+        results = [model_check, *probe_results]
+        logger.info(
+            "Self-test run by %s: %d/%d checks passed",
+            auth.subject,
+            sum(1 for r in results if r.ok),
+            len(results),
+        )
+        return SelfTestResponse(
+            ok=all(r.ok for r in results),
+            checks=[CheckResultModel(**r.as_dict()) for r in results],
         )
 
     # Mount the web console last so the explicit API routes above always win
