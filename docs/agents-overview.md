@@ -9,15 +9,18 @@ For how agents are composed inside `orrery-assistant`, see [ADR-003: Graph Workf
 | Agent | Package | Tools | Guarded tools | Primary use |
 |-------|---------|-------|---------------|-------------|
 | [`orrery-assistant`](#orrery-assistant) | `agents/orrery-assistant` | *orchestrator* | delegates | Top-level entry point — routes to specialists and runs triage / remediation workflows |
-| [`kafka-health`](#kafka-health) | `agents/kafka-health` | 19 | 5 | Kafka cluster health, topic ops, consumer lag, Strimzi-aware |
-| [`k8s-health`](#k8s-health) | `agents/k8s-health` | 18 | 3 | Kubernetes diagnostics, scaling, rollouts, operator-aware (Strimzi / ECK) |
-| [`observability`](#observability) | `agents/observability` | 12 | 2 | Prometheus queries, Loki logs, Alertmanager silences |
+| [`kafka-health`](#kafka-health) | `agents/kafka-health` | 24 | 9 | Kafka cluster health, topic ops, consumer lag, Strimzi-aware |
+| [`k8s-health`](#k8s-health) | `agents/k8s-health` | 26 | 5 | Kubernetes diagnostics, scaling, rollouts, operator-aware (Strimzi / ECK) |
+| [`observability`](#observability) | `agents/observability` | 16 | 2 | Prometheus queries, Loki logs, Alertmanager silences |
 | [`elasticsearch`](#elasticsearch) | `agents/elasticsearch` | 24 | 0 | ES cluster/index/shard diagnostics, search, ILM, snapshots, ECK-aware |
-| [`docker-agent`](#docker-agent) | `agents/docker-agent` | 10 | 4 | Container inspection and lifecycle ops |
+| [`docker-agent`](#docker-agent) | `agents/docker-agent` | 17 | 6 | Container inspection and lifecycle ops |
 | [`ops-journal`](#ops-journal) | `agents/ops-journal` | 10 | 0 | Cross-session notes, preferences, and team bookmarks |
 
 !!! info "Guarded tool counts"
     Counts reflect tools marked `@confirm` (operator+) or `@destructive` (admin-only). Unmarked tools are read-only and accessible to any `viewer`. See [Testing RBAC across surfaces](rbac-testing.md) to exercise each tier.
+
+!!! tip "Restricting *where*, not just *what*"
+    Set `ORRERY_PROTECTED_NAMESPACES` (comma-separated globs, e.g. `kube-system,kube-*,monitoring*`) to stop non-admins mutating in infrastructure namespaces. An operator can then restart an application Deployment but not one in `kube-system` — same tool, very different blast radius. Reads are never scoped, so diagnosis still works everywhere. See [RBAC](adr/001-rbac.md).
 
 ---
 
@@ -56,9 +59,14 @@ Cluster monitoring via `confluent-kafka`'s `AdminClient`. Clients are cached as 
 | `list_consumer_groups` | viewer | Active consumer groups |
 | `describe_consumer_groups` | viewer | Member details, state, coordinator |
 | `get_consumer_lag` | viewer | Per-partition lag for a group |
+| `get_topic_config` | viewer | Topic config, split into overridden vs cluster defaults (sensitive values masked) |
 | `create_kafka_topic` | operator (`@confirm`) | Create with partitions + replication |
 | `update_kafka_partitions` | operator (`@confirm`) | Increase partition count |
+| `tune_topic_config` | operator (`@confirm`) | Set a topic setting that cannot delete data (message size, compression, min ISR) |
+| `alter_topic_config` | admin (`@destructive`) | Set `retention.*` / `cleanup.policy` — a low retention discards data, so this is gated like a deletion |
 | `delete_kafka_topic` | admin (`@destructive`) | Permanent topic deletion |
+| `reset_consumer_group_offsets` | admin (`@destructive`) | Reset a group to earliest (reprocess) or latest (drop the backlog); group must be inactive |
+| `delete_consumer_group` | admin (`@destructive`) | Delete an inactive group and its committed offsets |
 
 **Strimzi tools — Kubernetes control plane** (backed by `orrery_core.default_registry.StrimziDetector`):
 
@@ -92,6 +100,9 @@ Kubernetes control-plane tooling via the official Python client. Uses in-cluster
 | `list_pods`, `describe_pod`, `get_pod_logs` | viewer | Pod diagnostics |
 | `list_deployments`, `get_deployment_status` | viewer | Deployment state |
 | `get_events` | viewer | Recent Events, optionally filtered by namespace |
+| `list_services`, `describe_service` | viewer | Service spec plus ready vs not-ready Endpoints — the usual cause of "connection refused" when the pods look healthy |
+| `list_configmaps`, `get_configmap` | viewer | ConfigMap keys and values (long values truncated) |
+| `top_nodes`, `top_pods` | viewer | Live CPU/memory usage via the metrics API; degrades cleanly when metrics-server is absent |
 | `scale_deployment` | operator (`@confirm`) | Change replica count |
 | `restart_deployment` | operator (`@confirm`) | Rolling restart via annotation bump |
 | `rollback_deployment` | admin (`@destructive`) | Revert to a previous revision |
@@ -124,6 +135,9 @@ A unified interface to Prometheus, Loki, and Alertmanager. HTTP sessions are poo
 | `get_prometheus_alerts`, `get_prometheus_targets` | viewer | Alerting rules and scrape status |
 | `query_loki_logs`, `get_loki_labels`, `get_loki_label_values` | viewer | LogQL queries and label discovery |
 | `get_active_alerts`, `get_alert_groups`, `get_silences` | viewer | Alertmanager state |
+| `list_prometheus_metrics`, `get_prometheus_metadata` | viewer | Discover metric names and their type/help/unit when the exact name isn't known |
+| `get_prometheus_rules` | viewer | Configured alerting + recording rules with their state |
+| `query_loki_range` | viewer | LogQL over a relative window ("the last N hours") without computing timestamps |
 | `create_silence` | operator (`@confirm`) | Silence matcher + duration |
 | `delete_silence` | admin (`@destructive`) | Remove an active silence by ID |
 
@@ -186,9 +200,14 @@ Container inspection and lifecycle via the Docker CLI (subprocess). No Docker SD
 | `get_container_logs`, `get_container_stats` | viewer | Runtime diagnostics |
 | `docker_compose_status` | viewer | `docker compose ps` parsing |
 | `list_images` | viewer | Local image inventory |
+| `list_networks`, `inspect_network` | viewer | Driver, subnets, and which containers are attached |
+| `list_volumes`, `inspect_volume` | viewer | Driver, mountpoint, labels |
+| `system_df` | viewer | Disk usage by images / containers / volumes / build cache — what to prune, before pruning |
 | `start_container`, `restart_container` | operator (`@confirm`) | Lifecycle control |
 | `stop_container` | operator (`@confirm`) | Graceful stop with timeout |
 | `remove_image` | admin (`@destructive`) | `docker rmi` with force flag |
+| `prune_images` | admin (`@destructive`) | Remove unused images (dangling only unless `all_unused`) |
+| `prune_containers` | admin (`@destructive`) | Remove all stopped containers |
 
 ---
 

@@ -136,6 +136,11 @@ Consequences:
 
 In **requester-verified (strict) mode** — armed by `AgentGateway(verified_confirmation=True)`, i.e. every shipped exposition — the pending moves out of session state into the shared platform store (`core/orrery_core/security/confirmation_store.py`, the same one the Slack and Google Chat bots use), scoped by the requester. This is load-bearing: guarded tools are routinely reached through an `AgentTool` whose sub-session is throwaway, so the requester is the only identity visible on both sides of that boundary, and keying by requester is also what enforces "only the person who triggered the action may approve it". The human `approve`/`deny` recorded by the gateway consumes the pending **atomically** (a single check-and-remove), so one decision can never authorize two executions.
 
+A decision is only ever valid for the action it was spoken about, enforced from both ends:
+
+- The gateway **rewrites** the decision key on every turn, writing `None` when the message isn't a decision. Without that, an `approve` typed while nothing was pending would sit in session state for the full TTL.
+- The gate requires `decision.timestamp >= pending.created_at`. A decision that predates the pending cannot have been informed by it — the human never saw that action — so it is refused and the action is re-prompted. This closes the case where the model raises a pending and immediately re-calls the tool in the same turn: the args-hash would match, but the approval would be one the operator gave for something else.
+
 The store has two backends, selected by `ORRERY_CONFIRMATION_BACKEND`:
 
 - `memory` (default) — process-local. Correct only for a **single replica**: a pending raised on pod A is invisible to the pod that receives the approval, and it dies with the pod on restart.
@@ -148,3 +153,4 @@ The store has two backends, selected by `ORRERY_CONFIRMATION_BACKEND`:
 | `guardrail_mode` (arg to `default_plugins`) | `"confirm"` | `"dry_run"` preview mode, `"none"` for integrations with their own UX |
 | `ORRERY_CONFIRMATION_BACKEND` | `memory` | Strict-mode pending store: `postgres` shares approvals across replicas via `DATABASE_URL` (required for multi-replica HTTP) |
 | `role_policy` (arg to `default_plugins`) | `None` | Per-tool role overrides via `RolePolicy` |
+| `ORRERY_PROTECTED_NAMESPACES` | *(unset — inert)* | Comma-separated globs naming namespaces where only `admin` may mutate. Reads are never scoped. See [ADR-001](adr/001-rbac.md#namespace-scope-restricting-where-not-just-what) |

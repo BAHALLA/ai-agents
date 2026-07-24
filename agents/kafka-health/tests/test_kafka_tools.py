@@ -22,6 +22,7 @@ from kafka_health_agent.tools import (
     list_consumer_groups,
     list_kafka_topics,
     reset_consumer_group_offsets,
+    tune_topic_config,
     update_kafka_partitions,
 )
 
@@ -570,6 +571,44 @@ async def test_alter_topic_config_error(mock_admin):
     assert result["status"] == "error"
 
 
+@pytest.mark.asyncio
+async def test_alter_topic_config_refuses_non_data_keys():
+    """The destructive tool only handles the keys that justify its gate."""
+    result = await alter_topic_config("orders", "max.message.bytes", "2000000")
+    assert result["status"] == "error"
+    assert "tune_topic_config" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("kafka_health_agent.tools._get_admin_client")
+async def test_tune_topic_config_success(mock_admin):
+    future = MagicMock()
+    future.result.return_value = None
+    mock_admin.return_value.incremental_alter_configs.return_value = {MagicMock(): future}
+
+    result = await tune_topic_config("orders", "max.message.bytes", "2000000")
+    assert result["status"] == "success"
+    assert "max.message.bytes=2000000" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config_name", ["retention.ms", "retention.bytes", "cleanup.policy", "CLEANUP.POLICY"]
+)
+async def test_tune_topic_config_refuses_data_destroying_keys(config_name):
+    """Retention/compaction changes can drop data, so they may not take the
+    confirm-level path — an operator must not delete a topic's history through
+    a tool gated as a routine tweak."""
+    result = await tune_topic_config("orders", config_name, "1")
+    assert result["status"] == "error"
+    assert "alter_topic_config" in result["message"]
+
+
+def test_topic_config_tools_are_gated_at_the_right_level():
+    assert alter_topic_config._guardrail_level == "destructive"
+    assert tune_topic_config._guardrail_level == "confirm"
+
+
 # ── Consumer group remediation ─────────────────────────────────────────
 
 
@@ -647,8 +686,8 @@ async def test_delete_consumer_group_error(mock_admin):
     assert result["status"] == "error"
 
 
-def test_alter_topic_config_has_confirm_guardrail():
-    assert alter_topic_config._guardrail_level == "confirm"
+def test_alter_topic_config_has_destructive_guardrail():
+    assert alter_topic_config._guardrail_level == "destructive"
 
 
 def test_reset_consumer_group_offsets_has_destructive_guardrail():

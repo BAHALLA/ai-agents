@@ -867,3 +867,56 @@ async def test_top_pods_sums_containers(mock_api):
 async def test_top_pods_rejects_bad_namespace():
     result = await top_pods(namespace="Bad NS!")
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._metrics_api")
+async def test_top_pods_flags_unreadable_quantities(mock_api):
+    """An unparseable quantity must not be reported as zero usage — idle and
+    unmeasured look identical to an operator otherwise."""
+    mock_api.return_value.list_namespaced_custom_object.return_value = {
+        "items": [
+            {
+                "metadata": {"name": "pod-1", "namespace": "default"},
+                "containers": [
+                    {"usage": {"cpu": "100m", "memory": "64Mi"}},
+                    {"usage": {"cpu": "??", "memory": "??"}},
+                ],
+            }
+        ]
+    }
+    result = await top_pods()
+    pod = result["pods"][0]
+    assert pod["cpu_millicores"] == 100
+    assert "1 container(s)" in pod["partial"]
+
+
+@pytest.mark.asyncio
+async def test_single_resource_reads_reject_all_namespaces():
+    """'all' is a legal namespace *name*, so it would otherwise pass validation
+    and 404 confusingly instead of saying what the caller got wrong."""
+    for result in (
+        await describe_service("api", namespace="all"),
+        await get_configmap("settings", namespace="all"),
+    ):
+        assert result["status"] == "error"
+        assert "list tools" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_validate_label_selector():
+    for result in (
+        await list_pods(label_selector="app=nginx; rm -rf /"),
+        await list_services(label_selector="app=nginx; rm -rf /"),
+    ):
+        assert result["status"] == "error"
+        assert "label_selector" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_list_pods_accepts_set_based_selector(mock_api):
+    """The real selector grammar (set-based requirements) must still pass."""
+    mock_api.return_value.list_namespaced_pod.return_value = MagicMock(items=[])
+    result = await list_pods(label_selector="env in (prod,staging),tier!=db")
+    assert result["status"] == "success"

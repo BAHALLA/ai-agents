@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from orrery_core.security.guardrails import confirm, destructive
 from orrery_core.security.rbac import (
     USER_ROLE_STATE_KEY,
+    NamespaceScopeGuard,
     Role,
     RolePolicy,
     authorize,
@@ -275,3 +277,126 @@ class TestEnsureDefaultRole:
         callback = ensure_default_role(default="operator")
         callback(ctx)
         assert ctx.state["user_role"] == "operator"
+
+
+# ── NamespaceScopeGuard ───────────────────────────────────────────────
+
+
+#: Sentinel for "the tool declares namespace with no default" (a required arg).
+_REQUIRED = object()
+
+
+def _namespaced_tool(fake_tool, *, guard="confirm", default="default", name="restart_deployment"):
+    """A guarded tool whose signature declares a namespace, like the k8s ones."""
+
+    def _required_ns(deployment_name: str, namespace: str):
+        pass
+
+    def _default_ns(deployment_name: str, namespace: str = default):
+        pass
+
+    func: Callable = _required_ns if default is _REQUIRED else _default_ns
+    if guard == "confirm":
+        func = confirm("restarts a deployment")(func)
+    elif guard == "destructive":
+        func = destructive("rolls back a deployment")(func)
+    return fake_tool(name=name, func=func)
+
+
+class TestNamespaceScopeGuard:
+    def test_inert_when_nothing_is_protected(self, fake_tool):
+        guard = NamespaceScopeGuard()
+        assert not guard.active
+        tool = _namespaced_tool(fake_tool)
+        assert guard.check(Role.OPERATOR, tool, {"namespace": "kube-system"}) is None
+
+    def test_blocks_operator_mutating_a_protected_namespace(self, fake_tool):
+        guard = NamespaceScopeGuard(frozenset({"kube-system", "monitoring*"}))
+        tool = _namespaced_tool(fake_tool)
+
+        result = guard.check(Role.OPERATOR, tool, {"namespace": "kube-system"})
+        assert result is not None
+        assert result["status"] == "access_denied"
+        assert "kube-system" in result["message"]
+
+        assert guard.check(Role.OPERATOR, tool, {"namespace": "monitoring-prod"}) is not None
+
+    def test_allows_operator_in_application_namespaces(self, fake_tool):
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+        tool = _namespaced_tool(fake_tool)
+        assert guard.check(Role.OPERATOR, tool, {"namespace": "payments"}) is None
+
+    def test_admin_is_unrestricted(self, fake_tool):
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+        tool = _namespaced_tool(fake_tool, guard="destructive")
+        assert guard.check(Role.ADMIN, tool, {"namespace": "kube-system"}) is None
+
+    def test_reads_are_never_scoped(self, fake_tool):
+        """Diagnosing an incident means looking at infrastructure namespaces."""
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+        tool = _namespaced_tool(fake_tool, guard=None, name="list_pods")
+        assert guard.check(Role.VIEWER, tool, {"namespace": "kube-system"}) is None
+
+    def test_omitted_namespace_uses_the_signature_default(self, fake_tool):
+        """The call lands wherever the default sends it, so that is what is checked."""
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+
+        safe = _namespaced_tool(fake_tool, default="default")
+        assert guard.check(Role.OPERATOR, safe, {"deployment_name": "api"}) is None
+
+        risky = _namespaced_tool(fake_tool, default="kube-system")
+        assert guard.check(Role.OPERATOR, risky, {"deployment_name": "api"}) is not None
+
+    def test_unresolvable_namespace_fails_closed(self, fake_tool):
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+        tool = _namespaced_tool(fake_tool, default=_REQUIRED)
+        result = guard.check(Role.OPERATOR, tool, {"deployment_name": "api"})
+        assert result is not None
+        assert "<unset>" in result["message"]
+
+    def test_non_string_namespace_fails_closed(self, fake_tool):
+        """A list can't be glob-matched, so it must not slip through unchecked."""
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+        tool = _namespaced_tool(fake_tool)
+        assert guard.check(Role.OPERATOR, tool, {"namespace": ["kube-system"]}) is not None
+
+    def test_non_namespaced_tools_are_untouched(self, fake_tool):
+        guard = NamespaceScopeGuard(frozenset({"kube-system"}))
+
+        def func(topic_name: str):
+            pass
+
+        tool = fake_tool(name="delete_kafka_topic", func=confirm("deletes")(func))
+        assert guard.check(Role.OPERATOR, tool, {"topic_name": "orders"}) is None
+
+    def test_from_env(self, monkeypatch):
+        monkeypatch.setenv("ORRERY_PROTECTED_NAMESPACES", " kube-system , monitoring* ")
+        guard = NamespaceScopeGuard.from_env()
+        assert guard.is_protected("kube-system")
+        assert guard.is_protected("MONITORING-prod")
+        assert not guard.is_protected("payments")
+
+    def test_from_env_unset_is_inert(self, monkeypatch):
+        monkeypatch.delenv("ORRERY_PROTECTED_NAMESPACES", raising=False)
+        assert not NamespaceScopeGuard.from_env().active
+
+
+class TestAuthorizeWithScope:
+    def test_scope_denial_applies_after_the_role_check(self, fake_tool, fake_ctx):
+        callback = authorize(scope_guard=NamespaceScopeGuard(frozenset({"kube-system"})))
+        ctx = fake_ctx(state={USER_ROLE_STATE_KEY: "operator"})
+        tool = _namespaced_tool(fake_tool)
+
+        assert callback(tool=tool, args={"namespace": "payments"}, tool_context=ctx) is None
+        denied = callback(tool=tool, args={"namespace": "kube-system"}, tool_context=ctx)
+        assert denied is not None
+        assert denied["status"] == "access_denied"
+
+    def test_role_denial_still_wins(self, fake_tool, fake_ctx):
+        callback = authorize(scope_guard=NamespaceScopeGuard(frozenset({"kube-system"})))
+        ctx = fake_ctx(state={USER_ROLE_STATE_KEY: "viewer"})
+        tool = _namespaced_tool(fake_tool)
+
+        denied = callback(tool=tool, args={"namespace": "payments"}, tool_context=ctx)
+        assert denied is not None
+        assert "requires" in denied["message"]

@@ -151,7 +151,10 @@ async def test_run_verified_confirmation_ignores_non_decisions():
 
     delta = captured["state_delta"]
     assert delta["_confirmation_strict"] is True
-    assert "_confirmation_decision" not in delta
+    # Explicitly cleared, not merely absent: an ordinary turn must wipe any
+    # decision left over from an earlier one, or that stale "approve" would
+    # still be sitting in session state to authorize the next guarded call.
+    assert delta["_confirmation_decision"] is None
 
 
 @pytest.mark.asyncio

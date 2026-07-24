@@ -566,6 +566,54 @@ def test_strict_approval_wrong_args_reprompts(fake_tool, fake_ctx):
     assert result["status"] == "confirmation_required"
 
 
+def test_strict_approval_predating_the_pending_is_refused(fake_tool, fake_ctx):
+    """An 'approve' spoken *before* the action existed must not authorize it.
+
+    The regression: a decision left in session state from an earlier turn (an
+    approval for something else, or for nothing at all) stayed fresh for the
+    full TTL. The next guarded call raised its own pending, and that pending
+    then satisfied the args-hash match — so a destructive tool ran on an
+    approval no human ever gave *for it*.
+    """
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    # Turn N: an approval lands while nothing is pending. It is never consumed.
+    _stamp_decision(ctx, "approve", by="alice@example.com")
+
+    # Turn N+1: a fresh destructive request. First call raises the pending.
+    ctx._invocation_context.invocation_id = "inv-2"
+    assert (
+        callback(tool=tool, args={"target": "prod"}, tool_context=ctx)["status"]
+        == "confirmation_required"
+    )
+
+    # The model re-calls without waiting for a human — the stale approval must
+    # not carry it through, in this or any later invocation.
+    assert callback(tool=tool, args={"target": "prod"}, tool_context=ctx) is not None
+    ctx._invocation_context.invocation_id = "inv-3"
+    assert callback(tool=tool, args={"target": "prod"}, tool_context=ctx) is not None
+
+    # And the honest flow still works: approving now (after the pending exists).
+    _stamp_decision(ctx, "approve", by="alice@example.com")
+    assert callback(tool=tool, args={"target": "prod"}, tool_context=ctx) is None
+
+
+def test_strict_decision_by_another_identity_is_refused(fake_tool, fake_ctx):
+    """A decision attributed to someone else cannot act for the current actor."""
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={}, tool_context=ctx)
+    _stamp_decision(ctx, "approve", by="mallory@example.com")  # actor is alice
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
 def test_non_strict_flow_unchanged_by_new_fields(fake_tool, fake_ctx):
     """Without the strict flag, the model-mediated flow behaves as before."""
     callback = require_confirmation()

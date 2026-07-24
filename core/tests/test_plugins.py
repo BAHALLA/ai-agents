@@ -201,7 +201,9 @@ async def test_error_handler_plugin_suppresses_tool_error(base_tool, tool_contex
 
     assert isinstance(result, dict)
     assert result["status"] == "error"
-    assert "Invalid arg" in result["message"]
+    assert result["error_type"] == "ValueError"
+    # The raw exception text stays in the server log, not in the model context.
+    assert "Invalid arg" not in result["message"]
 
 
 @pytest.mark.asyncio
@@ -222,7 +224,11 @@ async def test_error_handler_plugin_suppresses_model_error(callback_context):
     assert len(result.content.parts) > 0
     text = result.content.parts[0].text
     assert text is not None
-    assert "Model timeout" in text
+    # Reads as a failure (an AgentTool's caller must not mistake it for a
+    # result), and names the error class rather than quoting the raw error.
+    assert "STEP FAILED" in text
+    assert "Exception" in text
+    assert "Model timeout" not in text
 
 
 # ── MemoryPlugin Tests ──────────────────────────────────────────────

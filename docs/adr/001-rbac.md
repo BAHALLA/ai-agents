@@ -72,8 +72,8 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
 
 ## Implementation
 
-- `core/orrery_core/security/rbac.py` — `Role` enum, `RolePolicy`, `authorize()`, `@requires_role`, `infer_minimum_role()`
-- `core/tests/test_rbac.py` — 25 test cases
+- `core/orrery_core/security/rbac.py` — `Role` enum, `RolePolicy`, `authorize()`, `@requires_role`, `infer_minimum_role()`, `NamespaceScopeGuard`
+- `core/tests/test_rbac.py` — role inference, policy overrides, the authorize callback, default-role enforcement, and namespace scoping
 
 ### Plugin-based enforcement (replaces per-agent callbacks)
 
@@ -104,6 +104,25 @@ FunctionTool(require_confirmation=True)  →  ADK natively asks "are you sure?" 
 ```
 
 A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm by ADK's native confirmation flow.
+
+### Namespace scope: restricting *where*, not just *what*
+
+**Update (2026-07-24):** the role check answers which tool a caller may run. It does not answer where, and on a Kubernetes platform that gap matters: `restart_deployment` is the same `@confirm` tool whether it targets `payments` or `kube-system`, but the blast radius is not remotely the same. An operator who is trusted to bounce an application pod is not thereby trusted to bounce the cluster's DNS.
+
+`NamespaceScopeGuard` adds that second axis, opt-in via `ORRERY_PROTECTED_NAMESPACES` (comma-separated `fnmatch` globs — unset leaves it inert, so existing deployments are unchanged):
+
+```bash
+ORRERY_PROTECTED_NAMESPACES=kube-system,kube-public,monitoring*
+```
+
+The rules, in order:
+
+1. `admin` is unrestricted — the role that may already delete things platform-wide gains nothing from a namespace fence.
+2. **Reads are never scoped.** Diagnosing an incident means looking at infrastructure namespaces; a guard that blocked `describe_pod` in `kube-system` would break triage while preventing nothing.
+3. A mutating call (`@confirm`/`@destructive`) by a non-admin is checked against the **effective** namespace: the call's `namespace` argument, or — when omitted — the tool's own signature default, since that is where the call will actually land.
+4. **Fail closed** when the namespace cannot be resolved: a tool that declares `namespace` as a required parameter but arrives without one, or with a non-string (a list, say, that no glob could match), is refused rather than guessed at.
+
+The two axes compose and are checked in order — role first, then scope — so a denial always names the reason that applies. This is deliberately *not* modelled as extra roles: adding a "namespace-limited operator" tier would multiply the role table by every scoping dimension, while a guard keeps one question ("may this role act here?") in one place.
 
 ## Related how-tos
 
