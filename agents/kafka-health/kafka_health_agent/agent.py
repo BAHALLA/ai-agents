@@ -26,6 +26,7 @@ from .tools import (
     list_consumer_groups,
     list_kafka_topics,
     reset_consumer_group_offsets,
+    tune_topic_config,
     update_kafka_partitions,
 )
 
@@ -48,8 +49,10 @@ root_agent = create_agent(
         "- **Kafka-protocol tools** (get_kafka_cluster_health, list_kafka_topics, "
         "get_topic_metadata, get_topic_config, list/describe_consumer_groups, "
         "get_consumer_lag) — the runtime view: what brokers actually report right now. "
-        "Default to these. For topic tuning use get_topic_config / alter_topic_config "
-        "(retention, cleanup policy); for stuck groups, reset_consumer_group_offsets "
+        "Default to these. For topic tuning read get_topic_config, then tune_topic_config "
+        "for ordinary settings (message size, min.insync.replicas, compression); "
+        "alter_topic_config only for retention / cleanup.policy, which can delete "
+        "retained data and is gated as destructive. For stuck groups, reset_consumer_group_offsets "
         "(earliest/latest) or delete_consumer_group — both need the group to be inactive.\n"
         "- **Strimzi tools** (list/describe_strimzi_clusters, list_strimzi_topics, "
         "list_kafka_users, list_kafka_connectors, get_kafka_connect_status, "
@@ -78,6 +81,7 @@ root_agent = create_agent(
         update_kafka_partitions,
         get_topic_metadata,
         get_topic_config,
+        tune_topic_config,
         alter_topic_config,
         list_consumer_groups,
         describe_consumer_groups,

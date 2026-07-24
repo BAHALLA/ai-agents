@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import UTC
 from typing import Any
 
@@ -54,6 +55,41 @@ def _validate_namespace(namespace: str) -> dict[str, Any] | None:
     if namespace == "all":
         return None
     return validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN)
+
+
+def _validate_concrete_namespace(namespace: str) -> dict[str, Any] | None:
+    """Validate a namespace for a tool that reads *one* named resource.
+
+    ``"all"`` is a valid namespace *name* by the K8s pattern, so a caller that
+    means "look everywhere" would otherwise sail past validation and 404 against
+    a namespace called ``all``. Single-resource reads say so plainly instead.
+    """
+    if namespace == "all":
+        return {
+            "status": "error",
+            "message": (
+                "Invalid parameter 'namespace': 'all' is only supported by the list tools; "
+                "name the namespace this resource lives in."
+            ),
+        }
+    return validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN)
+
+
+#: A label selector is a comma-separated set of equality/set-based requirements
+#: (``app=nginx,tier!=db,env in (prod,staging)``). Validated at entry like every
+#: other tool input: bounded in length and restricted to the characters the
+#: grammar actually uses, so a malformed selector is refused here with a clear
+#: message rather than becoming an opaque 400 from the API server.
+LABEL_SELECTOR_PATTERN = re.compile(r"^[a-zA-Z0-9._/=!,()\s-]+$")
+
+
+def _validate_label_selector(label_selector: str | None) -> dict[str, Any] | None:
+    """Validate an optional label selector; ``None``/empty means 'no filter'."""
+    if not label_selector:
+        return None
+    return validate_string(
+        label_selector, "label_selector", max_len=512, pattern=LABEL_SELECTOR_PATTERN
+    )
 
 
 def _core_api() -> client.CoreV1Api:
@@ -165,6 +201,8 @@ async def list_pods(
         A dictionary with pod details.
     """
     if err := _validate_namespace(namespace):
+        return err
+    if err := _validate_label_selector(label_selector):
         return err
 
     try:
@@ -714,6 +752,8 @@ async def list_services(
     """
     if err := _validate_namespace(namespace):
         return err
+    if err := _validate_label_selector(label_selector):
+        return err
 
     try:
         v1 = _core_api()
@@ -764,7 +804,7 @@ async def describe_service(service_name: str, namespace: str = "default") -> dic
     """
     if err := validate_string(service_name, "service_name", pattern=K8S_NAME_PATTERN):
         return err
-    if err := validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN):
+    if err := _validate_concrete_namespace(namespace):
         return err
 
     try:
@@ -861,7 +901,7 @@ async def get_configmap(name: str, namespace: str = "default") -> dict[str, Any]
     """
     if err := validate_string(name, "name", pattern=K8S_NAME_PATTERN):
         return err
-    if err := validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN):
+    if err := _validate_concrete_namespace(namespace):
         return err
 
     try:
@@ -995,18 +1035,28 @@ async def top_pods(namespace: str = "default") -> dict[str, Any]:
         for item in result.get("items", []):
             cpu = 0
             mem = 0
+            # A quantity the parser doesn't recognise must not read as zero
+            # usage — "this pod is idle" and "we couldn't measure this pod" lead
+            # an operator to opposite conclusions, so an unparsed container is
+            # reported as such instead of being summed in as 0.
+            unparsed = 0
             for container in item.get("containers", []):
                 usage = container.get("usage", {})
-                cpu += _parse_cpu_millicores(usage.get("cpu", "")) or 0
-                mem += _parse_mem_mib(usage.get("memory", "")) or 0
-            pods.append(
-                {
-                    "name": item.get("metadata", {}).get("name"),
-                    "namespace": item.get("metadata", {}).get("namespace"),
-                    "cpu_millicores": cpu,
-                    "memory_mib": mem,
-                }
-            )
+                parsed_cpu = _parse_cpu_millicores(usage.get("cpu", ""))
+                parsed_mem = _parse_mem_mib(usage.get("memory", ""))
+                if parsed_cpu is None or parsed_mem is None:
+                    unparsed += 1
+                cpu += parsed_cpu or 0
+                mem += parsed_mem or 0
+            entry = {
+                "name": item.get("metadata", {}).get("name"),
+                "namespace": item.get("metadata", {}).get("namespace"),
+                "cpu_millicores": cpu,
+                "memory_mib": mem,
+            }
+            if unparsed:
+                entry["partial"] = f"{unparsed} container(s) reported unreadable quantities"
+            pods.append(entry)
         return {"status": "success", "pods": pods, "count": len(pods)}
     except ApiException as e:
         if e.status == 404:

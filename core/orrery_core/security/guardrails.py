@@ -386,7 +386,11 @@ def _handle_strict(
 
     decision = tool_context.state.get(CONFIRMATION_DECISION_STATE_KEY)
     decision = decision if isinstance(decision, dict) else {}
-    decision_fresh = (time.time() - decision.get("timestamp", 0)) < _CONFIRMATION_TTL
+    decided_at = decision.get("timestamp", 0)
+    decision_fresh = (time.time() - decided_at) < _CONFIRMATION_TTL
+    # Belt-and-braces on top of the requester-scoped lookup below: a decision may
+    # only ever act for the person who spoke it.
+    decision_is_requester = str(decision.get("by") or "") == requester
 
     # Strict mode scopes the pending by the requester, so a consume here can
     # only match a pending raised by this same requester — the "only the
@@ -397,7 +401,15 @@ def _handle_strict(
     if (
         decision.get("decision") in ("approve", "deny")
         and decision_fresh
-        and _pending_confirmations.consume_pending(requester, tool.name, args_hash) is not None
+        and decision_is_requester
+        and (pending := _pending_confirmations.consume_pending(requester, tool.name, args_hash))
+        # A decision can only authorize an action that already existed when it
+        # was spoken. Without this, an "approve" said before the pending was
+        # raised — for something else, or for nothing at all — would authorize
+        # whatever guarded call the model makes next, since the args-hash match
+        # is satisfied by a pending this very turn raised. The human must have
+        # seen the action to approve it.
+        and decided_at >= pending.created_at
     ):
         tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
         if decision["decision"] == "approve":

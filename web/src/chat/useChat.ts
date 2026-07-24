@@ -79,15 +79,16 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // triage state are rendering data, so a failed refresh never surfaces as a
   // chat error.
   const refreshSidePanes = useCallback(
-    async (id: string) => {
-      // Whose refresh this is. If the user switches conversations while the
-      // requests are in flight, discard the results — otherwise a slow response
-      // for the previous conversation clobbers the one now on screen.
-      const forConversation = activeIdRef.current;
+    async (sessionId: string, forConversation: string) => {
+      // The caller names the conversation this session belongs to. If the user
+      // switches away while the requests are in flight, discard the results —
+      // otherwise a slow response for the previous conversation clobbers the
+      // inspector of the one now on screen. (Reading the *current* active id
+      // here instead would compare it against itself and never fire.)
       const [act, pend, tri] = await Promise.allSettled([
-        client.activity(id),
+        client.activity(sessionId),
         client.pendingConfirmation(),
-        client.triage(id),
+        client.triage(sessionId),
       ]);
       if (activeIdRef.current !== forConversation) return;
       if (act.status === "fulfilled") setActivity(act.value.entries ?? []);
@@ -106,7 +107,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     setActivity([]);
     setPending(null);
     setTriage(null);
-    if (sessionId) void refreshSidePanes(sessionId);
+    if (sessionId) void refreshSidePanes(sessionId, activeId);
     // Only re-run when the active conversation changes, not on every message.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
@@ -116,9 +117,9 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // to progress until streaming (AEP-009) lands.
   useEffect(() => {
     if (!isSending || !sessionId) return;
-    const timer = setInterval(() => void refreshSidePanes(sessionId), 2500);
+    const timer = setInterval(() => void refreshSidePanes(sessionId, activeId), 2500);
     return () => clearInterval(timer);
-  }, [isSending, sessionId, refreshSidePanes]);
+  }, [isSending, sessionId, activeId, refreshSidePanes]);
 
   const send = useCallback(
     async (raw: string) => {
@@ -135,6 +136,9 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
 
       const controller = new AbortController();
       abortRef.current = controller;
+      // The conversation this send belongs to, so a reply that lands after the
+      // user has moved on doesn't repaint the inspector for the wrong one.
+      const forConversation = activeId;
 
       try {
         const res = await client.chat(
@@ -150,7 +154,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
             { id: nextId(), role: "assistant", text: res.response, at: Date.now() },
           ],
         }));
-        await refreshSidePanes(res.session_id);
+        await refreshSidePanes(res.session_id, forConversation);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         if (err instanceof ApiError) {
@@ -163,7 +167,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         abortRef.current = null;
       }
     },
-    [client, sessionId, isSending, patchActive, refreshSidePanes],
+    [client, sessionId, activeId, isSending, patchActive, refreshSidePanes],
   );
 
   // The decision is a plain chat message: the requester-verified gate on the

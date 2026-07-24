@@ -489,27 +489,95 @@ async def get_topic_config(topic_name: str) -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to read topic config: {str(e)}"}
 
 
-@confirm("changes a topic's configuration (e.g. retention, cleanup policy)")
+#: Topic config keys whose new value can delete retained data. Lowering
+#: ``retention.*`` past the age of what is on disk drops those segments on the
+#: next roll, and moving ``cleanup.policy`` off ``compact`` discards every
+#: superseded record — the same outcome as deleting the topic, reached through a
+#: config change. Tools that can do this are gated as destructive, so they need
+#: the admin role and are blocked at autonomy L3.
+DATA_DESTROYING_CONFIGS = frozenset(
+    {"retention.ms", "retention.bytes", "cleanup.policy", "local.retention.ms"}
+)
+
+
+@destructive("changes topic retention or cleanup policy, which can delete retained data")
 async def alter_topic_config(
     topic_name: str, config_name: str, config_value: str
 ) -> dict[str, Any]:
     """Sets a single configuration value on a topic (incremental — other configs untouched).
 
+    Gated as destructive because the *value* decides the blast radius: setting
+    ``retention.ms=1`` discards a topic's history as surely as deleting it. Keys
+    that cannot destroy data are handled by ``tune_topic_config`` instead.
+
     Args:
         topic_name: Name of the topic.
-        config_name: Config key to set (e.g. "retention.ms", "cleanup.policy").
+        config_name: Config key to set — one of the data-affecting keys
+            (``retention.ms``, ``retention.bytes``, ``cleanup.policy``,
+            ``local.retention.ms``). For anything else use ``tune_topic_config``.
         config_value: New value for the config key.
 
     Returns:
         A dictionary with the operation result.
     """
+    if err := _validate_config_args(topic_name, config_name, config_value):
+        return err
+    if config_name.lower() not in DATA_DESTROYING_CONFIGS:
+        return {
+            "status": "error",
+            "message": (
+                f"'{config_name}' does not affect retained data — use "
+                f"tune_topic_config for it. This tool is reserved for "
+                f"{', '.join(sorted(DATA_DESTROYING_CONFIGS))}."
+            ),
+        }
+    return await _set_topic_config(topic_name, config_name, config_value)
+
+
+@confirm("changes a topic setting that does not affect retained data")
+async def tune_topic_config(topic_name: str, config_name: str, config_value: str) -> dict[str, Any]:
+    """Sets a non-data-affecting topic configuration value (incremental).
+
+    The everyday half of topic tuning — message size, compression, flush and
+    segment settings, min in-sync replicas. Retention and cleanup policy are
+    deliberately *not* settable here: they can delete data, so they live behind
+    the destructive ``alter_topic_config``.
+
+    Args:
+        topic_name: Name of the topic.
+        config_name: Config key to set (e.g. "max.message.bytes",
+            "min.insync.replicas", "compression.type").
+        config_value: New value for the config key.
+
+    Returns:
+        A dictionary with the operation result.
+    """
+    if err := _validate_config_args(topic_name, config_name, config_value):
+        return err
+    if config_name.lower() in DATA_DESTROYING_CONFIGS:
+        return {
+            "status": "error",
+            "message": (
+                f"'{config_name}' can delete retained data — use alter_topic_config, "
+                f"which is gated as a destructive operation."
+            ),
+        }
+    return await _set_topic_config(topic_name, config_name, config_value)
+
+
+def _validate_config_args(
+    topic_name: str, config_name: str, config_value: str
+) -> dict[str, Any] | None:
+    """Shared entry validation for the two topic-config tools."""
     if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
         return err
     if err := validate_string(config_name, "config_name", max_len=200):
         return err
-    if err := validate_string(config_value, "config_value", max_len=1000):
-        return err
+    return validate_string(config_value, "config_value", max_len=1000)
 
+
+async def _set_topic_config(topic_name: str, config_name: str, config_value: str) -> dict[str, Any]:
+    """Apply one incremental config SET, leaving every other key untouched."""
     admin = _get_admin_client()
     entry = ConfigEntry(config_name, config_value, incremental_operation=AlterConfigOpType.SET)
     resource = ConfigResource(ConfigResource.Type.TOPIC, topic_name, incremental_configs=[entry])

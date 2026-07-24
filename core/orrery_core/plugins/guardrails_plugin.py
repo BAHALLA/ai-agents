@@ -10,7 +10,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from ..security.rbac import RolePolicy, ensure_default_role
+from ..security.rbac import NamespaceScopeGuard, RolePolicy, ensure_default_role
 from ..security.rbac import authorize as _authorize_factory
 
 
@@ -27,15 +27,19 @@ class GuardrailsPlugin(BasePlugin):
     Args:
         role_policy: Optional ``RolePolicy`` for custom role overrides.
         mode: ``"confirm"`` (default — RBAC only), ``"dry_run"``, or ``"none"``.
+        scope_guard: Optional ``NamespaceScopeGuard`` restricting which
+            namespaces a non-admin may mutate in. Defaults to one built from
+            ``ORRERY_PROTECTED_NAMESPACES`` (inert when unset).
     """
 
     def __init__(
         self,
         role_policy: RolePolicy | None = None,
         mode: str = "confirm",
+        scope_guard: NamespaceScopeGuard | None = None,
     ) -> None:
         super().__init__(name="guardrails")
-        self._authorize = _authorize_factory(role_policy)
+        self._authorize = _authorize_factory(role_policy, scope_guard)
 
         if mode == "dry_run":
             from ..security.guardrails import dry_run as _dry_run_factory

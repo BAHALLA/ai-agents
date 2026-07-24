@@ -302,12 +302,17 @@ class AgentGateway:
         delta.setdefault(ACTOR_STATE_KEY, user_id)
         if self.verified_confirmation:
             delta[CONFIRMATION_STRICT_STATE_KEY] = True
-            if decision := classify_decision(text):
-                delta[CONFIRMATION_DECISION_STATE_KEY] = {
-                    "decision": decision,
-                    "by": user_id,
-                    "timestamp": time.time(),
-                }
+            # Written on EVERY turn, including a clearing ``None``. A decision is
+            # only ever valid for the turn it was spoken on: leaving a previous
+            # turn's "approve" in state would let it authorize a later action the
+            # human never saw (the gate consumes whichever pending matches, and a
+            # pending raised *after* the approval would match just as well).
+            decision = classify_decision(text)
+            delta[CONFIRMATION_DECISION_STATE_KEY] = (
+                {"decision": decision, "by": user_id, "timestamp": time.time()}
+                if decision
+                else None
+            )
         return delta
 
     async def run(self, msg: InboundMessage, *, on_event: EventHook | None = None) -> OutboundReply:
