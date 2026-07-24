@@ -531,6 +531,12 @@ def _limited_app(patched_runner, limit: str = "2/minute"):
     return create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
 
 
+def _check_result(name: str, label: str, *, ok: bool, detail: str):
+    from orrery_core.serving.onboarding import CheckResult
+
+    return CheckResult(name=name, label=label, ok=ok, detail=detail)
+
+
 def _bearer(sub: str = "alice") -> dict:
     token = _hs256({"sub": sub, "aud": "orrery", "exp": time.time() + 300})
     return {"Authorization": f"Bearer {token}"}
@@ -613,3 +619,115 @@ def test_startup_sizes_the_worker_pool(patched_runner):
     ):
         pass
     configure.assert_called_once()
+
+
+# ── /me and the onboarding self-test (AEP-019 M3) ───────────────────
+
+
+def _probe_app(patched_runner, probes):
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+    )
+    return create_app(
+        root_agent=MagicMock(name="root"),
+        app_name="test",
+        plugins=[],
+        config=config,
+        integration_probes=probes,
+    )
+
+
+def test_me_reports_the_server_resolved_role(app_with_auth):
+    """The console decodes the JWT for its badge, but that is the browser's
+    reading of a signature it cannot verify. This is what RBAC will enforce."""
+    client = TestClient(app_with_auth)
+    r = client.get("/me", headers=_bearer())
+    assert r.status_code == 200
+    assert r.json()["subject"] == "alice"
+    assert r.json()["role"] == "viewer"
+
+
+def test_me_requires_auth(app_with_auth):
+    assert TestClient(app_with_auth).get("/me").status_code == 401
+
+
+def test_me_surfaces_the_active_autonomy_level(app_with_auth, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUTONOMY_LEVEL", "L2")
+    client = TestClient(app_with_auth)
+    assert client.get("/me", headers=_bearer()).json()["autonomy_level"] == "L2"
+
+
+def test_me_reports_no_autonomy_when_the_gate_is_off(app_with_auth, monkeypatch):
+    monkeypatch.delenv("ORRERY_AUTONOMY_LEVEL", raising=False)
+    client = TestClient(app_with_auth)
+    assert client.get("/me", headers=_bearer()).json()["autonomy_level"] is None
+
+
+def test_selftest_reports_each_integration(patched_runner):
+    """The first-run question is 'is anything wired', and today the only answer
+    is a stack trace several turns into a conversation."""
+    from orrery_core.serving.onboarding import IntegrationProbe
+
+    async def healthy():
+        return {"status": "success", "health": "healthy"}
+
+    async def refused():
+        return {"status": "error", "message": "Connection refused to broker-1:9092"}
+
+    app = _probe_app(
+        patched_runner,
+        [
+            IntegrationProbe("kafka", "Kafka", "Set KAFKA_BOOTSTRAP_SERVERS.", refused),
+            IntegrationProbe("k8s", "Kubernetes", "Provide a kubeconfig.", healthy),
+        ],
+    )
+    client = TestClient(app)
+
+    with patch(
+        "orrery_core.serving.server.check_model_connectivity",
+        new=AsyncMock(
+            return_value=_check_result("model", "gemini", ok=True, detail="Reached gemini.")
+        ),
+    ):
+        r = client.post("/onboarding/selftest", headers=_bearer())
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False  # one integration is down
+    by_name = {c["name"]: c for c in body["checks"]}
+    assert by_name["k8s"]["ok"] is True
+    assert by_name["kafka"]["ok"] is False
+    assert "Connection refused" in by_name["kafka"]["detail"]
+    # A failed check must say what to configure, not just that it failed.
+    assert by_name["kafka"]["hint"] == "Set KAFKA_BOOTSTRAP_SERVERS."
+
+
+def test_selftest_survives_a_probe_that_raises(patched_runner):
+    from orrery_core.serving.onboarding import IntegrationProbe
+
+    async def boom():
+        raise RuntimeError("no kubeconfig found")
+
+    app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "Add one.", boom)])
+
+    with patch(
+        "orrery_core.serving.server.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
+    ):
+        r = TestClient(app).post("/onboarding/selftest", headers=_bearer())
+
+    assert r.status_code == 200
+    k8s = next(c for c in r.json()["checks"] if c["name"] == "k8s")
+    assert k8s["ok"] is False
+    assert "no kubeconfig found" in k8s["detail"]
+
+
+def test_selftest_requires_auth(patched_runner):
+    app = _probe_app(patched_runner, [])
+    assert TestClient(app).post("/onboarding/selftest").status_code == 401
+
+
+def test_me_reports_whether_a_selftest_is_possible(patched_runner):
+    without = TestClient(_probe_app(patched_runner, []))
+    assert without.get("/me", headers=_bearer()).json()["self_test_available"] is False

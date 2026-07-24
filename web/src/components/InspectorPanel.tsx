@@ -1,8 +1,10 @@
 import type { ActivityEntry, TriageResponse } from "../api/types";
+import type { SystemController } from "../system/useSystem";
+import { SystemPanel } from "./SystemPanel";
 import { ToolCallsTable } from "./ToolCallsTable";
 import { TriageReport } from "./TriageReport";
 
-export type InspectorTab = "tools" | "triage";
+export type InspectorTab = "tools" | "triage" | "system";
 
 interface Props {
   tab: InspectorTab;
@@ -10,11 +12,12 @@ interface Props {
   onClose: () => void;
   activity: ActivityEntry[];
   triage: TriageResponse | null;
+  system: SystemController;
 }
 
 /** Right-hand inspector: the tool-call table and the triage report, kept out
  * of the chat column so the conversation stays clean. */
-export function InspectorPanel({ tab, onTab, onClose, activity, triage }: Props) {
+export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }: Props) {
   const tabClass = (active: boolean) =>
     `px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
       active
@@ -49,6 +52,23 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage }: Props)
           >
             Triage
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "system"}
+            className={tabClass(tab === "system")}
+            onClick={() => onTab("system")}
+          >
+            System
+            {system.selfTest && !system.selfTest.ok ? (
+              <span
+                className="ml-1.5 rounded-full bg-red-100 px-1.5 text-xs font-semibold text-red-700 dark:bg-red-950 dark:text-red-300"
+                title="Some environment checks failed"
+              >
+                !
+              </span>
+            ) : null}
+          </button>
         </div>
         <button
           type="button"
@@ -62,8 +82,10 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage }: Props)
       <div className="orrery-scroll min-h-0 flex-1 overflow-y-auto">
         {tab === "tools" ? (
           <ToolCallsTable entries={activity} />
+        ) : tab === "system" ? (
+          <SystemPanel system={system} />
         ) : triage ? (
-          <TriageReport triage={triage} />
+          <TriageReport triage={triage} activity={activity} />
         ) : (
           <p className="p-4 text-sm text-slate-500 dark:text-slate-400">
             No triage verdict yet. Click <span className="font-medium">Run triage</span> in the

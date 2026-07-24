@@ -58,3 +58,32 @@ export interface TriageResponse {
   severity: TriageSeverity | null;
   report: string | null;
 }
+
+/** GET /me — the server's own view of the caller and the deployment. */
+export interface MeResponse {
+  subject: string;
+  /** Resolved server-side. The token badge is advisory; this is authoritative. */
+  role: Role;
+  /** "L2" | "L3" | "L4", or null when the autonomy gate isn't configured. */
+  autonomy_level: string | null;
+  model_provider: string;
+  model_name: string;
+  self_test_available: boolean;
+}
+
+/** One integration or connectivity check from the self-test. */
+export interface CheckResult {
+  name: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+  /** What to configure when `ok` is false; empty when it passed. */
+  hint: string;
+  duration_ms: number;
+}
+
+/** POST /onboarding/selftest response. */
+export interface SelfTestResponse {
+  ok: boolean;
+  checks: CheckResult[];
+}

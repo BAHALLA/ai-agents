@@ -4,26 +4,33 @@ Orrery is designed to be interface-agnostic. A single agent runner can be expose
 
 ## Current Integrations
 
-### 1. ADK Web UI (Developer Portal)
+### 1. Web Console (Operator Portal)
+The product UI: chat, a tool-call timeline, Approve/Deny for guarded actions, a triage view, and a first-run environment check.
+- **Features**: Server-resolved role + autonomy badge, per-system triage chips derived from recorded tool calls, stop/retry on a turn, and a read-only self-test that names which integrations are wired and what to configure when one is not.
+- **Best For**: Operators running incidents, and anyone evaluating the platform for the first time.
+- **Run Command**: `make run-console` (builds the bundle and serves it at `:8000`; off unless `ORRERY_WEB_CONSOLE_ENABLED=true`).
+- **Setup Guide**: [Web Console Reference](integrations/web-console.md)
+
+### 2. ADK Web UI (Developer Portal)
 The primary interface for local development and agent debugging.
 - **Features**: Real-time trace visualization, session state inspection, and artifact downloads.
 - **Best For**: SREs and developers building or testing new agent capabilities.
 - **Run Command**: `make run-assistant` (binds `:8000`).
 - **Testing roles here**: see [Testing RBAC across surfaces → ADK Web](rbac-testing.md#testing-in-adk-web-adk-web).
 
-### 2. Slack Bot (Collaborative Operations)
+### 3. Slack Bot (Collaborative Operations)
 A production-ready bot that brings autonomous DevOps to your Slack channels.
 - **Features**: Thread-based session isolation, interactive Approve/Deny buttons for guarded tools, and role-based access control based on Slack user IDs.
 - **Interactive Guards**: When an agent hits a `@confirm` or `@destructive` tool, it posts a Slack Card with buttons, pausing execution until a human interacts.
 - **Setup Guide**: [Slack Setup Reference](integrations/slack.md)
 
-### 3. Google Chat Bot (Workspace Operations)
+### 4. Google Chat Bot (Workspace Operations)
 Brings the same collaborative pattern to Google Workspace, including Workspace Add-ons deployments.
 - **Features**: Thread-based session isolation, interactive **Card v2** Approve/Deny flows, and email-based RBAC (`GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`).
 - **Dual-Path Event Handling**: Automatically detects standard Chat API vs Workspace Add-ons event envelopes and wraps responses in the `hostAppDataAction` schema when required.
 - **Setup Guide**: [Google Chat Setup Reference](integrations/google-chat.md)
 
-### 4. CLI Runner
+### 5. CLI Runner
 A headless interface for terminal-based interactions and CI/CD automation.
 - **Features**: Persistent session support (in-memory or PostgreSQL), structured JSON logging, and a health probe server for readiness checks.
 - **Best For**: Scripted diagnostics and automated remediation triggers.

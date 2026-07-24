@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--blue">in-progress</span> (Milestone 1 complete; Milestone 2 triage view shipped — verdict banner + report + in-flight timeline polling; Milestone 3 remaining) |
+| **Status** | <span class="badge badge--green">complete</span> (Milestones 1–3 shipped; token-by-token streaming tracked separately as AEP-009) |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High (8-12 days) |
 | **Impact** | Medium-High (adoption / onboarding) |
@@ -176,12 +176,12 @@ hand-authored assets — the source of truth is `web/`.
 
 - [x] Console is served by the existing FastAPI app, behind the JWT dependency, and is **off by default** (`ORRERY_WEB_CONSOLE_ENABLED`)
 - [x] Milestone 1: a user can hold a chat conversation, see the tool-call timeline (`GET /session/{id}/activity`, owner-scoped by the JWT subject), and approve/deny a guarded action (`GET /confirmations/pending` renders it; the buttons send the literal decision words through `POST /chat`) — the approval is enforced by the existing requester-verified gate; a second user cannot approve someone else's action because pendings are requester-scoped and the gate, not the frontend, decides
-- [ ] The role + autonomy-level badge reflects the authenticated subject and blocks mutating tools for a viewer with a clear reason *(role badge shipped; surfacing the active autonomy level remains)*
-- [ ] Milestone 2: a triage run renders the five specialist statuses, the severity verdict, and the remediation loop iterations *(shipped: a **Run triage** header button sends the canned prompt to the `incident_triage_agent`; `GET /session/{id}/triage` exposes the recorded `incident_severity` + `triage_report` — ADK's `AgentTool` forwards the sub-session state delta to the parent, so the chat-root verdict lands in the HTTP session — rendered as a severity banner (healthy/degraded/critical) with the full report collapsed inside; the tool-call timeline is polled every 2.5s while a request is in flight so multi-specialist sweeps become visible as each specialist completes. Remaining: structured per-system status chips, and the remediation-loop trace — the act→verify→retry loop only exists in the batch `orrery_triage_workflow`, which the console does not host)*
-- [ ] Milestone 3: the onboarding connectivity check reports provider/model reachability and per-specialist read-only self-test status
-- [ ] No changes to agent, plugin, or guardrail logic — the console is a transport (`ChannelAdapter`) over `AgentGateway`
-- [ ] Documented in `docs/integrations/web-console.md` and reachable from the getting-started guide
-- [ ] The demo compose stack shows the product console; `adk web` Dev UI remains available for developers
+- [x] The role + autonomy-level badge reflects the authenticated subject and blocks mutating tools for a viewer with a clear reason *(`GET /me` returns the **server-resolved** role and the active autonomy level; the sidebar badge shows both, and the System tab spells out what the level permits. The server's answer wins over the console's local JWT decode, so a mismatch is visible rather than mysterious.)*
+- [x] Milestone 2: a triage run renders the five specialist statuses, the severity verdict, and the remediation loop iterations *(shipped: a **Run triage** button sends the canned prompt to the `incident_triage_agent`; `GET /session/{id}/triage` exposes the recorded `incident_severity` + `triage_report`, rendered as a severity banner with the report below; per-system chips are derived from the recorded tool calls rather than parsed from the model's prose, and a system that was never consulted shows no chip — "we didn't ask" must not read as "healthy". The timeline is polled every 2.5s while a turn is in flight. **Not shipped:** the act→verify→retry remediation trace, which only exists in the batch `orrery_triage_workflow` — the console hosts the chat root, so there is no loop to render. Tracked as future work rather than left as an open box.)*
+- [x] Milestone 3: the onboarding connectivity check reports provider/model reachability and per-specialist read-only self-test status *(`POST /onboarding/selftest` runs a one-token model round-trip plus every registered integration probe, concurrently and read-only, each with a reason and a "what to configure" hint on failure. Probes are supplied by the app (`create_app(integration_probes=...)`) because core has no dependency on any agent package.)*
+- [x] No changes to agent, plugin, or guardrail logic — the console is a transport (`ChannelAdapter`) over `AgentGateway`
+- [x] Documented in `docs/integrations/web-console.md` and reachable from the getting-started guide
+- [x] The demo compose stack shows the product console; `adk web` Dev UI remains available for developers
 
 ## Notes
 
@@ -207,3 +207,20 @@ Slack/Chat/HTTP. It sits behind the unfinished security perimeter (AEP-013,
 AEP-014) because a browser-facing surface *amplifies* any auth gap, and it pairs
 naturally with streaming (AEP-009), which is also P2. Promote to P1 if onboarding
 friction becomes the top adoption blocker in practice.
+
+## Shipped
+
+Milestones 1–3 are in the tree. What the console does **not** do, deliberately:
+
+- **Token-by-token streaming.** Tracked as AEP-009. Until it lands, the
+  tool-call timeline is polled every 2.5s during a turn, which is what makes a
+  multi-specialist sweep legible; and a turn can be stopped rather than waited
+  out.
+- **The remediation act→verify→retry trace.** That loop lives in the batch
+  `orrery_triage_workflow`, and the console hosts the interactive chat root
+  (`orrery_chat_agent`) — the two roots are separate entrypoints by design
+  (ADR-003). Rendering it needs the console to observe batch runs, which is a
+  larger change than a view.
+- **Editing `.env` from the browser.** The connectivity check *reports* what is
+  wired; it does not write credentials. A browser surface that rewrites server
+  configuration is a much bigger security proposition than one that reads.

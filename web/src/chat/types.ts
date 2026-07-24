@@ -11,4 +11,8 @@ export interface ChatError {
   message: string;
   /** True when re-authenticating would likely fix it. */
   isAuth: boolean;
+  /** True when sending the same message again could plausibly work. */
+  canRetry: boolean;
+  /** Seconds to wait before retrying, when the server said so (429). */
+  retryAfter: number | null;
 }

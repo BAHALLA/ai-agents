@@ -3,23 +3,38 @@ import type {
   ActivityResponse,
   ChatRequest,
   ChatResponse,
+  MeResponse,
   PendingResponse,
+  SelfTestResponse,
   TriageResponse,
 } from "./types";
 
 /** A typed API error carrying the HTTP status so callers can branch on 401 etc. */
 export class ApiError extends Error {
   readonly status: number;
+  /** Seconds to wait before retrying, from a 429's Retry-After header. */
+  readonly retryAfter: number | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, retryAfter: number | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 
   /** True when the failure is an auth problem the user can fix by re-entering a token. */
   get isAuth(): boolean {
     return this.status === 401 || this.status === 403;
+  }
+
+  /** True when the caller was rate limited and should simply wait. */
+  get isRateLimited(): boolean {
+    return this.status === 429;
+  }
+
+  /** True when retrying the identical request could plausibly succeed. */
+  get isRetryable(): boolean {
+    return this.status === 0 || this.status === 429 || this.status >= 500;
   }
 }
 
@@ -66,7 +81,7 @@ export class ApiClient {
     }
 
     if (!res.ok) {
-      throw new ApiError(res.status, await extractError(res));
+      throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
     }
     return (await res.json()) as T;
   }
@@ -98,6 +113,26 @@ export class ApiClient {
       options,
     );
   }
+
+  /** The server's own view of the caller: resolved role, autonomy level, model. */
+  me(options?: RequestOptions): Promise<MeResponse> {
+    return this.request<MeResponse>("/me", undefined, options);
+  }
+
+  /** Run the first-run environment check (model + each wired integration). */
+  selfTest(options?: RequestOptions): Promise<SelfTestResponse> {
+    return this.request<SelfTestResponse>("/onboarding/selftest", {}, options);
+  }
+}
+
+/** Parse `Retry-After` (delta-seconds or an HTTP date) into whole seconds. */
+function retryAfterSeconds(res: Response): number | null {
+  const header = res.headers.get("Retry-After");
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.round(seconds));
+  const when = Date.parse(header);
+  return Number.isNaN(when) ? null : Math.max(0, Math.round((when - Date.now()) / 1000));
 }
 
 /** Pull a human-readable message out of a non-2xx response, tolerating any shape. */

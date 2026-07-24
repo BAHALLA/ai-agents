@@ -206,3 +206,141 @@ describe("App auth flow", () => {
     expect(screen.queryByText("ok")).not.toBeInTheDocument();
   });
 });
+
+describe("resilience and safety posture", () => {
+  const token = makeToken({ sub: "alice", roles: ["operator"] });
+
+  /** Route each endpoint to a canned response; /chat is caller-controlled. */
+  function stubApi(chat: () => Promise<Response>, me?: Record<string, unknown>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/chat")) return chat();
+        if (url.endsWith("/me")) {
+          return jsonResponse(
+            me ?? {
+              subject: "alice",
+              role: "operator",
+              autonomy_level: "L3",
+              model_provider: "gemini",
+              model_name: "gemini-3-pro",
+              self_test_available: true,
+            },
+          );
+        }
+        if (url.includes("/onboarding/selftest")) {
+          return jsonResponse({
+            ok: false,
+            checks: [
+              {
+                name: "model",
+                label: "gemini / gemini-3-pro",
+                ok: true,
+                detail: "Reached gemini.",
+                hint: "",
+                duration_ms: 120,
+              },
+              {
+                name: "kafka",
+                label: "Kafka",
+                ok: false,
+                detail: "Connection refused to broker-1:9092",
+                hint: "Set KAFKA_BOOTSTRAP_SERVERS to a reachable broker list.",
+                duration_ms: 40,
+              },
+            ],
+          });
+        }
+        return jsonResponse({ entries: [], pending: null, severity: null, report: null });
+      }),
+    );
+  }
+
+  it("shows the server-resolved autonomy level next to the role", async () => {
+    stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
+    localStorage.setItem(storageKeys.token, token);
+    render(<App />);
+
+    // The token says nothing about autonomy — only the server knows it.
+    expect(await screen.findByTitle(/autonomy l3/i)).toHaveTextContent("L3");
+  });
+
+  it("runs the environment check and names what to fix", async () => {
+    stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
+    localStorage.setItem(storageKeys.token, token);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
+    await user.click(await screen.findByRole("button", { name: /^run checks$/i }));
+
+    expect(await screen.findByText(/connection refused to broker-1:9092/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/set kafka_bootstrap_servers to a reachable broker list/i),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a retry that does not duplicate the user's message", async () => {
+    let attempt = 0;
+    stubApi(async () => {
+      attempt += 1;
+      if (attempt === 1) return new Response("boom", { status: 503 });
+      return jsonResponse({ session_id: "s1", response: "recovered" });
+    });
+    localStorage.setItem(storageKeys.token, token);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "kafka health?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    await user.click(await screen.findByRole("button", { name: /^retry$/i }));
+
+    expect(await screen.findByText("recovered")).toBeInTheDocument();
+    // The question appears once in the transcript, not once per attempt.
+    const transcript = screen.getByRole("log", { name: /conversation transcript/i });
+    expect(within(transcript).getAllByText("kafka health?")).toHaveLength(1);
+  });
+
+  it("explains a rate limit instead of showing a bare error", async () => {
+    stubApi(
+      async () =>
+        new Response(JSON.stringify({ detail: "3 per 1 minute" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "42" },
+        }),
+    );
+    localStorage.setItem(storageKeys.token, token);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "hello");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(await screen.findByText(/too many requests — retry in 42s/i)).toBeInTheDocument();
+  });
+
+  it("lets the user stop a turn that is taking too long", async () => {
+    // A triage sweep can run for a minute with no partial output; without a
+    // stop control the only escape was reloading the page.
+    stubApi(
+      (input?: unknown) =>
+        new Promise<Response>((_resolve, reject) => {
+          void input;
+          setTimeout(() => reject(new DOMException("aborted", "AbortError")), 50);
+        }),
+    );
+    localStorage.setItem(storageKeys.token, token);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "run triage");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const stop = await screen.findByRole("button", { name: /stop/i });
+    await user.click(stop);
+
+    expect(await screen.findByText(/stopped\./i)).toBeInTheDocument();
+  });
+});

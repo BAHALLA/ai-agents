@@ -38,6 +38,12 @@ export interface ChatController {
   decide: (word: "approve" | "deny") => Promise<void>;
   /** Kick off a full triage sweep (the canned prompt). */
   runTriage: () => Promise<void>;
+  /** Abandon the in-flight turn. The server keeps working; the UI stops waiting. */
+  stop: () => void;
+  /** Re-send the message whose turn failed, if any. */
+  retry: () => Promise<void>;
+  /** Dismiss the current error without retrying. */
+  clearError: () => void;
 }
 
 /**
@@ -56,6 +62,9 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const [triage, setTriage] = useState<TriageResponse | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // The text of the turn in flight (or the one that just failed), so a retry
+  // can replay it without the user retyping — the composer clears on send.
+  const lastSentRef = useRef<string | null>(null);
 
   const { active, activeId, patchActive } = conv;
   const messages = active.messages;
@@ -107,6 +116,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     setActivity([]);
     setPending(null);
     setTriage(null);
+    lastSentRef.current = null;
     if (sessionId) void refreshSidePanes(sessionId, activeId);
     // Only re-run when the active conversation changes, not on every message.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,16 +132,21 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   }, [isSending, sessionId, activeId, refreshSidePanes]);
 
   const send = useCallback(
-    async (raw: string) => {
+    async (raw: string, options: { replay?: boolean } = {}) => {
       const text = raw.trim();
       if (!text || isSending) return;
 
       setError(null);
-      const userMessage: ChatMessage = { id: nextId(), role: "user", text, at: Date.now() };
-      patchActive((c) => ({
-        messages: [...c.messages, userMessage],
-        title: c.title === NEW_CONVERSATION_TITLE ? titleFrom(text) : c.title,
-      }));
+      // On a retry the message is already in the transcript — appending it
+      // again would show the user's question twice for one failed turn.
+      if (!options.replay) {
+        const userMessage: ChatMessage = { id: nextId(), role: "user", text, at: Date.now() };
+        patchActive((c) => ({
+          messages: [...c.messages, userMessage],
+          title: c.title === NEW_CONVERSATION_TITLE ? titleFrom(text) : c.title,
+        }));
+      }
+      lastSentRef.current = text;
       setIsSending(true);
 
       const controller = new AbortController();
@@ -156,11 +171,33 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         }));
         await refreshSidePanes(res.session_id, forConversation);
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        // A user-initiated stop is not a failure — say so, and leave the
+        // message retryable rather than showing a red error for their own click.
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setError({
+            message: "Stopped. The server may still finish this turn in the background.",
+            isAuth: false,
+            canRetry: true,
+            retryAfter: null,
+          });
+          return;
+        }
         if (err instanceof ApiError) {
-          setError({ message: err.message, isAuth: err.isAuth });
+          setError({
+            message: err.isRateLimited
+              ? `Too many requests${err.retryAfter ? ` — retry in ${err.retryAfter}s` : ""}.`
+              : err.message,
+            isAuth: err.isAuth,
+            canRetry: err.isRetryable,
+            retryAfter: err.retryAfter,
+          });
         } else {
-          setError({ message: "Unexpected error sending message.", isAuth: false });
+          setError({
+            message: "Unexpected error sending message.",
+            isAuth: false,
+            canRetry: true,
+            retryAfter: null,
+          });
         }
       } finally {
         setIsSending(false);
@@ -176,6 +213,17 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
 
   const runTriage = useCallback(() => send(TRIAGE_PROMPT), [send]);
 
+  // Abandoning the request only stops *this* client waiting — the turn carries
+  // on server-side, so the wording elsewhere avoids claiming it was cancelled.
+  const stop = useCallback(() => abortRef.current?.abort(), []);
+
+  const retry = useCallback(async () => {
+    const text = lastSentRef.current;
+    if (text) await send(text, { replay: true });
+  }, [send]);
+
+  const clearError = useCallback(() => setError(null), []);
+
   return {
     messages,
     sessionId,
@@ -184,8 +232,11 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     activity,
     pending,
     triage,
-    send,
+    send: (text: string) => send(text),
     decide,
     runTriage,
+    stop,
+    retry,
+    clearError,
   };
 }

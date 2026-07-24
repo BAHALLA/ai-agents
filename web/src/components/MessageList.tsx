@@ -12,11 +12,28 @@ function formatTime(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Scrolling transcript. Auto-scrolls to the newest message on change. */
+/** How far from the bottom still counts as "following along" (px). */
+const STICK_THRESHOLD = 80;
+
+/**
+ * Scrolling transcript. Follows the newest message *only while the reader is
+ * already at the bottom* — scrolling up to re-read an earlier answer while a
+ * multi-specialist sweep is still landing must not yank them back down.
+ */
 export function MessageList({ messages, isSending }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = distance <= STICK_THRESHOLD;
+  };
 
   useEffect(() => {
+    if (!stickToBottom.current) return;
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending]);
 
@@ -35,7 +52,11 @@ export function MessageList({ messages, isSending }: Props) {
 
   return (
     <div
+      ref={scrollRef}
+      onScroll={handleScroll}
       className="orrery-scroll flex flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-6"
+      role="log"
+      aria-label="Conversation transcript"
       aria-live="polite"
     >
       {messages.map((m) => {
