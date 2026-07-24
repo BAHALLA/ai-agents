@@ -329,6 +329,30 @@ async def test_search_success(mock_post):
 
 
 @pytest.mark.asyncio
+@patch("elasticsearch_agent.tools._http_post")
+async def test_search_bounds_the_query_on_the_cluster(mock_post):
+    """The HTTP timeout only bounds our wait — an abandoned request leaves the
+    query running on the cluster. The model writes this DSL, so the ceiling has
+    to travel with it."""
+    mock_post.return_value = _mock_response({"took": 1, "hits": {"total": {"value": 0}}})
+    await search("logs-*", query={"match_all": {}}, size=10)
+
+    _path, body = mock_post.call_args[0]
+    assert body["timeout"] == "10s"
+
+
+@pytest.mark.asyncio
+@patch("elasticsearch_agent.tools._http_post")
+async def test_search_surfaces_a_cluster_timeout(mock_post):
+    """A partial result must not read as a complete one."""
+    mock_post.return_value = _mock_response(
+        {"took": 10_000, "timed_out": True, "hits": {"total": {"value": 0}, "hits": []}}
+    )
+    result = await search("logs-*", query={"match_all": {}}, size=10)
+    assert result["timed_out"] is True
+
+
+@pytest.mark.asyncio
 async def test_search_rejects_non_dict_query():
     result = await search("logs-*", query="not a dict", size=10)  # ty: ignore[invalid-argument-type]
     assert result["status"] == "error"

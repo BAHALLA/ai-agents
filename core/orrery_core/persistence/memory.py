@@ -208,6 +208,15 @@ _metadata = sa.MetaData()
 
 # One row per memory-worthy event (i.e. events carrying content parts).
 # Scoped by (app_name, user_id) to mirror ADK's per-user memory keying.
+#: Most recent matching events a single ``search_memory`` returns.
+#:
+#: Memory is append-only and ``MemoryPlugin`` saves every session of four or
+#: more events, so a user's history grows without limit. Each returned row is
+#: JSON-parsed into a ``Content`` and then travels into the model's context, so
+#: an unbounded recall gets steadily slower and more expensive for the life of
+#: the deployment. Bounding to the newest matches keeps recall cost flat.
+MAX_SEARCH_RESULTS = 200
+
 _memory_events = sa.Table(
     "orrery_memory_events",
     _metadata,
@@ -254,9 +263,19 @@ class DatabaseMemoryService(BaseMemoryService):
         echo: Emit SQL to the logger (debugging only).
         connect_timeout: Seconds to wait for the database connection before
             failing. Keeps startup from hanging when the database is unreachable.
+        max_search_results: Most recent matching events a single search returns
+            (see :data:`MAX_SEARCH_RESULTS`).
     """
 
-    def __init__(self, *, db_url: str, echo: bool = False, connect_timeout: int = 5) -> None:
+    def __init__(
+        self,
+        *,
+        db_url: str,
+        echo: bool = False,
+        connect_timeout: int = 5,
+        max_search_results: int = MAX_SEARCH_RESULTS,
+    ) -> None:
+        self._max_search_results = max_search_results
         sync_url = _to_sync_url(db_url)
         # Fail fast instead of hanging when the server is unreachable
         # (psycopg2 honours connect_timeout, in seconds).
@@ -357,7 +376,15 @@ class DatabaseMemoryService(BaseMemoryService):
                         )
                     ),
                 )
-                .order_by(_memory_events.c.ts, _memory_events.c.id)
+                # Newest first, bounded: a user's history only grows, and every
+                # returned row is JSON-parsed into a Content here and then sent
+                # to the model, so an unbounded recall on a common word ("error",
+                # "pod") gets slower and more expensive every week the deployment
+                # runs. Recent context is also the useful context. The rows are
+                # flipped back to chronological order before returning, so
+                # callers still read oldest → newest.
+                .order_by(_memory_events.c.ts.desc(), _memory_events.c.id.desc())
+                .limit(self._max_search_results)
             )
             for content_json, author, ts, search_text in result:
                 event_words = set(search_text.split())
@@ -371,6 +398,7 @@ class DatabaseMemoryService(BaseMemoryService):
                             timestamp=_format_ts(ts),
                         )
                     )
+        response.memories.reverse()
         return response
 
     # ── BaseMemoryService interface ──────────────────────────────────

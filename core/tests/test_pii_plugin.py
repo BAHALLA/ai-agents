@@ -1,9 +1,10 @@
 """Tests for PIIRedactionPlugin (AEP-013)."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import orrery_core.plugins.pii_plugin as pii_plugin
 from orrery_core.plugins import PIIRedactionPlugin, default_plugins
 from orrery_core.plugins.pii_plugin import REDACTED, REDACTED_IP, redact_structure
 
@@ -167,3 +168,126 @@ class TestDefaultPluginsWiring:
         plugins = default_plugins()
         names = [type(p).__name__ for p in plugins]
         assert names.index("PIIRedactionPlugin") < names.index(AuditPlugin.__name__)
+
+
+# ── Event-loop safety ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_large_payload_redaction_leaves_the_event_loop():
+    """Scanning costs ~60 ms per MiB and this callback is async with a pure-CPU
+    body, so on a big result it would hold the loop and stall every other
+    in-flight request. It runs on the *uncapped* result, because the output cap
+    must stay last in the chain."""
+    import threading
+
+    plugin = PIIRedactionPlugin()
+    caller = threading.current_thread().name
+    seen: list[str] = []
+
+    real = pii_plugin.redact_structure
+
+    def spy(obj, **kwargs):
+        seen.append(threading.current_thread().name)
+        return real(obj, **kwargs)
+
+    result = {"status": "ok", "logs": "password=hunter2\n" + ("x" * 400_000)}
+    with patch.object(pii_plugin, "redact_structure", spy):
+        await plugin.after_tool_callback(
+            tool=MagicMock(), tool_args={}, tool_context=MagicMock(), result=result
+        )
+
+    assert seen and seen[0] != caller  # ran on a worker, not the loop thread
+    assert "hunter2" not in result["logs"]  # and still redacted in place
+
+
+@pytest.mark.asyncio
+async def test_small_payload_stays_inline():
+    """A thread hop would cost more than the scan for an ordinary status dict."""
+    import threading
+
+    plugin = PIIRedactionPlugin()
+    caller = threading.current_thread().name
+    seen: list[str] = []
+
+    real = pii_plugin.redact_structure
+
+    def spy(obj, **kwargs):
+        seen.append(threading.current_thread().name)
+        return real(obj, **kwargs)
+
+    with patch.object(pii_plugin, "redact_structure", spy):
+        await plugin.after_tool_callback(
+            tool=MagicMock(),
+            tool_args={},
+            tool_context=MagicMock(),
+            result={"status": "ok", "password": "hunter2"},
+        )
+
+    assert seen == [caller]
+
+
+@pytest.mark.asyncio
+async def test_offloaded_redaction_still_mutates_in_place():
+    """The in-place + return-None contract is what keeps the rest of ADK's
+    after-tool chain running; moving to a thread must not change it."""
+    plugin = PIIRedactionPlugin()
+    result = {"entries": [{"api_key": "AKIA1234567890ABCDEF"}], "pad": "z" * 400_000}
+
+    returned = await plugin.after_tool_callback(
+        tool=MagicMock(), tool_args={}, tool_context=MagicMock(), result=result
+    )
+
+    assert returned is None
+    assert result["entries"][0]["api_key"] == REDACTED
+
+
+# ── Pattern pre-filter ────────────────────────────────────────────────
+
+# One representative secret per pattern, used to prove the literal pre-filter
+# never skips a pattern that would have matched.
+_SAMPLE_SECRETS = [
+    "db password=hunter2",
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIB\n-----END RSA PRIVATE KEY-----",
+    "aws AKIA1234567890ABCDEF",
+    "gh ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbb",
+    "slack xoxb-1234567890-abcdefghij",
+    "openai sk-abcdefghijklmnopqrstuvwxyz0123",
+    "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3In0.abcdefghijkl",
+]
+
+
+@pytest.mark.parametrize("secret", _SAMPLE_SECRETS)
+def test_every_pattern_still_fires_after_prefiltering(secret):
+    data = {"line": secret}
+    assert redact_structure(data) > 0
+    assert REDACTED in data["line"]
+
+
+@pytest.mark.parametrize("secret", _SAMPLE_SECRETS)
+def test_secrets_are_found_when_buried_in_a_large_clean_payload(secret):
+    """The pre-filter runs against the whole string, so a secret hiding in the
+    middle of megabytes of ordinary log output must still trip its literal."""
+    noise = "2026-07-24T10:15:03Z INFO NetworkClient - node 3 reconnecting\n" * 20_000
+    data = {"logs": noise + secret + "\n" + noise}
+    assert redact_structure(data) > 0
+    assert REDACTED in data["logs"]
+
+
+def test_every_declared_trigger_is_actually_required_by_its_pattern():
+    """A trigger literal is a correctness claim: the pattern must not be able to
+    match text that lacks it. Guard it against a future pattern edit."""
+    for pattern, triggers in pii_plugin.SECRET_VALUE_PATTERNS:
+        for sample in _SAMPLE_SECRETS:
+            if pattern.search(sample) and triggers:
+                assert any(trigger in sample for trigger in triggers), (
+                    f"{pattern.pattern} matches {sample!r} but none of {triggers} appear in it"
+                )
+
+
+def test_prefilter_skips_work_it_cannot_need():
+    """Clean text must not pay for the provider-token patterns at all."""
+    clean = "plain log line without any credentials\n" * 50_000
+    redacted, count = pii_plugin._redact_text(clean, redact_ips=False)
+    assert count == 0
+    assert redacted == clean

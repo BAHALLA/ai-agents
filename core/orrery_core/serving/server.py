@@ -30,9 +30,11 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,13 +47,18 @@ from google.adk.workflow import Workflow
 try:
     from fastapi import Depends, FastAPI, HTTPException, Request, status
     from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, Field
+    from slowapi import Limiter
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
 except ImportError as exc:  # pragma: no cover — covered by the install-extra path
     raise ImportError(
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
     ) from exc
 
+from ..concurrency import configure_default_executor
 from ..persistence.db import create_session_service
 from ..security.auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
@@ -71,6 +78,7 @@ class ServerConfig:
     database_url: str | None = None
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
+    chat_rate_limit: str = "30/minute"
 
     @classmethod
     def from_env(cls) -> ServerConfig:
@@ -84,6 +92,8 @@ class ServerConfig:
         - ``ORRERY_CORS_ORIGINS`` (comma-separated)
         - ``ORRERY_WEB_CONSOLE_ENABLED`` (default ``false``) — serve the built
           web console (AEP-019) from the packaged ``serving/static`` bundle.
+        - ``ORRERY_CHAT_RATE_LIMIT`` (default ``30/minute``) — per-caller limit
+          on ``POST /chat``.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         return cls(
@@ -93,6 +103,7 @@ class ServerConfig:
             cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
             web_console_enabled=os.getenv("ORRERY_WEB_CONSOLE_ENABLED", "false").lower()
             in ("1", "true", "yes"),
+            chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
         )
 
 
@@ -204,13 +215,60 @@ def create_app(
         verified_confirmation=True,
     )
 
-    api = FastAPI(title=f"{app_name} (orrery)", docs_url="/docs", redoc_url=None)
+    # Rate limit per *caller*, not per IP: behind an ingress every user shares a
+    # source address, so an IP key would let one noisy client throttle everyone.
+    # A `/chat` turn buys LLM tokens and can fan out to every specialist plus a
+    # triage sweep, so an unbounded endpoint means one leaked credential is
+    # unbounded spend.
+    #
+    # The key is the *verified* subject, stamped onto the request by
+    # `auth_dependency` (FastAPI resolves dependencies before the handler that
+    # slowapi wraps, so it is always present by the time this runs). Keying on
+    # the raw token instead would hand out a fresh quota on every refresh, and
+    # keying on an unverified `sub` would let a caller mint buckets at will.
+    def rate_limit_key(request: Request) -> str:
+        subject = getattr(request.state, "auth_subject", None)
+        return f"sub:{subject}" if subject else "ip:" + get_remote_address(request)
+
+    limiter = Limiter(key_func=rate_limit_key, default_limits=[cfg.chat_rate_limit])
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Size the pool the blocking tool layer runs on. Done here because it
+        # needs the serving loop: asyncio's default executor is built from the
+        # *host* CPU count, which in a container has nothing to do with the
+        # quota the pod is limited to.
+        configure_default_executor()
+        yield
+
+    api = FastAPI(title=f"{app_name} (orrery)", docs_url="/docs", redoc_url=None, lifespan=lifespan)
+    api.state.limiter = limiter
+
+    def _rate_limited(_request: Request, exc: Exception) -> JSONResponse:
+        detail = getattr(exc, "detail", "rate limit exceeded")
+        return JSONResponse(
+            status_code=429, content={"error": "rate_limited", "detail": str(detail)}
+        )
+
+    api.add_exception_handler(RateLimitExceeded, _rate_limited)
 
     if cfg.cors_origins:
+        # A wildcard origin and credentials are mutually exclusive in any sane
+        # configuration: Starlette answers `*` + credentials by echoing back
+        # whatever origin asked, so every site on the internet becomes a
+        # permitted, credentialed caller. This API authenticates with a bearer
+        # header rather than a cookie, so credentials buy it nothing anyway —
+        # drop them rather than let the combination stand.
+        allow_credentials = "*" not in cfg.cors_origins
+        if not allow_credentials:
+            logger.warning(
+                "ORRERY_CORS_ORIGINS contains '*' — disabling credentialed CORS. "
+                "List the console's exact origins instead."
+            )
         api.add_middleware(
             CORSMiddleware,
             allow_origins=list(cfg.cors_origins),
-            allow_credentials=True,
+            allow_credentials=allow_credentials,
             allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
         )
@@ -221,11 +279,17 @@ def create_app(
         request: Request,
         credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008 — FastAPI dependency pattern
     ) -> AuthContext:
-        """Resolve the bearer token into an ``AuthContext`` or raise 401."""
+        """Resolve the bearer token into an ``AuthContext`` or raise 401.
+
+        Also stamps the verified subject on the request so the rate limiter can
+        key on identity rather than source address.
+        """
         if not cfg.auth_enabled:
             # Anonymous mode — pin to viewer so RBAC still gates writes.
             host = request.client.host if request.client else "unknown"
-            return AuthContext(subject=f"anonymous:{host}", role="viewer", claims={})
+            anonymous = AuthContext(subject=f"anonymous:{host}", role="viewer", claims={})
+            request.state.auth_subject = anonymous.subject
+            return anonymous
 
         if credentials is None or credentials.scheme.lower() != "bearer":
             raise HTTPException(
@@ -235,7 +299,9 @@ def create_app(
             )
 
         try:
-            return verify_token(credentials.credentials, cfg.jwt)
+            context = verify_token(credentials.credentials, cfg.jwt)
+            request.state.auth_subject = context.subject
+            return context
         except AuthError as exc:
             logger.info("Auth rejected for client %s: %s", request.client, exc)
             raise HTTPException(
@@ -253,7 +319,9 @@ def create_app(
         return {"status": "ready"}
 
     @api.post("/chat", response_model=ChatResponse)
+    @limiter.limit(cfg.chat_rate_limit)
     async def chat(
+        request: Request,  # noqa: ARG001 — slowapi resolves the limiter key from it
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
@@ -341,7 +409,11 @@ def create_app(
         """
         from ..security.guardrails import latest_pending_for_scope
 
-        pending = latest_pending_for_scope(auth.subject)
+        # The console polls this endpoint every few seconds while a request is
+        # in flight, and the postgres confirmation backend is a synchronous
+        # engine — calling it inline would block the event loop on a database
+        # round-trip, per polling client, on a timer.
+        pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
         if pending is None:
             return PendingResponse(pending=None)
         return PendingResponse(

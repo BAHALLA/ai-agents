@@ -39,6 +39,7 @@ server = [
     "pyjwt[crypto]>=2.13.0",
     "fastapi>=0.139.0",
     "uvicorn[standard]>=0.51.0",
+    "slowapi>=0.1.10",
 ]
 # Install with: uv sync --extra otel
 # OpenTelemetry tracing: configure_tracing() + TracingPlugin export ADK's

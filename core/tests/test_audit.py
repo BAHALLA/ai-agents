@@ -2,7 +2,9 @@
 
 import json
 import logging
+import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from orrery_core.observability.audit import _sanitize, _sanitize_args, audit_logger
 
@@ -170,3 +172,75 @@ def test_audit_logger_no_file_when_path_is_none(tmp_path, fake_tool, fake_ctx, c
 
     # No .jsonl file should exist anywhere in tmp_path
     assert not list(tmp_path.glob("**/*.jsonl"))
+
+
+# ── Response size bounding ────────────────────────────────────────────
+
+
+def _big_result(chars: int = 50_000) -> dict:
+    return {"status": "success", "logs": "x" * chars, "pod": "api-1"}
+
+
+def test_large_response_is_elided_from_the_audit_entry(caplog):
+    """Audit runs before ToolOutputCapPlugin, so the response reaching it is
+    uncapped — logging it verbatim means a multi-megabyte log line per tool
+    call, shipped to an aggregator with far wider readership than the agent."""
+    callback = audit_logger()
+    tool = MagicMock()
+    tool.name = "get_pod_logs"
+
+    with caplog.at_level(logging.INFO, logger="orrery.audit"):
+        callback(tool=tool, args={}, tool_context=MagicMock(), tool_response=_big_result())
+
+    record = caplog.records[-1]
+    assert "x" * 100 not in str(record.response)
+    assert record.response["status"] == "success"
+    assert record.response["response_chars"] > 50_000
+    assert record.status == "success"
+
+
+def test_small_response_is_kept_verbatim(caplog):
+    """Ordinary results stay in full — the trail has to remain debuggable."""
+    callback = audit_logger()
+    tool = MagicMock()
+    tool.name = "get_kafka_cluster_health"
+
+    with caplog.at_level(logging.INFO, logger="orrery.audit"):
+        callback(
+            tool=tool,
+            args={},
+            tool_context=MagicMock(),
+            tool_response={"status": "success", "brokers_online": 3},
+        )
+
+    assert caplog.records[-1].response == {"status": "success", "brokers_online": 3}
+
+
+def test_status_survives_elision(caplog):
+    """A denied or failed call must stay visible in the trail whatever its size."""
+    callback = audit_logger()
+    tool = MagicMock()
+    tool.name = "search"
+
+    with caplog.at_level(logging.INFO, logger="orrery.audit"):
+        callback(
+            tool=tool,
+            args={},
+            tool_context=MagicMock(),
+            tool_response={"status": "access_denied", "hits": ["y" * 20_000]},
+        )
+
+    assert caplog.records[-1].status == "access_denied"
+    assert caplog.records[-1].response["status"] == "access_denied"
+
+
+def test_elision_does_not_serialize_the_payload():
+    """Deciding to elide must not cost what eliding saves."""
+    callback = audit_logger()
+    tool = MagicMock()
+    tool.name = "get_pod_logs"
+    payload = _big_result(20 * 1024 * 1024)
+
+    start = time.perf_counter()
+    callback(tool=tool, args={}, tool_context=MagicMock(), tool_response=payload)
+    assert time.perf_counter() - start < 0.5
