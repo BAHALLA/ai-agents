@@ -1,8 +1,9 @@
 .PHONY: help install test eval lint type-check ty fmt check clean \
        web-install web-dev web-build web-check web-fmt run-console \
-       infra-up infra-down infra-reset tracing-up tracing-down \
+       infra-up infra-down infra-reset tracing-up tracing-down sso-up sso-down \
        docs-serve docs-build docs-deploy \
        run-assistant run-assistant-api run-assistant-cli run-assistant-persistent run-triage \
+       run-console run-console-sso \
        _ensure-dev-jwt-secret dev-token dev-token-viewer dev-token-operator dev-token-admin \
        rotate-dev-jwt-secret print-dev-jwt-config \
        run-slack-bot run-slack-bot-socket run-google-chat run-google-chat-pubsub
@@ -16,6 +17,12 @@
 DEV_JWT_SECRET_FILE := $(HOME)/.cache/orrery/jwt-secret
 DEV_JWT_AUDIENCE    := orrery-local
 DEV_JWT_ISSUER      := https://dev.local
+
+# Local Keycloak (docker compose --profile sso). The console and the API must
+# agree on the issuer string exactly — Keycloak signs `iss` with the URL the
+# browser used, so "localhost" here and "127.0.0.1" there fails verification.
+SSO_ISSUER    := http://localhost:8081/realms/orrery
+SSO_CLIENT_ID := orrery-console
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -100,8 +107,32 @@ infra-reset: ## Stop infrastructure and wipe volumes
 tracing-up: ## Start the tracing stack (Tempo + Grafana on :3001)
 	docker compose --profile tracing up -d tempo grafana
 
-tracing-down: ## Stop the tracing stack
-	docker compose --profile tracing down
+tracing-down: ## Stop the tracing stack (leaves the rest of the stack alone)
+	# Same footgun as sso-down: `--profile tracing down` stops everything in the
+	# file, not just the tracing services.
+	docker compose rm -sf tempo grafana
+
+sso-up: ## Start local Keycloak for console SSO (realm "orrery" on :8080)
+	docker compose --profile sso up -d keycloak
+	@echo "▶ Waiting for the orrery realm to import…"
+	@ready=0; for i in $$(seq 1 60); do \
+		if curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1; then ready=1; break; fi; \
+		sleep 2; \
+	done; \
+	if [ $$ready -eq 0 ]; then \
+		echo "✗ Realm did not come up. Import errors are usually the cause:"; \
+		docker logs keycloak 2>&1 | grep -i "ERROR" | tail -5; \
+		exit 1; \
+	fi
+	@echo "▶ Keycloak ready: $(SSO_ISSUER)"
+	@echo "▶ Demo users (password = username): viewer / operator / admin"
+	@echo "▶ Now run: make run-console-sso"
+
+sso-down: ## Stop local Keycloak (leaves the rest of the stack alone)
+	# `docker compose --profile sso down` would tear down every service in the
+	# file — a profile filter only *adds* services, it does not scope `down`.
+	# Target the container by name so stopping SSO can't take Kafka with it.
+	docker compose rm -sf keycloak
 
 # ── Documentation ──────────────────────────────────────
 
@@ -153,6 +184,28 @@ run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front 
 		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
 
 run-console: web-build run-assistant-api ## Build the web console and serve it behind the API (one command, http://localhost:8000)
+
+run-console-sso: ## Build the console with SSO and serve it behind an RS256/JWKS API (needs: make sso-up)
+	@curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1 || \
+		{ echo "✗ Keycloak is not reachable at $(SSO_ISSUER). Run: make sso-up"; exit 1; }
+	cd $(WEB_DIR) && \
+		VITE_OIDC_ISSUER=$(SSO_ISSUER) \
+		VITE_OIDC_CLIENT_ID=$(SSO_CLIENT_ID) \
+		VITE_OIDC_ROLE_CLAIM=realm_access.roles \
+		npm run build
+	rm -rf $(WEB_STATIC_DIR) && mkdir -p $(WEB_STATIC_DIR)
+	cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/
+	@echo "▶ Console (SSO) at http://localhost:8000 — sign in as viewer / operator / admin"
+	cd agents/orrery-assistant && \
+		AUTH_ENABLED=true \
+		JWT_ALGORITHM=RS256 \
+		JWT_JWKS_URL=$(SSO_ISSUER)/protocol/openid-connect/certs \
+		JWT_AUDIENCE=$(SSO_CLIENT_ID) \
+		JWT_ISSUER=$(SSO_ISSUER) \
+		JWT_ROLE_CLAIM=realm_access.roles \
+		ENABLE_METRICS_SERVER=true \
+		ORRERY_WEB_CONSOLE_ENABLED=true \
+		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
 
 dev-token: _ensure-dev-jwt-secret ## Mint a JWT for local testing (ROLE=viewer|operator|admin, default admin)
 	@JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \

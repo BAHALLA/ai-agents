@@ -82,6 +82,19 @@ Common JWKS endpoints:
 3. Otherwise, any token matching `operator` returns `operator`.
 4. Otherwise, `viewer`.
 
+`JWT_ROLE_CLAIM` may be a **dotted path** into nested claims, because the
+providers people actually deploy nest their roles — Keycloak uses
+`realm_access.roles` for realm roles and `resource_access.<client>.roles` for
+client roles, neither of which a flat lookup reaches:
+
+```bash
+JWT_ROLE_CLAIM=realm_access.roles
+```
+
+A path that doesn't resolve is treated as "no roles" and yields `viewer` — it
+fails closed. Set the console's `VITE_OIDC_ROLE_CLAIM` to the same value, or its
+badge will disagree with the role the server enforces.
+
 Custom role names are supported by passing `admin_values=` /
 `operator_values=` when calling `extract_role` directly. The HTTP path
 uses the defaults.

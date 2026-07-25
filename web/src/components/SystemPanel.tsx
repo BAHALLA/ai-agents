@@ -1,5 +1,6 @@
 import type { CheckResult } from "../api/types";
 import type { SystemController } from "../system/useSystem";
+import { CopyButton } from "./CopyButton";
 
 interface Props {
   system: SystemController;
@@ -13,7 +14,7 @@ const autonomyHelp: Record<string, string> = {
 
 function CheckRow({ check }: { check: CheckResult }) {
   return (
-    <li className="flex gap-2.5 border-b border-slate-200 px-4 py-3 last:border-0 dark:border-slate-800">
+    <li className="group flex gap-2.5 border-b border-slate-200 px-4 py-3 last:border-0 dark:border-slate-800">
       <span aria-hidden="true" className="pt-0.5 text-sm">
         {check.ok ? "🟢" : "🔴"}
       </span>
@@ -22,9 +23,22 @@ function CheckRow({ check }: { check: CheckResult }) {
           <span className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
             {check.label}
           </span>
-          <span className="shrink-0 text-xs tabular-nums text-slate-400 dark:text-slate-500">
-            {check.duration_ms}ms
-          </span>
+          <div className="flex shrink-0 items-baseline gap-1">
+            {/* Failure details are long connection errors that need pasting
+                into a ticket or a shell; they can't be selected cleanly out of
+                a narrow panel. Shown on hover or keyboard focus. */}
+            {check.ok ? null : (
+              <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                <CopyButton
+                  value={`${check.label}: ${check.detail}${check.hint ? `\nHint: ${check.hint}` : ""}`}
+                  label={`Copy the ${check.label} failure detail`}
+                />
+              </span>
+            )}
+            <span className="text-xs tabular-nums text-slate-400 dark:text-slate-500">
+              {check.duration_ms}ms
+            </span>
+          </div>
         </div>
         <p
           className={`mt-0.5 text-xs break-words ${
@@ -51,10 +65,18 @@ function CheckRow({ check }: { check: CheckResult }) {
  * result — which is how nearly every first-run failure presents today.
  */
 export function SystemPanel({ system }: Props) {
-  const { me, selfTest, isChecking, error, runSelfTest } = system;
+  const { me, meError, selfTest, isChecking, error, runSelfTest } = system;
 
   return (
     <div className="flex flex-col">
+      {meError ? (
+        <p
+          role="alert"
+          className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          {meError}
+        </p>
+      ) : null}
       <dl className="border-b border-slate-200 px-4 py-3 text-sm dark:border-slate-800">
         <div className="flex justify-between gap-2 py-0.5">
           <dt className="text-slate-500 dark:text-slate-400">Role (server)</dt>

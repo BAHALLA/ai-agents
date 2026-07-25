@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
+import { API_PREFIXES } from "./paths";
 
 function mockFetch(impl: typeof fetch): void {
   vi.stubGlobal("fetch", vi.fn(impl));
@@ -156,5 +157,87 @@ describe("ApiClient.triage", () => {
     const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/session/s1/triage");
     expect(init.method).toBe("GET");
+  });
+});
+
+describe("API path coverage", () => {
+  // Regression guard for the dev-proxy drift that made the System pane's
+  // checks 404 on :5173 while working fine on :8000. Every path the client can
+  // request must be covered by API_PREFIXES, which is what vite.config.ts
+  // proxies — so a new endpoint cannot be added without also proxying it.
+  it("every ApiClient request starts with a proxied prefix", async () => {
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const client = new ApiClient("tok");
+    await Promise.all([
+      client.chat({ message: "x" }),
+      client.activity("s1"),
+      client.pendingConfirmation(),
+      client.triage("s1"),
+      client.me(),
+      client.selfTest(),
+    ]);
+
+    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    // Guards against the assertion below passing vacuously if a method stops
+    // calling fetch, and against methods being added without a call here.
+    const methodCount = Object.getOwnPropertyNames(ApiClient.prototype).filter(
+      (n) => n !== "constructor" && n !== "setToken" && n !== "request",
+    ).length;
+    expect(calls).toHaveLength(methodCount);
+
+    for (const [url] of calls) {
+      const path = new URL(String(url), "http://localhost").pathname;
+      expect(
+        API_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
+        `${path} is not covered by API_PREFIXES — add it there so the Vite dev proxy forwards it`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("non-JSON responses", () => {
+  // The failure that made the System pane render "—" with no explanation: the
+  // Vite dev server answered an unproxied GET with the SPA shell, so the
+  // response was a 200 full of HTML and res.json() died with a bare
+  // SyntaxError. A 200 is not success if it didn't come from the API.
+  it("rejects a 200 that returns HTML instead of JSON", async () => {
+    mockFetch(
+      async () =>
+        new Response("<!doctype html><html></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+    );
+
+    const err = await new ApiClient("tok").me().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).message).toContain("text/html");
+    expect((err as ApiError).message).toContain("didn't reach the API");
+  });
+
+  it("reports malformed JSON rather than leaking a SyntaxError", async () => {
+    mockFetch(
+      async () =>
+        new Response("{not json", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const err = await new ApiClient("tok").me().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).message).toContain("Malformed JSON");
+  });
+
+  it("still accepts a valid JSON body sent without a JSON content type", async () => {
+    mockFetch(async () => new Response(JSON.stringify({ role: "admin" }), { status: 200 }));
+    await expect(new ApiClient("tok").me()).resolves.toEqual({ role: "admin" });
   });
 });

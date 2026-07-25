@@ -83,7 +83,25 @@ export class ApiClient {
     if (!res.ok) {
       throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
     }
-    return (await res.json()) as T;
+
+    try {
+      return (await res.json()) as T;
+    } catch {
+      // A 200 that won't parse means the response probably never came from the
+      // API at all — most often the Vite dev server answering an unproxied path
+      // with the SPA shell. That looks like success and then dies inside
+      // res.json() with a bare SyntaxError no caller can interpret. Parse
+      // first (so a valid body with an odd Content-Type still works), then use
+      // the content type to explain what arrived instead.
+      const contentType = (res.headers.get("Content-Type") ?? "").split(";")[0].trim();
+      throw new ApiError(
+        res.status,
+        contentType && !contentType.includes("json")
+          ? `Expected JSON from ${path} but the server returned ${contentType}. ` +
+              "The request probably didn't reach the API — check the dev proxy or the API base URL."
+          : `Malformed JSON in the response from ${path}.`,
+      );
+    }
   }
 
   /** Send one chat turn. Pass the returned session_id back on the next call. */

@@ -5,10 +5,24 @@ import type { MeResponse, SelfTestResponse } from "../api/types";
 export interface SystemController {
   /** The server's own view of the caller — null until it loads. */
   me: MeResponse | null;
+  /** Why `me` is unavailable, when the fetch failed for a reason worth showing. */
+  meError: string | null;
   selfTest: SelfTestResponse | null;
   isChecking: boolean;
   error: string | null;
   runSelfTest: () => Promise<void>;
+}
+
+/** Turn a failure into something that tells the operator what to do about it. */
+export function describeApiError(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  if (err.status === 0) return "Can't reach the server — is the API running?";
+  if (err.isAuth) return "Your session isn't authorised for this. Try signing in again.";
+  if (err.isRateLimited) {
+    return `Rate limited${err.retryAfter ? ` — try again in ${err.retryAfter}s` : ", wait a moment"}.`;
+  }
+  if (err.status >= 500) return `The server failed (${err.status}). Check the API logs.`;
+  return err.message || fallback;
 }
 
 /**
@@ -28,6 +42,7 @@ export interface SystemController {
 export function useSystem(token: string | null): SystemController {
   const client = useMemo(() => new ApiClient(token), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [meError, setMeError] = useState<string | null>(null);
   const [selfTest, setSelfTest] = useState<SelfTestResponse | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,14 +53,27 @@ export function useSystem(token: string | null): SystemController {
 
   useEffect(() => {
     let cancelled = false;
-    // Advisory data for a badge: an older server without /me simply leaves the
-    // autonomy row absent rather than breaking the console.
     client
       .me()
       .then((res) => {
-        if (!cancelled) setMe(res);
+        if (cancelled) return;
+        setMe(res);
+        setMeError(null);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setMe(null);
+        // An older server genuinely without /me is fine — the posture rows just
+        // stay empty. Anything else (unreachable, unauthorised, the dev proxy
+        // answering with the SPA shell) used to be swallowed here, leaving the
+        // panel showing "—" with no way to tell a missing route from a broken
+        // one. That silence is what made the reported bug hard to place.
+        setMeError(
+          err instanceof ApiError && err.status === 404
+            ? null
+            : describeApiError(err, "Could not load deployment posture."),
+        );
+      });
     return () => {
       cancelled = true;
     };
@@ -58,18 +86,11 @@ export function useSystem(token: string | null): SystemController {
     try {
       setSelfTest(await client.selfTest());
     } catch (err) {
-      const rateLimited = err instanceof ApiError && err.isRateLimited;
-      setError(
-        rateLimited
-          ? "Checks are rate limited — wait a moment before running them again."
-          : err instanceof ApiError
-            ? err.message
-            : "Could not run the environment check.",
-      );
+      setError(describeApiError(err, "Could not run the environment check."));
     } finally {
       setIsChecking(false);
     }
   }, [client, isChecking]);
 
-  return { me, selfTest, isChecking, error, runSelfTest };
+  return { me, meError, selfTest, isChecking, error, runSelfTest };
 }

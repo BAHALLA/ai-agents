@@ -71,6 +71,29 @@ class AuthContext:
 # ── Role mapping ─────────────────────────────────────────────────────
 
 
+def _lookup_claim(claims: dict[str, Any], path: str) -> Any:
+    """Read ``path`` from *claims*, following ``.`` into nested objects.
+
+    A flat name is looked up directly, so existing configurations are
+    unaffected. Dotted paths exist because the providers people actually deploy
+    nest their roles: Keycloak puts realm roles under ``realm_access.roles`` and
+    client roles under ``resource_access.<client>.roles``, neither of which a
+    flat lookup can reach. A path that doesn't resolve returns ``None``, which
+    ``extract_role`` treats as "no roles" — i.e. ``viewer``, failing closed.
+    """
+    if "." not in path:
+        return claims.get(path)
+
+    current: Any = claims
+    for segment in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(segment)
+        if current is None:
+            return None
+    return current
+
+
 def extract_role(
     claims: dict[str, Any],
     *,
@@ -80,11 +103,12 @@ def extract_role(
 ) -> str:
     """Map JWT claims to a viewer/operator/admin role.
 
-    The role claim is read from ``claims[role_claim]`` and may be either a
-    list of strings or a single space/comma-separated string. The first
-    match against ``admin_values`` returns ``"admin"``; otherwise the
-    first match against ``operator_values`` returns ``"operator"``;
-    otherwise ``"viewer"``.
+    The role claim is read from ``claims[role_claim]``, where ``role_claim`` may
+    be a dotted path into nested claims (``realm_access.roles``). The value may
+    be either a list of strings or a single space/comma-separated string. The
+    first match against ``admin_values`` returns ``"admin"``; otherwise the
+    first match against ``operator_values`` returns ``"operator"``; otherwise
+    ``"viewer"``.
 
     Examples::
 
@@ -92,8 +116,13 @@ def extract_role(
         extract_role({"roles": "operator,foo"}) == "operator"
         extract_role({"roles": "viewer"}) == "viewer"
         extract_role({}) == "viewer"
+
+        # Keycloak's default shape:
+        extract_role(
+            {"realm_access": {"roles": ["admin"]}}, role_claim="realm_access.roles"
+        ) == "admin"
     """
-    raw = claims.get(role_claim)
+    raw = _lookup_claim(claims, role_claim)
     if raw is None:
         return "viewer"
 
@@ -200,6 +229,7 @@ def verify_token(token: str, config: JWTConfig) -> AuthContext:
     try:
         import jwt as _jwt
         from jwt import InvalidTokenError
+        from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
     except ImportError as exc:
         raise AuthError("PyJWT is not installed. Install with: uv sync --extra auth") from exc
 
@@ -222,7 +252,19 @@ def verify_token(token: str, config: JWTConfig) -> AuthContext:
             # config.validate() guarantees jwks_url is set for asymmetric algorithms.
             assert config.jwks_url is not None  # noqa: S101 — invariant
             client = _get_jwks_client(config.jwks_url)
-            signing_key = client.get_signing_key_from_jwt(token).key
+            try:
+                signing_key = client.get_signing_key_from_jwt(token).key
+            except PyJWKClientConnectionError:
+                # The IdP is unreachable — not the caller's fault, and not
+                # something a new token would fix. Let it surface as a server
+                # error rather than telling the user their token is bad.
+                raise
+            except PyJWKClientError as exc:
+                # No key matches the token's `kid` (or it has none). PyJWT does
+                # NOT make this an InvalidTokenError, so without this it escapes
+                # as a 500 with a traceback — meaning any forged or garbage
+                # token became a server error instead of a clean 401.
+                raise AuthError("Invalid or expired token") from exc
             payload = _jwt.decode(token, signing_key, **decode_kwargs)
     except InvalidTokenError as exc:
         # Never surface the raw exception message in user-facing responses —
