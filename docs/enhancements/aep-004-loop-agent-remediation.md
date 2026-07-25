@@ -89,10 +89,10 @@ Extend the existing `incident_triage_agent`:
 incident_triage_agent = SequentialAgent(
     name="incident_triage_agent",
     sub_agents=[
-        health_check_agent,       # Parallel health checks (existing)
-        triage_summarizer,        # Summarize findings (existing)
-        remediation_loop,         # NEW: attempt auto-remediation
-        journal_writer,           # Record results (existing)
+        health_check_agent,  # Parallel health checks (existing)
+        triage_summarizer,  # Summarize findings (existing)
+        remediation_loop,  # NEW: attempt auto-remediation
+        journal_writer,  # Record results (existing)
     ],
 )
 ```
@@ -101,6 +101,7 @@ incident_triage_agent = SequentialAgent(
 
 ```python
 from google.adk.tools.tool_context import ToolContext
+
 
 async def exit_loop(tool_context: ToolContext) -> dict:
     """Signal that remediation is complete and the loop should stop."""

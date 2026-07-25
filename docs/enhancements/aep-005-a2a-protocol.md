@@ -124,6 +124,7 @@ def create_orrery_assistant():
         kafka = RemoteA2aAgent(name="kafka_health_agent", url=kafka_agent_url)
     else:
         from kafka_health_agent.agent import root_agent as kafka
+
         kafka = AgentTool(agent=kafka)
 
     return create_agent(name="orrery_assistant", sub_agents=[kafka, ...])

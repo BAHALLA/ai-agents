@@ -146,6 +146,7 @@ can be discussed before code — follow the structure of an existing one.
   ```python
   from orrery_core.security.validation import validate_string, validate_positive_int
 
+
   async def my_tool(name: str, count: int = 10) -> dict:
       if err := validate_string(name, "name", max_len=200):
           return err

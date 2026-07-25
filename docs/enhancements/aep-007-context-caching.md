@@ -39,9 +39,9 @@ app = App(
     name="orrery-assistant",
     root_agent=root_agent,
     context_cache_config=ContextCacheConfig(
-        min_tokens=2048,    # Only cache if context > 2048 tokens
-        ttl_seconds=600,    # Cache for 10 minutes
-        cache_intervals=10, # Refresh after 10 uses
+        min_tokens=2048,  # Only cache if context > 2048 tokens
+        ttl_seconds=600,  # Cache for 10 minutes
+        cache_intervals=10,  # Refresh after 10 uses
     ),
 )
 ```

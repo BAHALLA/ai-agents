@@ -82,6 +82,7 @@ Add a module-level `IdempotencyStore` with a pluggable backend:
 ```python
 # agents/google-chat-bot/google_chat_bot/idempotency.py
 
+
 class IdempotencyStore(Protocol):
     async def claim(self, event_id: str, ttl_seconds: int) -> bool:
         """Return True if this worker is the first to see event_id.

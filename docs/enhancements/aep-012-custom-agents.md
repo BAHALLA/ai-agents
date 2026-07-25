@@ -40,6 +40,7 @@ A custom agent that follows a structured runbook with LLM-assisted decision poin
 ```python
 from google.adk.agents import BaseAgent
 
+
 class RunbookAgent(BaseAgent):
     """Executes a structured runbook with LLM-assisted decisions at branch points."""
 
@@ -90,8 +91,15 @@ class EscalationAgent(BaseAgent):
 class CanaryAgent(BaseAgent):
     """Rolls out changes incrementally with automated health checks and rollback."""
 
-    def __init__(self, name, deploy_tool, health_check_tool, rollback_tool,
-                 canary_percentages=[10, 25, 50, 100], **kwargs):
+    def __init__(
+        self,
+        name,
+        deploy_tool,
+        health_check_tool,
+        rollback_tool,
+        canary_percentages=[10, 25, 50, 100],
+        **kwargs,
+    ):
         super().__init__(name=name, **kwargs)
         self.canary_percentages = canary_percentages
         self.deploy_tool = deploy_tool
@@ -124,9 +132,14 @@ class CanaryAgent(BaseAgent):
 def create_runbook_agent(name, runbook_steps, **kwargs):
     return RunbookAgent(name=name, runbook_steps=runbook_steps, **kwargs)
 
+
 def create_escalation_agent(name, inner_agent, threshold, **kwargs):
-    return EscalationAgent(name=name, inner_agent=inner_agent,
-                           escalation_rules=EscalationRules(threshold=threshold), **kwargs)
+    return EscalationAgent(
+        name=name,
+        inner_agent=inner_agent,
+        escalation_rules=EscalationRules(threshold=threshold),
+        **kwargs,
+    )
 ```
 
 ## Affected Files

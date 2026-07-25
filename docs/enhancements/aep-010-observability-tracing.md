@@ -67,6 +67,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
+
 class TracingPlugin(BasePlugin):
     """Emits OpenTelemetry spans for agent lifecycle events."""
 
@@ -122,6 +123,7 @@ Generate a trace ID at the entry point and propagate it:
 
 ```python
 import uuid
+
 
 class TracingPlugin(BasePlugin):
     async def on_user_message_callback(self, *, invocation_context, user_message):

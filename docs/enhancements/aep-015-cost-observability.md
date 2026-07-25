@@ -62,14 +62,15 @@ from __future__ import annotations
 # Source of truth: https://ai.google.dev/pricing, https://www.anthropic.com/pricing,
 # https://openai.com/api/pricing. Values are USD.
 PRICE_PER_1K_TOKENS: dict[str, dict[str, float]] = {
-    "gemini-2.0-flash":     {"input": 0.00010, "output": 0.00040},
-    "gemini-2.5-pro":       {"input": 0.00125, "output": 0.01000},
-    "claude-3-5-sonnet":    {"input": 0.00300, "output": 0.01500},
-    "claude-3-5-haiku":     {"input": 0.00080, "output": 0.00400},
-    "claude-sonnet-4-6":    {"input": 0.00300, "output": 0.01500},
-    "gpt-4o":               {"input": 0.00250, "output": 0.01000},
-    "gpt-4o-mini":          {"input": 0.00015, "output": 0.00060},
+    "gemini-2.0-flash": {"input": 0.00010, "output": 0.00040},
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01000},
+    "claude-3-5-sonnet": {"input": 0.00300, "output": 0.01500},
+    "claude-3-5-haiku": {"input": 0.00080, "output": 0.00400},
+    "claude-sonnet-4-6": {"input": 0.00300, "output": 0.01500},
+    "gpt-4o": {"input": 0.00250, "output": 0.01000},
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.00060},
 }
+
 
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     rates = PRICE_PER_1K_TOKENS.get(model)
@@ -97,6 +98,7 @@ llm_cost_usd_total = Counter(
     "Estimated LLM cost in USD",
     ["provider", "model", "tenant"],
 )
+
 
 async def after_model_callback(self, *, callback_context, llm_response):
     if not (llm_response and llm_response.usage):
@@ -138,11 +140,15 @@ class BudgetPlugin(BasePlugin):
         if spent >= budget:
             logger.warning("tenant_over_budget", extra={"tenant": tenant, "spent_usd": spent})
             return types.Content(
-                parts=[types.Part(text=(
-                    f"Budget exceeded for tenant '{tenant}': "
-                    f"${spent:.2f} / ${budget:.2f} in last {self._window//60}m. "
-                    "Contact an admin to raise the limit."
-                ))],
+                parts=[
+                    types.Part(
+                        text=(
+                            f"Budget exceeded for tenant '{tenant}': "
+                            f"${spent:.2f} / ${budget:.2f} in last {self._window // 60}m. "
+                            "Contact an admin to raise the limit."
+                        )
+                    )
+                ],
                 role="model",
             )
         return None

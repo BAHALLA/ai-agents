@@ -89,8 +89,11 @@ async def run_due_schedules(store: ScheduleStore):
         try:
             state = await run_triage_workflow(autonomy_level=sched.autonomy_level)
             await store.finish_run(
-                run_id, severity=state.get("incident_severity"),
-                report=state.get("triage_report"), status="ok")
+                run_id,
+                severity=state.get("incident_severity"),
+                report=state.get("triage_report"),
+                status="ok",
+            )
         except Exception as exc:
             await store.finish_run(run_id, status="error", report=str(exc))
             logger.exception("scheduled_triage_failed", extra={"schedule_id": sched.id})

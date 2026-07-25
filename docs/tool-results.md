@@ -9,6 +9,7 @@ The `ToolResult` Pydantic model in `orrery_core` provides a standardized way to 
 ```python
 from orrery_core import ToolResult
 
+
 class ToolResult(BaseModel):
     status: Literal["success", "error", "partial"]
     message: str | None = None
@@ -38,6 +39,7 @@ async def get_topic_metadata(topic: str) -> dict:
         replicas=meta.replication_factor,
     ).to_dict()
 
+
 # Returns:
 # {
 #   "status": "success",
@@ -59,6 +61,7 @@ async def get_topic_metadata(topic: str) -> dict:
             error_type="TopicNotFound",
             hints=["Call list_kafka_topics to see available topics"],
         ).to_dict()
+
 
 # Returns:
 # {
