@@ -1,5 +1,6 @@
 .PHONY: help \
         install check fmt test test-web test-cov eval lint type-check ty clean \
+        lock lock-check \
         run-dev run-cli run-api run-web run-slack run-chat run-triage \
         up down reset logs ps \
         dev-token dev-token-reset \
@@ -48,7 +49,21 @@ install: ## Install everything (Python workspace + web console)
 		echo "▶ npm not found — skipped the web console (Python-only setup)"; \
 	fi
 
-check: lint type-check test test-web ## Full gate: lint + types + Python tests + web (mirrors CI)
+check: lock-check lint type-check test test-web ## Full gate: lockfile + lint + types + Python tests + web (mirrors CI)
+
+# `uv sync` silently *rewrites* a stale lock, so nothing ever failed on drift —
+# a Dependabot PR that edited pyproject.toml alone merged green and left the lock
+# recording the old constraint. The lock is tracked precisely so Docker builds
+# are reproducible, which a lock that disagrees with the manifest is not.
+lock-check: ## Fail if uv.lock has drifted from pyproject.toml
+	@uv lock --check || { \
+		echo ""; \
+		echo "▶ uv.lock is out of sync with pyproject.toml. Run 'make lock' and commit the result."; \
+		exit 1; \
+	}
+
+lock: ## Regenerate uv.lock after editing pyproject.toml
+	uv lock
 
 fmt: ## Auto-fix formatting and lint, Python and web
 	uv run ruff check --fix .

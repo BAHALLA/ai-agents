@@ -20,6 +20,12 @@ jobs:
       - name: Set up Python
         run: uv python install 3.14
 
+      # Must run BEFORE `uv sync`: sync silently rewrites a stale lock, which is
+      # why drift never failed a build. A pip-ecosystem Dependabot PR edited
+      # pyproject.toml without the lock and merged green (#76).
+      - name: Verify uv.lock matches pyproject.toml
+        run: make lock-check
+
       - name: Install dependencies
         run: uv sync --all-extras
 
