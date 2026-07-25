@@ -68,3 +68,31 @@ describe("isExpired", () => {
     expect(isExpired(id, Number.MAX_SAFE_INTEGER)).toBe(false);
   });
 });
+
+describe("roleFromClaims with a dotted claim path", () => {
+  // Keycloak nests realm roles under realm_access.roles. Before dotted paths
+  // the badge silently read undefined and rendered every SSO user as "viewer",
+  // disagreeing with the role the server actually enforced.
+  it("follows a nested path", () => {
+    const claims = { realm_access: { roles: ["admin"] } };
+    expect(roleFromClaims(claims, "realm_access.roles")).toBe("admin");
+  });
+
+  it("resolves operator from a nested path", () => {
+    const claims = { resource_access: { console: { roles: ["operator"] } } };
+    expect(roleFromClaims(claims, "resource_access.console.roles")).toBe("operator");
+  });
+
+  it("falls back to viewer when the path does not resolve", () => {
+    expect(roleFromClaims({ realm_access: {} }, "realm_access.roles")).toBe("viewer");
+    expect(roleFromClaims({}, "a.b.c")).toBe("viewer");
+  });
+
+  it("does not treat a non-object mid-path as traversable", () => {
+    expect(roleFromClaims({ realm_access: "admin" }, "realm_access.roles")).toBe("viewer");
+  });
+
+  it("still reads a flat claim by default", () => {
+    expect(roleFromClaims({ roles: ["admin"] })).toBe("admin");
+  });
+});

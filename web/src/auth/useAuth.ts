@@ -1,5 +1,13 @@
-import { useCallback, useMemo, useState } from "react";
-import { legacyStorageKeys, storageKeys } from "../config";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { isOidcEnabled, legacyStorageKeys, storageKeys } from "../config";
+import {
+  completeSignIn,
+  getUserManager,
+  hasAuthResponse,
+  loadUser,
+  signInRedirect,
+  signOutRedirect,
+} from "./oidc";
 import { identityFromToken, isExpired, type Identity } from "./token";
 
 export interface AuthState {
@@ -7,7 +15,16 @@ export interface AuthState {
   identity: Identity | null;
   /** True when a token is present and either has no expiry or hasn't expired. */
   isAuthenticated: boolean;
+  /** Which sign-in surface applies: SSO, or the paste-a-token gate. */
+  mode: "oidc" | "token";
+  /** True while an OIDC session is being restored or a redirect completed. */
+  isLoading: boolean;
+  /** Sign-in failure worth showing on the gate. */
+  error: string | null;
+  /** Token mode: accept a pasted bearer token. */
   signIn: (token: string) => void;
+  /** OIDC mode: start the Authorization Code + PKCE redirect. */
+  signInWithSso: () => void;
   signOut: () => void;
 }
 
@@ -19,13 +36,73 @@ function readStoredToken(): string | null {
   }
 }
 
+/** Drop everything user-scoped so a shared browser never leaks the previous
+ *  user's transcripts to whoever signs in next. */
+function clearLocalState(): void {
+  try {
+    localStorage.removeItem(storageKeys.token);
+    localStorage.removeItem(storageKeys.conversations);
+    localStorage.removeItem(storageKeys.activeConversation);
+    legacyStorageKeys.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * Owns the bearer token: persists it to localStorage and derives the display
- * Identity from it. The token is the only auth state — the server verifies it
- * on every request, so there is no client-side session to expire independently.
+ * Owns the caller's bearer token in whichever mode this deployment runs.
+ *
+ * Both modes end at the same place — a bearer token the server verifies on
+ * every request — so the shape below is deliberately identical for each, and
+ * the rest of the console never learns which one is in play.
+ *
+ * - **OIDC** (`VITE_OIDC_ISSUER` set): Authorization Code + PKCE. The access
+ *   token stays in memory and is renewed silently.
+ * - **Token** (default): the operator pastes a token, e.g. from
+ *   `make dev-token`. Kept so CI and offline work need no identity provider.
  */
 export function useAuth(): AuthState {
-  const [token, setToken] = useState<string | null>(readStoredToken);
+  const [token, setToken] = useState<string | null>(() =>
+    isOidcEnabled ? null : readStoredToken(),
+  );
+  // In OIDC mode nothing can be decided until the session is restored (or a
+  // redirect is redeemed); rendering the sign-in panel before then would flash
+  // a login screen at an already-authenticated user on every refresh.
+  const [isLoading, setIsLoading] = useState(isOidcEnabled);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOidcEnabled) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const user = hasAuthResponse() ? await completeSignIn() : await loadUser();
+        if (!cancelled) setToken(user?.access_token ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setToken(null);
+          setError(err instanceof Error ? err.message : "Single sign-on failed.");
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    // Silent renew swaps the access token underneath us; without this the
+    // console would keep sending the old one until the next full reload.
+    const um = getUserManager();
+    const onLoaded = (user: { access_token: string }) => setToken(user.access_token);
+    const onUnloaded = () => setToken(null);
+    um?.events.addUserLoaded(onLoaded);
+    um?.events.addUserUnloaded(onUnloaded);
+
+    return () => {
+      cancelled = true;
+      um?.events.removeUserLoaded(onLoaded);
+      um?.events.removeUserUnloaded(onUnloaded);
+    };
+  }, []);
 
   const signIn = useCallback((next: string) => {
     const trimmed = next.trim();
@@ -37,18 +114,20 @@ export function useAuth(): AuthState {
     setToken(trimmed);
   }, []);
 
+  const signInWithSso = useCallback(() => {
+    setError(null);
+    void signInRedirect().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : "Could not reach the identity provider.");
+    });
+  }, []);
+
   const signOut = useCallback(() => {
-    try {
-      // Clear everything user-scoped so a shared browser never leaks the prior
-      // user's transcripts to whoever signs in next (plus any legacy keys).
-      localStorage.removeItem(storageKeys.token);
-      localStorage.removeItem(storageKeys.conversations);
-      localStorage.removeItem(storageKeys.activeConversation);
-      legacyStorageKeys.forEach((k) => localStorage.removeItem(k));
-    } catch {
-      // ignore
-    }
+    clearLocalState();
     setToken(null);
+    // Ending the provider session too — otherwise "sign out" followed by
+    // "sign in" silently re-authenticates the same user with no prompt, which
+    // is not what anyone means by signing out of a shared machine.
+    if (isOidcEnabled) void signOutRedirect();
   }, []);
 
   const identity = useMemo(() => (token ? identityFromToken(token) : null), [token]);
@@ -58,5 +137,15 @@ export function useAuth(): AuthState {
     [token, identity],
   );
 
-  return { token, identity, isAuthenticated, signIn, signOut };
+  return {
+    token,
+    identity,
+    isAuthenticated,
+    mode: isOidcEnabled ? "oidc" : "token",
+    isLoading,
+    error,
+    signIn,
+    signInWithSso,
+    signOut,
+  };
 }

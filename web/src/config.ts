@@ -8,7 +8,27 @@
 export const config = {
   /** Base URL for API calls; "" means same-origin. Never has a trailing slash. */
   apiBaseUrl: (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, ""),
+  /**
+   * Claim carrying the caller's roles, as a dotted path. Must match the
+   * server's `JWT_ROLE_CLAIM` or the badge disagrees with enforced RBAC.
+   * Keycloak's realm roles live at `realm_access.roles`.
+   */
+  roleClaim: import.meta.env.VITE_OIDC_ROLE_CLAIM || "roles",
 } as const;
+
+/**
+ * OIDC single sign-on. Configured only when an issuer is set; otherwise the
+ * console falls back to the paste-a-token gate, which keeps `make dev-token`,
+ * CI, and offline work usable with no identity provider running.
+ */
+export const oidcConfig = {
+  issuer: (import.meta.env.VITE_OIDC_ISSUER ?? "").replace(/\/+$/, ""),
+  clientId: import.meta.env.VITE_OIDC_CLIENT_ID ?? "orrery-console",
+  scope: import.meta.env.VITE_OIDC_SCOPE ?? "openid profile email",
+} as const;
+
+/** True when SSO is configured; drives which sign-in surface the app renders. */
+export const isOidcEnabled = oidcConfig.issuer.length > 0;
 
 /** localStorage keys — namespaced to avoid collisions with other apps on the host. */
 export const storageKeys = {

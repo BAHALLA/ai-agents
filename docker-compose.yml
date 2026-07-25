@@ -180,6 +180,37 @@ services:
       - ./infra/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
 
+  # ── Single sign-on (use: make sso-up, or --profile sso) ────────────
+  #
+  # A local OIDC provider so the console's SSO path can be developed and demoed
+  # without an external IdP. The realm ships three users — viewer / operator /
+  # admin, password same as username — which is what makes the RBAC tiers
+  # actually demonstrable in the browser.
+  #
+  # Dev-mode Keycloak: no TLS, no persistence, throwaway admin credentials.
+  # Never point a real deployment at this container.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    container_name: keycloak
+    profiles: [sso]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      # 8081, not Keycloak's default 8080 — kafka-ui already binds 8080 and the
+      # two profiles are routinely up together.
+      - "8081:8080"   # http://localhost:8081 — realm "orrery"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    # No healthcheck: the image is distroless (no shell, curl or wget), so a
+    # CMD-SHELL probe can never run and the container just sits "unhealthy"
+    # forever. `make sso-up` polls the realm's discovery document from the host
+    # instead — a better readiness signal anyway, since realm *import* finishes
+    # after the server starts listening, and it fails loudly with the import
+    # errors when it doesn't come up.
+
   # ── Elasticsearch stack (use: docker compose --profile elastic up) ─
 
   elasticsearch:

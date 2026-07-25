@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../chat/types";
+import { AgentMarkdown } from "./AgentMarkdown";
+import { CopyButton } from "./CopyButton";
 
 interface Props {
   messages: ChatMessage[];
@@ -64,13 +64,18 @@ export function MessageList({ messages, isSending }: Props) {
         return (
           <div
             key={m.id}
-            className={`flex max-w-2xl flex-col gap-1 ${isUser ? "self-end items-end" : "self-start items-start"}`}
+            className={`group flex max-w-2xl flex-col gap-1 ${isUser ? "items-end self-end" : "items-start self-start"}`}
           >
             <div className="flex items-center gap-2 px-1 text-xs text-slate-400 dark:text-slate-500">
               <span className="font-medium text-slate-500 dark:text-slate-400">
                 {isUser ? "You" : "Orrery"}
               </span>
               <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
+              {/* Hover *or* keyboard focus — an action that only appears on
+                  hover is unreachable without a pointer. */}
+              <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                <CopyButton value={m.text} label={`Copy the ${isUser ? "message" : "reply"}`} />
+              </span>
             </div>
             <div
               className={
@@ -82,11 +87,7 @@ export function MessageList({ messages, isSending }: Props) {
               {isUser ? (
                 <p className="whitespace-pre-wrap">{m.text}</p>
               ) : (
-                // Agents reply in markdown; react-markdown builds React elements
-                // (no dangerouslySetInnerHTML), so no sanitizer is needed.
-                <div className="prose prose-sm dark:prose-invert max-w-none prose-pre:bg-slate-900 prose-pre:text-slate-100">
-                  <Markdown remarkPlugins={[remarkGfm]}>{m.text}</Markdown>
-                </div>
+                <AgentMarkdown text={m.text} />
               )}
             </div>
           </div>

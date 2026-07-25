@@ -1,0 +1,83 @@
+{
+  "realm": "orrery",
+  "enabled": true,
+  "displayName": "Orrery",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 36000,
+  "roles": {
+    "realm": [
+      { "name": "viewer", "description": "Read-only access to Orrery tools" },
+      { "name": "operator", "description": "May run mutating, non-destructive tools" },
+      { "name": "admin", "description": "May run destructive tools after confirmation" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "orrery-console",
+      "name": "Orrery Console",
+      "description": "Browser SPA using Authorization Code + PKCE. Direct grants are on ONLY so the chain can be verified with curl; the browser never uses them. Throwaway local fixture — do not reuse anywhere real.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/##http://localhost:5173/"
+      },
+      "redirectUris": ["http://localhost:8000/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:8000", "http://localhost:5173"],
+      "protocolMappers": [
+        {
+          "name": "orrery-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "orrery-console",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "viewer",
+      "email": "viewer@orrery.local",
+      "firstName": "Vic",
+      "lastName": "Viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "viewer", "temporary": false }],
+      "realmRoles": ["viewer"]
+    },
+    {
+      "username": "operator",
+      "email": "operator@orrery.local",
+      "firstName": "Ola",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "operator", "temporary": false }],
+      "realmRoles": ["operator"]
+    },
+    {
+      "username": "admin",
+      "email": "admin@orrery.local",
+      "firstName": "Adi",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
+      "realmRoles": ["admin"]
+    }
+  ]
+}

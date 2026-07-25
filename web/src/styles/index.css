@@ -53,3 +53,52 @@ body {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, currentColor 25%, transparent) transparent;
 }
+
+/* Syntax highlighting (rehype-highlight emits hljs-* classes).
+   Code blocks render on a dark surface in both themes (prose-pre:bg-slate-900),
+   so one palette covers light and dark — only the comment tone needs lifting in
+   light mode, where the surrounding page contrast makes it read as too faint. */
+.hljs-comment,
+.hljs-quote {
+  color: #8b98ad;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-type {
+  color: #c792ea;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-addition {
+  color: #a5d6a7;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #f8bd96;
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-built_in {
+  color: #82aaff;
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attribute {
+  color: #ffcb6b;
+}
+.hljs-deletion {
+  color: #ef9a9a;
+}
+.hljs-meta {
+  color: #89ddff;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}

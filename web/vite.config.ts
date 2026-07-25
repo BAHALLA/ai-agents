@@ -2,6 +2,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { API_PREFIXES } from "./src/api/paths";
 
 // The console is served same-origin by the FastAPI front door in production
 // (StaticFiles from serving/static). During local dev we proxy API calls to a
@@ -18,10 +19,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Every API path must be listed here or dev mode silently serves the SPA
-    // shell for it (the side panes then render empty while :8000 works fine).
+    // Derived from the shared prefix list rather than repeated here — this list
+    // drifted once already (/me and /onboarding were missing, so the System
+    // pane's checks 404'd in dev while :8000 served them fine). A test in
+    // src/api/client.test.ts fails if an ApiClient path escapes the list.
     proxy: Object.fromEntries(
-      ["/chat", "/session", "/confirmations", "/healthz", "/readyz"].map((path) => [
+      API_PREFIXES.map((path) => [
         path,
         {
           target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8000",

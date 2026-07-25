@@ -42,20 +42,96 @@ Python runtime, so the runtime image stays Node-free.
 
 ## Authentication
 
-The console holds no trust of its own. The static shell carries no secrets; the
-operator pastes a JWT at load, and it rides the `Authorization` header on every
-API call. The server verifies it, resolves the role via RBAC, and enforces
-everything — the console's role badge is decoration.
+The console holds no trust of its own. The static shell carries no secrets; a
+bearer token rides the `Authorization` header on every API call, and the server
+verifies it, resolves the role via RBAC, and enforces everything — the console's
+role badge is decoration.
 
-!!! warning "The token lives in `localStorage`"
+There are two ways to obtain that token. Which one applies is deployment
+configuration, and the console renders only the matching sign-in surface.
+
+### SSO (recommended)
+
+Set `VITE_OIDC_ISSUER` at build time and the console runs **OpenID Connect
+Authorization Code with PKCE**. It is provider-agnostic — the same build works
+against Keycloak, Authentik, Auth0, Okta, Entra ID, or Google — and uses a
+*public* client with no secret, which is the correct pattern for a browser SPA.
+
+| Build-time variable | Default | Description |
+|---|---|---|
+| `VITE_OIDC_ISSUER` | — | Issuer URL. **Unset disables SSO** and falls back to the token gate. |
+| `VITE_OIDC_CLIENT_ID` | `orrery-console` | Public client id |
+| `VITE_OIDC_SCOPE` | `openid profile email` | Requested scopes |
+| `VITE_OIDC_ROLE_CLAIM` | `roles` | Dotted path to the roles claim; **must match the server's `JWT_ROLE_CLAIM`** |
+
+The server side needs no new code — point it at the provider's JWKS:
+
+```bash
+JWT_ALGORITHM=RS256
+JWT_JWKS_URL=https://idp.example.com/realms/orrery/protocol/openid-connect/certs
+JWT_AUDIENCE=orrery-console
+JWT_ISSUER=https://idp.example.com/realms/orrery
+JWT_ROLE_CLAIM=realm_access.roles
+```
+
+The access token is held **in memory** and renewed silently, so it is not
+sitting in `localStorage` for any script on the origin to read. Signing out ends
+the provider session too — a local-only sign-out would silently sign the same
+user straight back in, which is not what anyone means by signing out of a shared
+machine.
+
+!!! note "The redirect URI is the console root"
+    Not `/auth/callback`. The front door serves the bundle with
+    `StaticFiles(html=True)`, which 404s unknown deep paths — a sub-path
+    callback works under the Vite dev server and breaks in production. Register
+    `https://your-console/` (and `http://localhost:5173/` for dev) with your
+    provider.
+
+### Pasted token (default, and for CI)
+
+With `VITE_OIDC_ISSUER` unset the console shows the token gate: paste a JWT,
+e.g. from `make dev-token`. This keeps CI, offline work, and quick local runs
+usable with no identity provider running.
+
+!!! warning "A pasted token lives in `localStorage`"
     That makes it readable by any script running on the same origin. The console
     ships no third-party scripts and renders agent replies through
     `react-markdown` (React elements, never `dangerouslySetInnerHTML`), but
-    treat console tokens as short-lived and scope them to the role the operator
-    actually needs.
+    treat pasted tokens as short-lived and scope them to the role the operator
+    actually needs. SSO mode does not have this exposure.
 
 Signing out clears the token, the transcripts, and any legacy keys — a shared
 browser must not leak the previous user's conversations to whoever is next.
+
+### Trying SSO locally
+
+A throwaway Keycloak ships under the `sso` compose profile:
+
+```bash
+make sso-up            # Keycloak on :8081, realm "orrery" pre-imported
+make run-console-sso   # builds the console with SSO, serves it on :8000
+```
+
+Three demo users, password same as username: `viewer`, `operator`, `admin` —
+enough to see the RBAC tiers behave differently in the browser. `make sso-down`
+stops it.
+
+!!! danger "Two gotchas that produce a generic 'Invalid or expired token'"
+    Both bite everyone integrating Keycloak, and neither is obvious from the
+    error:
+
+    1. **Roles are nested.** Keycloak puts realm roles at `realm_access.roles`,
+       not a flat `roles` claim. Set `JWT_ROLE_CLAIM=realm_access.roles` (and
+       the matching `VITE_OIDC_ROLE_CLAIM`) or every user silently resolves to
+       `viewer`. Dotted paths are supported on both sides.
+    2. **The audience is wrong by default.** Keycloak issues access tokens with
+       `aud: account`. Add an **audience mapper** on the client emitting your
+       client id, or leave `JWT_AUDIENCE` unset. The bundled realm includes the
+       mapper.
+
+    The bundled realm also enables direct access grants so the chain can be
+    checked with `curl`. The browser never uses them, and the realm is a
+    throwaway local fixture — do not reuse it anywhere real.
 
 ## What you get
 
