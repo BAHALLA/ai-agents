@@ -21,11 +21,23 @@ repo's real tool metadata instead of guessing from verb prefixes.
 
 Blocked calls **return a structured deny result** rather than raising, so the
 attempt flows through the rest of the plugin chain (metrics) and the model
-receives a clean, actionable message instead of an unhandled exception.
+receives a clean, actionable message instead of an unhandled exception. A call
+merely *paused* on an L4 confirmation is reported as
+:data:`STATUS_AWAITING_CONFIRMATION`, not :data:`STATUS_BLOCKED` — the model acts
+on that string, and "blocked" reads as a dead end when the action is one human
+answer away.
 
 Opt-in: registered by ``default_plugins()`` only when an autonomy level is
 configured (``autonomy_level=`` argument or the ``ORRERY_AUTONOMY_LEVEL`` env
-var), so existing deployments are unchanged.
+var), so existing deployments are unchanged. It is registered **before**
+``GuardrailsPlugin``: ADK's before-tool chain early-exits on the first non-None
+return, so the reverse order let an L2 deployment raise a confirmation prompt for
+a mutation the level would refuse the moment it was approved. The level is a
+property of the process — decide it before asking a human anything.
+
+A per-request override lives in session state, but only when written through
+:func:`set_autonomy_level`; see :data:`AUTONOMY_LOCKED_STATE_KEY` for why a bare
+value is ignored.
 """
 
 from __future__ import annotations
@@ -41,20 +53,70 @@ from ..security.guardrails import get_guard_level, is_destructive
 
 logger = logging.getLogger("orrery.plugins")
 
-# Session-state key an upstream component (transport/server) may set to
-# override the configured level per request.
+# Session-state key a trusted upstream component (transport/server) may set to
+# override the configured level per request. Write it with `set_autonomy_level`,
+# never directly — see the lock key below.
 AUTONOMY_LEVEL_STATE_KEY = "autonomy_level"
 
+#: Marks the level in state as server-set, exactly as ``_role_set_by_server``
+#: does for RBAC.
+#:
+#: Session state is not a trust boundary: tools write to it, and a tool result is
+#: attacker-reachable text. Honouring a bare ``autonomy_level`` would mean any
+#: present-or-future tool that writes state keys generically could promote an L2
+#: read-only deployment to L4 — the escalation RBAC already defends against with
+#: its own lock. An unlocked value is ignored (with a warning) rather than
+#: trusted: fail-closed to the configured level.
+AUTONOMY_LOCKED_STATE_KEY = "_autonomy_set_by_server"
+
 _VALID_LEVELS = frozenset({"L2", "L3", "L4"})
+
+
+def set_autonomy_level(state: dict[str, Any], level: str) -> None:
+    """Set the per-request autonomy level from a trusted entry point.
+
+    Marks the value as server-set so :class:`AutonomyPlugin` will honour it.
+    Call this from a transport or server that has decided the level itself —
+    never with anything derived from model output or client-supplied input.
+
+    Mirrors :func:`orrery_core.security.rbac.set_user_role`: the two axes
+    (*who* and *which mode*) deserve the same protection.
+    """
+    state[AUTONOMY_LEVEL_STATE_KEY] = level
+    state[AUTONOMY_LOCKED_STATE_KEY] = True
+
+
+#: Returned when the level refuses the call outright — a terminal answer.
+STATUS_BLOCKED = "BLOCKED"
+
+#: Returned when the call is *paused* on an ADK-native confirmation, not refused.
+#: A distinct status because the model reads it: told "BLOCKED", it reports the
+#: remediation as failed and moves on, when in fact the action is one human
+#: answer away from running.
+STATUS_AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
 
 
 def _deny(tool_name: str, level: str, reason: str) -> dict[str, Any]:
     """Build the structured deny result returned in place of a tool call."""
     return {
-        "status": "BLOCKED",
+        "status": STATUS_BLOCKED,
         "tool": tool_name,
         "autonomy_level": level,
         "message": f"Tool '{tool_name}' blocked at autonomy level '{level}': {reason}",
+    }
+
+
+def _awaiting_confirmation(tool_name: str, level: str) -> dict[str, Any]:
+    """Build the structured pause result for a call awaiting a human answer."""
+    return {
+        "status": STATUS_AWAITING_CONFIRMATION,
+        "tool": tool_name,
+        "autonomy_level": level,
+        "message": (
+            f"Tool '{tool_name}' is paused at autonomy level '{level}' awaiting the "
+            "user's confirmation. It has NOT run. Tell the user what is waiting on "
+            "them and stop — do not retry it and do not report it as done."
+        ),
     }
 
 
@@ -87,11 +149,28 @@ class AutonomyPlugin(BasePlugin):
         return tool.name in self._l3_blacklist or is_destructive(tool)
 
     def _active_level(self, tool_context: ToolContext) -> str:
+        """The level in force for this call: a *server-set* override, else configured.
+
+        An override present without :data:`AUTONOMY_LOCKED_STATE_KEY` did not come
+        from a trusted entry point, so it is ignored — a promotion is exactly what
+        an injected tool result would attempt.
+        """
         state = getattr(tool_context, "state", None)
         get = getattr(state, "get", None)
-        if callable(get) and get(AUTONOMY_LEVEL_STATE_KEY):
-            return self._normalise(get(AUTONOMY_LEVEL_STATE_KEY))
-        return self._level
+        if not callable(get):
+            return self._level
+        override = get(AUTONOMY_LEVEL_STATE_KEY)
+        if not override:
+            return self._level
+        if not get(AUTONOMY_LOCKED_STATE_KEY):
+            logger.warning(
+                "ignoring untrusted autonomy_level=%r in session state (not set via "
+                "set_autonomy_level); staying at %s",
+                override,
+                self._level,
+            )
+            return self._level
+        return self._normalise(override)
 
     async def before_tool_callback(
         self,
@@ -127,7 +206,7 @@ class AutonomyPlugin(BasePlugin):
                     )
                 )
                 # Pause this call until the user answers; ADK re-invokes on reply.
-                return _deny(name, level, "awaiting user confirmation")
+                return _awaiting_confirmation(name, level)
             if not confirmation.confirmed:
                 logger.warning("autonomy L4 user rejected destructive tool: %s", name)
                 return _deny(name, level, "user rejected the confirmation")

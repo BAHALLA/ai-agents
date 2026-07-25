@@ -1,5 +1,5 @@
 """Database helpers: URL normalization, reachability probing, and a session
-service factory with graceful fallback.
+service factory that fails fast.
 
 The platform supports exactly two session/memory stores: **in-memory** (when no
 ``DATABASE_URL`` is configured) and **PostgreSQL** (when it is). SQLite is not
@@ -8,9 +8,13 @@ supported.
 ADK's ``DatabaseSessionService`` builds its async engine lazily and only touches
 the database on the first request, so a misconfigured or unreachable database
 would otherwise surface as a request-time crash rather than a startup error.
-These helpers run a cheap *synchronous* pre-flight probe so the platform can
-fall back to an in-memory session store (with a warning) instead of failing
-hard when, say, Postgres isn't running yet.
+These helpers run a cheap *synchronous* pre-flight probe to move that failure to
+startup, where an orchestrator can act on it.
+
+A configured-but-unreachable database is then **fatal by default**: see
+:class:`DatabaseUnavailableError` for why silently degrading to in-memory
+sessions is worse than not starting. ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1`` opts
+into the old fallback for local development.
 """
 
 from __future__ import annotations

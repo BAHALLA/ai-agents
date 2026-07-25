@@ -29,6 +29,7 @@ from .persistence.memory import DatabaseMemoryService as DatabaseMemoryService
 from .persistence.memory import SecureMemoryService as SecureMemoryService
 from .persistence.memory import create_memory_service as create_memory_service
 from .plugins import AUTONOMY_LEVEL_STATE_KEY as AUTONOMY_LEVEL_STATE_KEY
+from .plugins import AUTONOMY_LOCKED_STATE_KEY as AUTONOMY_LOCKED_STATE_KEY
 from .plugins import DEFAULT_MAX_TOOL_RESULT_BYTES as DEFAULT_MAX_TOOL_RESULT_BYTES
 from .plugins import ActivityPlugin as ActivityPlugin
 from .plugins import AuditPlugin as AuditPlugin
@@ -42,6 +43,7 @@ from .plugins import ResiliencePlugin as ResiliencePlugin
 from .plugins import SafetyScreenPlugin as SafetyScreenPlugin
 from .plugins import ToolOutputCapPlugin as ToolOutputCapPlugin
 from .plugins import default_plugins as default_plugins
+from .plugins import set_autonomy_level as set_autonomy_level
 from .reliability.error_handlers import graceful_model_error as graceful_model_error
 from .reliability.error_handlers import graceful_tool_error as graceful_tool_error
 from .reliability.resilience import CircuitBreaker as CircuitBreaker

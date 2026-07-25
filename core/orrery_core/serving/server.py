@@ -87,6 +87,21 @@ class ServerConfig:
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"
     selftest_rate_limit: str = "10/minute"
+    docs_enabled: bool | None = None
+
+    @property
+    def serve_docs(self) -> bool:
+        """Whether to expose ``/docs``.
+
+        Defaults to *off* wherever auth is on. The interactive schema is a
+        development affordance, and an unauthenticated one — a browser navigation
+        cannot carry a bearer token, so gating it behind the API's own auth is not
+        possible without a second mechanism. It enumerates every route and request
+        shape, which is free reconnaissance on an authenticated deployment and
+        genuinely useful on a local one. Set ``ORRERY_DOCS_ENABLED`` to override
+        either way.
+        """
+        return not self.auth_enabled if self.docs_enabled is None else self.docs_enabled
 
     @classmethod
     def from_env(cls) -> ServerConfig:
@@ -104,8 +119,11 @@ class ServerConfig:
           on ``POST /chat``.
         - ``ORRERY_SELFTEST_RATE_LIMIT`` (default ``10/minute``) — per-caller
           limit on ``POST /onboarding/selftest``.
+        - ``ORRERY_DOCS_ENABLED`` — serve the interactive ``/docs`` schema.
+          Unset defaults to *on only when auth is off* (see :attr:`serve_docs`).
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
+        docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
         return cls(
             auth_enabled=os.getenv("AUTH_ENABLED", "true").lower() in ("1", "true", "yes"),
             jwt=JWTConfig.from_env(),
@@ -115,6 +133,7 @@ class ServerConfig:
             in ("1", "true", "yes"),
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
+            docs_enabled=(docs in ("1", "true", "yes")) if docs else None,
         )
 
 
@@ -236,7 +255,9 @@ def create_app(
 
     Sessions are persisted to ``config.database_url`` when set (Postgres
     recommended for multi-replica), otherwise an in-memory store is used
-    — fine for single-process testing, **not** safe for production scale.
+    — fine for single-process testing, **not** safe for production scale. A
+    ``database_url`` that is set but unreachable raises rather than degrading
+    silently (``DatabaseUnavailableError``).
 
     Args:
         events_compaction_config: History-compaction configuration. Omitted, it
@@ -264,8 +285,10 @@ def create_app(
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
     # loop, reply extraction). This HTTP surface is one ChannelAdapter over it.
-    # Probe the configured database and fall back to in-memory sessions (with a
-    # warning) when it is unset or unreachable, rather than crashing at startup.
+    # `create_session_service` probes the configured database and *fails fast* if
+    # it is unreachable — a pod that serves traffic with its sessions trapped in
+    # local memory is worse than a pod that will not start. Sessions are in-memory
+    # only when DATABASE_URL is unset (or the fallback is explicitly opted into).
     gateway = AgentGateway(
         app_name=app_name,
         root_agent=root_agent,
@@ -295,7 +318,13 @@ def create_app(
         subject = getattr(request.state, "auth_subject", None)
         return f"sub:{subject}" if subject else "ip:" + get_remote_address(request)
 
-    limiter = Limiter(key_func=rate_limit_key, default_limits=[cfg.chat_rate_limit])
+    # No `default_limits`: slowapi only applies those through `SlowAPIMiddleware`,
+    # which this app does not install, so the argument read as blanket coverage
+    # while doing nothing. Limits are declared per route below, where the cost
+    # actually differs — a `/chat` turn buys tokens, `/confirmations/pending` is a
+    # cheap read the console polls on a timer and must not be throttled into
+    # failure.
+    limiter = Limiter(key_func=rate_limit_key)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -306,7 +335,15 @@ def create_app(
         configure_default_executor()
         yield
 
-    api = FastAPI(title=f"{app_name} (orrery)", docs_url="/docs", redoc_url=None, lifespan=lifespan)
+    api = FastAPI(
+        title=f"{app_name} (orrery)",
+        docs_url="/docs" if cfg.serve_docs else None,
+        openapi_url="/openapi.json" if cfg.serve_docs else None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+    if not cfg.serve_docs:
+        logger.info("Interactive /docs disabled (set ORRERY_DOCS_ENABLED=true to serve it)")
     api.state.limiter = limiter
 
     def _rate_limited(_request: Request, exc: Exception) -> JSONResponse:

@@ -36,24 +36,15 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from ..payload import text_volume
+from ..payload import OFFLOAD_THRESHOLD_CHARS, text_volume
 
 logger = logging.getLogger("orrery.pii")
 
-#: Above this many characters, redaction moves to a worker thread.
-#:
-#: Scanning costs roughly 60 ms per MiB (several regex passes over the same
-#: text), and this callback is ``async`` but does pure CPU work — so on a big
-#: payload it holds the event loop and every other in-flight request stalls
-#: with it. A `get_pod_logs` or wide Elasticsearch result of 20 MiB measured
-#: ~1.3 s of blocking. Note this runs on the *uncapped* result:
-#: ``ToolOutputCapPlugin`` must stay last in the chain (it returns a
-#: replacement, which early-exits ADK's after-tool chain), so its 4 MiB cap
-#: never bounds what arrives here.
-#:
-#: The threshold keeps the common case — small status dicts — inline, where a
-#: thread hop would cost more than the scan itself.
-OFFLOAD_THRESHOLD_CHARS = 256 * 1024
+# Redaction moves to a worker thread above OFFLOAD_THRESHOLD_CHARS. Scanning
+# costs roughly 60 ms per MiB here (several regex passes over the same text), so a
+# 20 MiB `get_pod_logs` result measured ~1.3 s of blocking. The threshold lives in
+# `orrery_core.payload` because the safety screen makes the same call about the
+# same payload, and the two must not drift apart.
 
 REDACTED = "[REDACTED]"
 

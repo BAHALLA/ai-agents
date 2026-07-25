@@ -6,7 +6,13 @@ from typing import Any
 
 import pytest
 
-from orrery_core.plugins.autonomy_plugin import AUTONOMY_LEVEL_STATE_KEY, AutonomyPlugin
+from orrery_core.plugins.autonomy_plugin import (
+    AUTONOMY_LEVEL_STATE_KEY,
+    STATUS_AWAITING_CONFIRMATION,
+    STATUS_BLOCKED,
+    AutonomyPlugin,
+    set_autonomy_level,
+)
 from orrery_core.security.guardrails import confirm, destructive
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -126,22 +132,24 @@ async def test_l4_requests_confirmation_then_honors_answer(fake_tool, fake_ctx):
     plugin = AutonomyPlugin(level="L4")
     tool = _destructive_tool(fake_tool)
 
-    # No confirmation yet → request one and pause.
+    # No confirmation yet → request one and pause. Pausing is NOT blocking: the
+    # model must not report a one-answer-away action as refused.
     ctx = _confirming_ctx()
-    deny = await plugin.before_tool_callback(tool=tool, tool_args={"t": "x"}, tool_context=ctx)
+    paused = await plugin.before_tool_callback(tool=tool, tool_args={"t": "x"}, tool_context=ctx)
     assert ctx.requested_hint is not None
-    assert deny is not None
-    assert deny["status"] == "BLOCKED"
+    assert paused is not None
+    assert paused["status"] == STATUS_AWAITING_CONFIRMATION
+    assert "has NOT run" in paused["message"]
 
     # User approved → proceed.
     approved = _confirming_ctx(confirmed=True)
     assert await plugin.before_tool_callback(tool=tool, tool_args={}, tool_context=approved) is None
 
-    # User rejected → blocked.
+    # User rejected → blocked, and this one really is terminal.
     rejected = _confirming_ctx(confirmed=False)
     deny = await plugin.before_tool_callback(tool=tool, tool_args={}, tool_context=rejected)
     assert deny is not None
-    assert deny["status"] == "BLOCKED"
+    assert deny["status"] == STATUS_BLOCKED
 
 
 @pytest.mark.asyncio
@@ -157,10 +165,13 @@ async def test_l4_mutating_tool_needs_no_confirmation(fake_tool, fake_ctx):
 
 
 @pytest.mark.asyncio
-async def test_state_overrides_configured_level(fake_tool, fake_ctx):
-    # Configured L2, state bumps to L3 → mutation allowed, destructive blocked.
+async def test_server_set_state_overrides_configured_level(fake_tool, fake_ctx):
+    # Configured L2, a trusted transport bumps to L3 → mutation allowed,
+    # destructive still blocked.
     plugin = AutonomyPlugin(level="L2")
-    ctx = fake_ctx(state={AUTONOMY_LEVEL_STATE_KEY: "L3"})
+    state: dict = {}
+    set_autonomy_level(state, "L3")
+    ctx = fake_ctx(state=state)
 
     assert (
         await plugin.before_tool_callback(
@@ -172,9 +183,46 @@ async def test_state_overrides_configured_level(fake_tool, fake_ctx):
         tool=_destructive_tool(fake_tool), tool_args={}, tool_context=ctx
     )
     assert deny is not None
-    assert deny["status"] == "BLOCKED"
+    assert deny["status"] == STATUS_BLOCKED
+
+
+@pytest.mark.asyncio
+async def test_unlocked_state_override_is_ignored(fake_tool, fake_ctx):
+    """The escalation path: state is not a trust boundary.
+
+    Tools write session state, and tool output is attacker-reachable text. A bare
+    ``autonomy_level`` must not promote an L2 deployment — same defence RBAC has
+    with ``_role_set_by_server``.
+    """
+    plugin = AutonomyPlugin(level="L2")
+    ctx = fake_ctx(state={AUTONOMY_LEVEL_STATE_KEY: "L4"})
+
+    deny = await plugin.before_tool_callback(
+        tool=_mutating_tool(fake_tool), tool_args={}, tool_context=ctx
+    )
+    assert deny is not None
+    assert deny["status"] == STATUS_BLOCKED
+    assert deny["autonomy_level"] == "L2", "must stay at the configured level"
+
+
+@pytest.mark.asyncio
+async def test_server_set_override_cannot_be_forged_by_level_alone(fake_tool, fake_ctx):
+    """Setting the lock is what grants trust, not naming the key."""
+    plugin = AutonomyPlugin(level="L2")
+    trusted: dict = {}
+    set_autonomy_level(trusted, "L3")
+    assert plugin._active_level(fake_ctx(state=trusted)) == "L3"
+    assert plugin._active_level(fake_ctx(state={AUTONOMY_LEVEL_STATE_KEY: "L3"})) == "L2"
 
 
 def test_invalid_level_normalises_to_l2():
     assert AutonomyPlugin(level="banana")._level == "L2"
     assert AutonomyPlugin(level="l3")._level == "L3"
+
+
+@pytest.mark.asyncio
+async def test_invalid_server_set_override_normalises_to_l2(fake_tool, fake_ctx):
+    plugin = AutonomyPlugin(level="L3")
+    state: dict = {}
+    set_autonomy_level(state, "banana")
+    assert plugin._active_level(fake_ctx(state=state)) == "L2"

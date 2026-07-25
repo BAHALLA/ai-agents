@@ -58,6 +58,24 @@ def empty_ack() -> dict[str, Any]:
     return {"hostAppDataAction": {"chatDataAction": {"actionStatus": {"statusCode": "OK"}}}}
 
 
+def session_id_for(space_name: str, thread_name: str | None) -> str:
+    """Deterministic session id for a Chat thread (or space, for unthreaded posts).
+
+    Deterministic rather than remembered, so the id survives a restart and every
+    replica derives the same one — Pub/Sub delivery gives no guarantee about which
+    replica handles which turn.
+
+    Sessions are still **per participant**, not per thread: ADK scopes every
+    session by ``(app_name, user_id, session_id)``, so two people in one thread
+    sharing this id get two separate sessions behind it, each with its own
+    history. That is the safe default (nobody reads a colleague's transcript) but
+    it does mean the agent does not follow a thread across speakers — a
+    coordinated multi-person thread needs shared state (``app:``-scoped keys or
+    long-term memory), not a shared session id.
+    """
+    return f"gchat:{thread_name or space_name}"
+
+
 class GoogleChatHandler:
     """Handles incoming Google Chat events and delegates to an ADK Runner."""
 
@@ -488,7 +506,7 @@ class GoogleChatHandler:
                 combined = f"{combined}\n\n{result['text']}"
             return self._wrap_for_addons(combined, result.get("cardsV2"))
 
-        session_id = f"gchat:{thread_name or space_name}"
+        session_id = session_id_for(space_name, thread_name)
 
         result = await self._run_agent(
             session_id=session_id,
@@ -539,7 +557,7 @@ class GoogleChatHandler:
                 )
                 return
 
-            session_id = f"gchat:{thread_name or space_name}"
+            session_id = session_id_for(space_name, thread_name)
             user_role = self.resolve_role(user_email)
 
             # 1. Post the initial "Investigating…" progress card. We
@@ -923,7 +941,7 @@ class GoogleChatHandler:
         thread_name = self._extract_thread_name(event)
         user_email = self._click_user_email(event)
         user_role = self.resolve_role(user_email)
-        session_id = f"gchat:{thread_name or space_name}"
+        session_id = session_id_for(space_name, thread_name)
 
         ack_text = f"*Remediation requested* by {display_name} — running pipeline…"
         result = await self._run_agent(
@@ -951,7 +969,7 @@ class GoogleChatHandler:
         thread_name = self._extract_thread_name(event)
         user_email = self._click_user_email(event)
         user_role = self.resolve_role(user_email)
-        session_id = f"gchat:{thread_name or space_name}"
+        session_id = session_id_for(space_name, thread_name)
 
         progress_message_name: str | None = None
         try:

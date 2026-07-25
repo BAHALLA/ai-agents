@@ -19,8 +19,9 @@ Plugin execution order matters — ``default_plugins()`` returns them in the
 correct sequence (each step sees the call before the next; ErrorHandler last):
 
 1. TracingPlugin       (span wraps everything — optional, [otel] extra)
-2. SafetyScreenPlugin  (blocks prompt-injection messages before the model
-   runs — on by default, ``ORRERY_SAFETY_SCREEN=false`` disables)
+2. SafetyScreenPlugin  (blocks prompt-injection *messages* before the model
+   runs, and neutralizes injected text in *tool results* — on by default,
+   ``ORRERY_SAFETY_SCREEN=false`` disables)
 3. AuthPlugin          (applies verified JWT role — optional)
 4. PIIRedactionPlugin  (scrubs credentials from tool results **in place**,
    before AuditPlugin so the audit log records redacted values — on by
@@ -28,8 +29,10 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
 5. AuditPlugin         (records the attempt *before* the gates, so a call that
    is later denied still leaves an audit record; the outcome — including a
    gate's deny dict — is audited after the call)
-6. GuardrailsPlugin    (RBAC — blocks unauthorized calls)
-7. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured)
+6. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured;
+   before the gates below so a tool the level forbids is refused rather than
+   queued for an approval that cannot help it)
+7. GuardrailsPlugin    (RBAC — blocks unauthorized calls)
 8. ResiliencePlugin    (circuit breaker — blocks calls to failing tools)
 9. MetricsPlugin       (timing + counters)
 10. ActivityPlugin     (session activity tracking)
@@ -38,6 +41,14 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
     after-tool observers, because ADK's after-tool chain early-exits on the
     first non-None return and the cap returns a replacement)
 13. ErrorHandlerPlugin (graceful error recovery — must be last)
+
+Note what is *not* here: per-tool confirmation. ``GuardrailsPlugin`` enforces RBAC
+only; the human-in-the-loop gate for ``@confirm``/``@destructive`` tools is wired
+per agent as ``before_tool_callback=require_confirmation()``, because it must also
+work inside AgentTool sub-sessions and bare ``adk web``. That makes it the one
+safety property a new agent can silently omit — see
+``agents/orrery-assistant/tests/test_confirmation_wiring.py``, the structural
+guard that fails the build when an agent with guarded tools has no gate.
 """
 
 from __future__ import annotations
@@ -52,7 +63,12 @@ from ..security.auth import AuthPlugin
 from ..security.rbac import RolePolicy
 from .activity_plugin import ActivityPlugin
 from .audit_plugin import AuditPlugin
-from .autonomy_plugin import AUTONOMY_LEVEL_STATE_KEY, AutonomyPlugin
+from .autonomy_plugin import (
+    AUTONOMY_LEVEL_STATE_KEY,
+    AUTONOMY_LOCKED_STATE_KEY,
+    AutonomyPlugin,
+    set_autonomy_level,
+)
 from .error_handler_plugin import ErrorHandlerPlugin
 from .guardrails_plugin import GuardrailsPlugin
 from .memory_plugin import MemoryPlugin
@@ -64,6 +80,7 @@ from .safety_plugin import SafetyScreenPlugin
 
 __all__ = [
     "AUTONOMY_LEVEL_STATE_KEY",
+    "AUTONOMY_LOCKED_STATE_KEY",
     "DEFAULT_MAX_TOOL_RESULT_BYTES",
     "ActivityPlugin",
     "AuditPlugin",
@@ -78,6 +95,7 @@ __all__ = [
     "SafetyScreenPlugin",
     "ToolOutputCapPlugin",
     "default_plugins",
+    "set_autonomy_level",
 ]
 
 logger = logging.getLogger("orrery.plugins")
@@ -230,8 +248,11 @@ def default_plugins(
     # non-None return, so anything registered after a deny never runs).
     plugins.append(AuditPlugin(log_path=audit_log_path))
 
-    plugins.append(GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode))
-
+    # Autonomy before RBAC/confirmation, for the same early-exit reason: the level
+    # is a property of the *process*, so a tool the level forbids should be refused
+    # before anyone is asked to approve it. Registered the other way round, an L2
+    # deployment prompted the user to confirm a mutation that L2 would refuse the
+    # instant they said yes.
     if resolved_level := _resolve_autonomy_level(autonomy_level):
         plugins.append(
             AutonomyPlugin(
@@ -240,6 +261,8 @@ def default_plugins(
                 l3_blacklist=autonomy_l3_blacklist,
             )
         )
+
+    plugins.append(GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode))
 
     plugins.extend(
         [

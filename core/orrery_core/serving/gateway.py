@@ -107,30 +107,46 @@ class SessionResolver(Protocol):
 
 
 class MappedSessionResolver:
-    """Remembers ``key → session_id`` in-process, creating on first use.
+    """Remembers ``(user_id, key) → session_id`` in-process, creating on first use.
 
     Suitable for surfaces whose conversation key is not itself a session id —
     Slack threads, Chat spaces, a CLI's single conversation. The mapping is
     in-memory (like the transports' previous behaviour); it is rebuilt after a
     restart, while the sessions themselves persist in the session store.
+
+    The user id is **part of the key**, not just a creation argument. ADK scopes
+    every session by ``(app_name, user_id, session_id)``, so a session id handed
+    to a second user does not resolve to the first user's conversation — it
+    resolves to nothing, and ADK creates a fresh empty session behind the same id.
+    Keying by conversation alone therefore did not share history between
+    participants; it only hid the fact that each one has their own. Sessions in a
+    shared thread are per participant, and this mapping now says so.
     """
 
     def __init__(self) -> None:
-        self._map: dict[str, str] = {}
+        self._map: dict[tuple[str, str], str] = {}
 
     async def resolve(
         self, *, session_service: BaseSessionService, app_name: str, user_id: str, key: str
     ) -> str:
-        if key and (session_id := self._map.get(key)):
+        if key and (session_id := self._map.get((user_id, key))):
             return session_id
         session = await session_service.create_session(app_name=app_name, user_id=user_id)
         if key:
-            self._map[key] = session.id
+            self._map[(user_id, key)] = session.id
         return session.id
 
-    def forget(self, key: str) -> None:
-        """Drop a mapping (e.g. on an explicit 'new conversation')."""
-        self._map.pop(key, None)
+    def forget(self, key: str, user_id: str | None = None) -> None:
+        """Drop a mapping (e.g. on an explicit 'new conversation').
+
+        Without *user_id*, every participant's mapping for *key* is dropped —
+        "restart this thread" is a property of the thread, not of one speaker.
+        """
+        if user_id is not None:
+            self._map.pop((user_id, key), None)
+            return
+        for mapped in [k for k in self._map if k[1] == key]:
+            del self._map[mapped]
 
 
 class ExplicitSessionResolver:
