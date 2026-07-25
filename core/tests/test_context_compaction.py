@@ -266,6 +266,35 @@ class TestGatewayWiring:
         assert passed is not None
         assert passed.token_threshold == DEFAULT_COMPACTION_TOKEN_THRESHOLD
 
+    def test_explicit_none_disables_compaction_and_is_not_overridden(self):
+        """`None` means "off", not "use the default".
+
+        The entry points fall back to the factory when the argument is omitted.
+        Expressing that as `arg or create_events_compaction_config()` made an
+        explicit `None` — the only way to disable compaction in code — silently
+        re-enable it, because `None` is falsy. A sentinel keeps "not supplied"
+        and "explicitly off" distinguishable.
+        """
+        from orrery_core.serving import server
+
+        with patch.object(server, "AgentGateway") as gateway_cls:
+            server.create_app(
+                root_agent=MagicMock(),
+                app_name="t",
+                config=server.ServerConfig(auth_enabled=False),
+                events_compaction_config=None,
+            )
+
+        assert gateway_cls.call_args.kwargs["events_compaction_config"] is None
+
+    def test_resolve_compaction_config_distinguishes_unset_from_none(self):
+        from orrery_core.serving.runner import UNSET, resolve_compaction_config
+
+        assert resolve_compaction_config(None) is None
+        assert resolve_compaction_config(UNSET) is not None
+        explicit = create_events_compaction_config(token_threshold=7)
+        assert resolve_compaction_config(explicit) is explicit
+
     def test_server_respects_the_master_switch(self):
         from orrery_core.serving import server
 

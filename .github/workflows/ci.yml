@@ -132,6 +132,15 @@ jobs:
         # Same target contributors run locally — the web gate is defined once.
         run: make test-web
 
+      # `--omit=dev` deliberately: the console ships a browser bundle, so only
+      # production dependencies reach a user. Auditing dev tooling as well
+      # currently reports 9 high findings (eslint, vitest, postcss, and their
+      # transitive deps) — none of which are shipped — and a gate that is red
+      # on arrival gets switched off within a week. This form is green today
+      # and fails only when something reaching users is vulnerable.
+      - name: Audit shipped dependencies
+        run: cd web && npm audit --omit=dev --audit-level=high
+
   eval:
     name: Agent Evaluation
     runs-on: ubuntu-latest

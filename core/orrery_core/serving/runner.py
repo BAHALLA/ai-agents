@@ -102,6 +102,39 @@ class _ObservedEventSummarizer(LlmEventSummarizer):
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
+
+class _Unset:
+    """Sentinel for "argument not supplied".
+
+    ``None`` already means something specific for compaction — *disabled* — so
+    it cannot double as "use the default". Entry points that fall back to
+    :func:`create_events_compaction_config` default their parameter to
+    :data:`UNSET` instead, which keeps ``config=None`` an honest way to turn
+    compaction off in code rather than silently re-enabling it.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover — debugging aid
+        return "UNSET"
+
+
+#: The "not supplied" marker. See :class:`_Unset`.
+UNSET = _Unset()
+
+#: Type of a compaction argument that may be omitted entirely.
+MaybeCompactionConfig = EventsCompactionConfig | None | _Unset
+
+
+def resolve_compaction_config(value: MaybeCompactionConfig) -> EventsCompactionConfig | None:
+    """Resolve a possibly-omitted compaction argument to a concrete config.
+
+    ``UNSET`` consults the environment (compaction is on by default); an
+    explicit config or an explicit ``None`` is honoured as given.
+    """
+    if isinstance(value, _Unset):
+        return create_events_compaction_config()
+    return value
+
+
 #: Compact once the last observed prompt crossed this many tokens. Sized to sit
 #: well under a 1M-token window while staying out of reach of ordinary sessions:
 #: turning compaction on must not change behaviour for anything but the long
@@ -198,7 +231,7 @@ async def run_persistent(
     memory_service: BaseMemoryService | None = None,
     health_port: int | None = None,
     context_cache_config: ContextCacheConfig | None = None,
-    events_compaction_config: EventsCompactionConfig | None = None,
+    events_compaction_config: MaybeCompactionConfig = UNSET,
 ) -> None:
     """Run an agent in a persistent CLI loop backed by in-memory or PostgreSQL.
 
@@ -219,11 +252,11 @@ async def run_persistent(
         context_cache_config: Optional context caching configuration.
             Use ``create_context_cache_config()`` for env-var-configurable
             defaults.  Only effective with Gemini models.
-        events_compaction_config: Optional history-compaction configuration.
-            Unlike the cache config this defaults to
-            ``create_events_compaction_config()`` rather than to "off" — a
-            persistent CLI session is long-lived by design, so it is the surface
-            that most needs the transcript bounded. Disable via
+        events_compaction_config: History-compaction configuration. Omitted, it
+            defaults to ``create_events_compaction_config()`` rather than to
+            "off" — a persistent CLI session is long-lived by design, so it is
+            the surface that most needs the transcript bounded. Pass ``None`` to
+            disable compaction outright, or set
             ``ORRERY_CONTEXT_COMPACTION=false``.
 
     Session store resolution order:
@@ -254,7 +287,7 @@ async def run_persistent(
     # The gateway owns the shared turn pipeline; this CLI is one surface over it.
     if context_cache_config is not None:
         logger.info("Context caching enabled: %s", context_cache_config)
-    compaction_config = events_compaction_config or create_events_compaction_config()
+    compaction_config = resolve_compaction_config(events_compaction_config)
     if compaction_config is not None:
         logger.info(
             "Context compaction enabled: token_threshold=%s retention=%s",

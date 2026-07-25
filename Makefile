@@ -1,5 +1,5 @@
 .PHONY: help \
-        install check fmt test test-web eval lint type-check ty clean \
+        install check fmt test test-web test-cov eval lint type-check ty clean \
         run-dev run-cli run-api run-web run-slack run-chat run-triage \
         up down reset logs ps \
         dev-token dev-token-reset \
@@ -57,6 +57,15 @@ fmt: ## Auto-fix formatting and lint, Python and web
 
 test: ## Run Python tests (excludes evals)
 	uv run pytest -v
+
+# Deliberately not part of `check` and deliberately not gated on a threshold.
+# A number picked today would be arbitrary, and a failing coverage gate teaches
+# people to write tests that touch lines rather than tests that assert things.
+# This exists so the number is *visible* — a test count says how much was run,
+# not how much is covered.
+test-cov: ## Run Python tests with a coverage report (htmlcov/ for the detail)
+	uv run pytest --cov --cov-report=term-missing:skip-covered --cov-report=html -q
+	@echo "▶ Full report: htmlcov/index.html"
 
 test-web: ## Run the web console gate (lint + format + types + tests + build)
 	@if command -v npm >/dev/null 2>&1; then \

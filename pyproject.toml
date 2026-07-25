@@ -55,6 +55,7 @@ google-chat-bot = { workspace = true }
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=6.0.0",
     "hypothesis>=6.161.5",
     "ruff>=0.15.22",
     "ty>=0.0.63",
@@ -114,6 +115,23 @@ known-first-party = [
     "orrery_assistant",
     "ops_journal_agent",
     "slack_bot",
+]
+
+[tool.coverage.run]
+# Measure the shipped packages only — not the tests, and not the agents' eval
+# datasets. Branch coverage because the interesting risk in this codebase is
+# unexercised *paths* (a guard that never denies, a fallback never taken), not
+# unexecuted lines.
+branch = true
+source = ["core/orrery_core", "agents"]
+omit = ["*/tests/*", "*/evals/*", "*/__main__.py"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "pragma: no cover",
 ]
 
 [tool.pytest.ini_options]

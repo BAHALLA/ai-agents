@@ -40,7 +40,6 @@ from pathlib import Path
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
-from google.adk.apps.app import EventsCompactionConfig
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.workflow import Workflow
@@ -69,7 +68,7 @@ from .onboarding import (
     check_model_connectivity,
     run_probes,
 )
-from .runner import create_events_compaction_config
+from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 
 logger = logging.getLogger("orrery.server")
 
@@ -213,7 +212,7 @@ def create_app(
     config: ServerConfig | None = None,
     memory_service: BaseMemoryService | None = None,
     context_cache_config: ContextCacheConfig | None = None,
-    events_compaction_config: EventsCompactionConfig | None = None,
+    events_compaction_config: MaybeCompactionConfig = UNSET,
     integration_probes: Sequence[IntegrationProbe] | None = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves *root_agent* over authenticated HTTP.
@@ -240,10 +239,11 @@ def create_app(
     — fine for single-process testing, **not** safe for production scale.
 
     Args:
-        events_compaction_config: History-compaction configuration. Defaults to
-            ``create_events_compaction_config()`` (on unless
+        events_compaction_config: History-compaction configuration. Omitted, it
+            defaults to ``create_events_compaction_config()`` (on unless
             ``ORRERY_CONTEXT_COMPACTION=false``) so a long-running HTTP session
-            cannot grow its transcript past the model's window.
+            cannot grow its transcript past the model's window. Pass ``None`` to
+            disable compaction outright.
         integration_probes: Read-only reachability checks surfaced by the
             self-test. Supplied by the caller because core has no dependency on
             any agent package — see ``orrery_assistant/app.py``.
@@ -273,7 +273,7 @@ def create_app(
         session_service=create_session_service(cfg.database_url),
         memory_service=memory_service,
         context_cache_config=context_cache_config,
-        events_compaction_config=(events_compaction_config or create_events_compaction_config()),
+        events_compaction_config=resolve_compaction_config(events_compaction_config),
         session_resolver=ExplicitSessionResolver(),
         # Guarded tools need an explicit 'approve'/'deny' from the same
         # verified user who triggered them (requester-verified confirmation).
