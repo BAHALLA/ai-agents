@@ -96,3 +96,29 @@ def fake_tool():
 def fake_ctx():
     """Factory fixture returning the FakeToolContext class."""
     return FakeToolContext
+
+
+# Environment variables that change which plugins `default_plugins()` returns.
+# Any agent module imported during collection calls `load_agent_env()`, whose
+# `load_dotenv()` searches the CWD and its parents — so the developer's root
+# `.env` is injected into the whole pytest process before a single test runs.
+# That makes plugin-composition assertions depend on local configuration:
+# setting a perfectly legitimate `ORRERY_AUTONOMY_LEVEL=L3` to try the autonomy
+# gate locally would fail the suite, in a file that has nothing to do with the
+# change. Tests that care about one of these knobs set it explicitly (via a
+# `default_plugins()` argument or `monkeypatch`), which still works — this only
+# removes the ambient value they would otherwise inherit.
+_PLUGIN_COMPOSITION_ENV = (
+    "ORRERY_AUTONOMY_LEVEL",
+    "OTEL_TRACING_ENABLED",
+    "ORRERY_SAFETY_SCREEN",
+    "ORRERY_PII_REDACTION",
+    "ORRERY_REDACT_IPS",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_plugin_env(monkeypatch):
+    """Make plugin composition independent of the developer's `.env`."""
+    for name in _PLUGIN_COMPOSITION_ENV:
+        monkeypatch.delenv(name, raising=False)
