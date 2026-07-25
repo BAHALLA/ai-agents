@@ -36,7 +36,20 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from ..payload import OFFLOAD_THRESHOLD_CHARS, text_volume
+from ..payload import OFFLOAD_THRESHOLD_CHARS, mutable_attributes, text_volume
+from ..security.redaction import (
+    IPV4_PATTERN as IPV4_PATTERN,
+)
+from ..security.redaction import (
+    REDACTED as REDACTED,
+)
+from ..security.redaction import (
+    REDACTED_IP as REDACTED_IP,
+)
+from ..security.redaction import (
+    SECRET_VALUE_PATTERNS as SECRET_VALUE_PATTERNS,
+)
+from ..security.redaction import redact_text
 
 logger = logging.getLogger("orrery.pii")
 
@@ -45,8 +58,6 @@ logger = logging.getLogger("orrery.pii")
 # 20 MiB `get_pod_logs` result measured ~1.3 s of blocking. The threshold lives in
 # `orrery_core.payload` because the safety screen makes the same call about the
 # same payload, and the two must not drift apart.
-
-REDACTED = "[REDACTED]"
 
 # Dict keys that carry credentials. Keys are normalized to snake_case first
 # (camelCase/PascalCase boundaries become underscores), then matched against
@@ -76,66 +87,17 @@ def _normalize_key(key: str) -> str:
 # Compared against the *normalized* key, so camelCase variants are covered.
 KEY_ALLOWLIST = frozenset({"next_page_token", "page_token", "continue_token", "resume_token"})
 
-# Secret shapes inside free-form string values (log lines, config dumps, ...).
-#
-# Each entry pairs a pattern with the case-sensitive literals it cannot match
-# without. Every pattern otherwise scans the full text, and on the multi-MiB log
-# payloads this platform routinely handles that is the dominant cost of the
-# whole after-tool chain — while the provider-token shapes almost never fire.
-# ``"AKIA" in text`` is a memchr-style scan, far cheaper than running the regex
-# engine over the same bytes, so an absent literal skips its pattern outright.
-# Measured 2x faster on clean log text with byte-identical output.
-#
-# A literal here is a **correctness claim**: it must appear in every string the
-# pattern can match. Anchor it on the fixed prefix, never on a character class.
-# An empty tuple means "always run" — the right choice for the case-insensitive
-# key=value pattern, whose triggers would need the text lowercased first (a full
-# copy, which costs more than it saves).
-SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
-    # key=value / key: value credential pairs
-    (
-        re.compile(
-            r"(?i)\b(password|passwd|pwd|secret|token|api[_\-]?key|apikey|"
-            r"credential|authorization|bearer)\b\s*[:=]\s*\S+"
-        ),
-        (),
-    ),
-    # PEM private-key blocks
-    (
-        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-        ("-----BEGIN",),
-    ),
-    # Provider token prefixes: AWS access key, GitHub, Slack, OpenAI-style
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), ("AKIA",)),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), ("ghp_", "gho_", "ghu_", "ghs_", "ghr_")),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"), ("xox",)),
-    (re.compile(r"\bsk-[A-Za-z0-9\-_]{20,}\b"), ("sk-",)),
-    # JWT: three dot-separated base64url segments
-    (
-        re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
-        ("eyJ",),
-    ),
-)
-
-IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-REDACTED_IP = "[REDACTED_IP]"
+# The pattern set and the text redactor live in ``security/redaction.py`` — shared
+# with ``SecureMemoryService``, which scrubs the same secret shapes on the way into
+# long-term memory. They stay importable from here (the import above rebinds them
+# as module attributes) because that is this module's established surface.
 
 _MAX_DEPTH = 32
 
 
 def _redact_text(text: str, *, redact_ips: bool) -> tuple[str, int]:
     """Return *text* with secret shapes replaced, plus the replacement count."""
-    count = 0
-    for pattern, triggers in SECRET_VALUE_PATTERNS:
-        # Skip the regex entirely when a literal the pattern requires is absent.
-        if triggers and not any(trigger in text for trigger in triggers):
-            continue
-        text, n = pattern.subn(REDACTED, text)
-        count += n
-    if redact_ips:
-        text, n = IPV4_PATTERN.subn(REDACTED_IP, text)
-        count += n
-    return text, count
+    return redact_text(text, redact_ips=redact_ips)
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -144,10 +106,15 @@ def _is_sensitive_key(key: str) -> bool:
 
 
 def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> int:
-    """Redact secrets in *obj* (dict/list) **in place**; return replacements made.
+    """Redact secrets in *obj* **in place**; return replacements made.
 
-    Strings nested in tuples/sets are left alone (immutable containers are
-    rare in tool results and rebuilding them would change object identity).
+    Walks dicts, lists, and the attributes of ordinary objects — the last of those
+    is what reaches a Pydantic tool result such as ADK's ``LoadMemoryResponse``,
+    which a dict/list-only walk skipped entirely.
+
+    Strings nested in tuples/sets are left alone (rebuilding an immutable container
+    would change object identity). A *bare* string result cannot be mutated at all;
+    :class:`PIIRedactionPlugin` handles that by returning a replacement.
     """
     if _depth > _MAX_DEPTH:
         return 0
@@ -173,6 +140,18 @@ def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> 
                     count += n
             else:
                 count += redact_structure(item, redact_ips=redact_ips, _depth=_depth + 1)
+    elif (attributes := mutable_attributes(obj)) is not None:
+        for name, value in list(attributes.items()):
+            if _is_sensitive_key(name) and value not in (None, ""):
+                setattr(obj, name, REDACTED)
+                count += 1
+            elif isinstance(value, str):
+                redacted, n = _redact_text(value, redact_ips=redact_ips)
+                if n:
+                    setattr(obj, name, redacted)
+                    count += n
+            else:
+                count += redact_structure(value, redact_ips=redact_ips, _depth=_depth + 1)
     return count
 
 
@@ -190,7 +169,12 @@ class PIIRedactionPlugin(BasePlugin):
         tool_args: dict[str, Any],
         tool_context: ToolContext,
         result: Any,
-    ) -> None:
+    ) -> Any:
+        # A bare string cannot be mutated, so the only way to scrub one is to
+        # return the replacement — see _redact_immutable_result.
+        if isinstance(result, (str, bytes)):
+            return _redact_immutable_result(result, tool=tool, redact_ips=self._redact_ips)
+
         # In-place + return None: a non-None return would early-exit ADK's
         # after-tool chain and skip every observer registered after this one.
         # Mutating in a worker thread is safe for the same reason it is safe
@@ -202,3 +186,39 @@ class PIIRedactionPlugin(BasePlugin):
         if count:
             logger.warning("redacted %d secret value(s) from '%s' result", count, tool.name)
         return None
+
+
+def _redact_immutable_result(result: Any, *, tool: BaseTool, redact_ips: bool) -> Any:
+    """Scrub a scalar tool result by *returning* a redacted copy, or ``None``.
+
+    Every shipped tool returns a dict, but ADK does not require it: a tool may
+    return a bare string, and nothing normalizes it to a dict until
+    ``__build_response_event`` — which runs *after* this chain. Such a result used
+    to pass through untouched, carrying whatever it held into the model context,
+    the audit log, and the session store.
+
+    Returning a value early-exits ADK's after-tool chain, so the observers
+    registered after this plugin (audit outcome, activity, metrics, the size cap)
+    do not see this call. That is the unavoidable trade for a value that cannot be
+    mutated, and it is the right way round: losing one audit *outcome* line beats
+    writing a live credential into it. It is logged at warning level so the gap is
+    never silent, and only happens when there was something to redact — a clean
+    string returns ``None`` and the chain proceeds normally.
+
+    The shape the model sees is unchanged either way: ADK wraps a non-dict result
+    as ``{"result": ...}`` regardless of whether this plugin replaced it.
+    """
+    text = result.decode("utf-8", "replace") if isinstance(result, bytes) else result
+    redacted, count = redact_text(text, redact_ips=redact_ips)
+    if not count:
+        return None
+    logger.warning(
+        "redacted %d secret value(s) from '%s' result, which was a bare %s. "
+        "Returning a replacement short-circuits the remaining after-tool observers "
+        "(audit outcome, activity, metrics, output cap) for this call — return a dict "
+        "from the tool to keep them.",
+        count,
+        tool.name,
+        type(result).__name__,
+    )
+    return redacted

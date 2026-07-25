@@ -291,3 +291,80 @@ def test_prefilter_skips_work_it_cannot_need():
     redacted, count = pii_plugin._redact_text(clean, redact_ips=False)
     assert count == 0
     assert redacted == clean
+
+
+# ── Results that are not dicts (the shape the walk used to skip) ──────
+#
+# ADK does not require a tool to return a dict: `FunctionTool.run_async` returns
+# whatever the function returned, and the `{"result": ...}` normalization happens
+# in `__build_response_event` — *after* this chain. A dict/list-only walk
+# therefore skipped bare strings and Pydantic models entirely. `load_memory`,
+# wired into the shipped chat root, returns a Pydantic LoadMemoryResponse.
+
+
+def _plugin():
+    return PIIRedactionPlugin()
+
+
+async def _after(result, plugin=None):
+    return await (plugin or _plugin()).after_tool_callback(
+        tool=MagicMock(name="a_tool"), tool_args={}, tool_context=MagicMock(), result=result
+    )
+
+
+class TestNonDictResults:
+    @pytest.mark.asyncio
+    async def test_bare_string_result_is_redacted_via_replacement(self):
+        """A string cannot be mutated, so the only scrub is a returned copy."""
+        replacement = await _after("connect with password=hunter2")
+        assert replacement == "connect with [REDACTED]"
+
+    @pytest.mark.asyncio
+    async def test_clean_string_result_keeps_the_chain_intact(self):
+        """No secret means no replacement, so later observers still run."""
+        assert await _after("3/3 replicas ready") is None
+
+    @pytest.mark.asyncio
+    async def test_bytes_result_is_decoded_and_redacted(self):
+        """The whole key=value pair is replaced, and bytes come back as text —
+        which is what ADK would have shown the model anyway."""
+        assert await _after(b"token=abc123") == REDACTED
+
+    @pytest.mark.asyncio
+    async def test_pydantic_result_is_redacted_in_place_chain_intact(self):
+        """The load_memory shape: mutable attributes, so no early exit needed."""
+        from google.adk.memory.memory_entry import MemoryEntry
+        from google.adk.tools.load_memory_tool import LoadMemoryResponse
+        from google.genai import types as genai_types
+
+        response = LoadMemoryResponse(
+            memories=[
+                MemoryEntry(
+                    content=genai_types.Content(
+                        role="user",
+                        parts=[genai_types.Part(text="prod key AKIAIOSFODNN7EXAMPLE")],
+                    )
+                )
+            ]
+        )
+
+        assert await _after(response) is None, "must not early-exit for a mutable result"
+        parts = response.memories[0].content.parts
+        assert parts is not None
+        assert parts[0].text == "prod key [REDACTED]"
+
+    def test_sensitive_attribute_names_are_redacted_like_dict_keys(self):
+        class Credentials:
+            def __init__(self):
+                self.username = "svc-account"
+                self.api_key = "abc123xyz"
+
+        creds = Credentials()
+        assert redact_structure(creds) == 1
+        assert creds.api_key == REDACTED
+        assert creds.username == "svc-account"
+
+    def test_scalars_are_not_mistaken_for_attribute_holders(self):
+        """Guards the walk's type gate: ints and None have no fields to scrub."""
+        for scalar in (1, 1.5, True, None, complex(1, 2)):
+            assert redact_structure(scalar) == 0

@@ -74,21 +74,47 @@ def text_volume(obj: Any, limit: int | None = None) -> int:
     return total
 
 
+def mutable_attributes(obj: Any) -> dict[str, Any] | None:
+    """The writable attribute dict of a non-container object, or ``None``.
+
+    Tool results are usually dicts, but not always: ADK's own ``load_memory``
+    returns a Pydantic ``LoadMemoryResponse``, and a dict/list-only walk skipped it
+    entirely — so recalled memories reached the model and the audit log with no
+    redaction and no injection screening at all. Pydantic models are mutable by
+    default, so their fields can be rewritten in place like any other attribute
+    holder, which keeps the return-``None`` contract intact.
+
+    Excludes strings, bytes and containers (handled by the caller's own branches)
+    and anything without a ``__dict__`` — a scalar has nothing to walk into.
+    """
+    if isinstance(obj, (str, bytes, dict, list, tuple, set, frozenset)):
+        return None
+    if isinstance(obj, (int, float, complex, bool, type(None))):
+        return None
+    attributes = getattr(obj, "__dict__", None)
+    return attributes if isinstance(attributes, dict) and attributes else None
+
+
 def map_strings(obj: Any, transform: Callable[[str], tuple[str, int]], _depth: int = 0) -> int:
     """Rewrite every string in *obj* **in place** via *transform*; return the count.
 
     *transform* takes a string and returns ``(new_string, n)`` where ``n`` counts
     the substitutions it made; a zero count leaves the original object untouched
-    (no needless writes). Only mutable containers are rewritten — strings nested
-    in tuples/sets are left alone, since rebuilding an immutable container would
-    change object identity for a case that does not arise in tool results.
+    (no needless writes).
+
+    Walks dicts, lists, and the attributes of ordinary objects (see
+    :func:`mutable_attributes`, which is what lets a Pydantic tool result such as
+    ``LoadMemoryResponse`` be scrubbed). Strings nested in tuples/sets are left
+    alone: rebuilding an immutable container would change object identity, and a
+    caller cannot mutate a bare string at all — the plugin layer handles that case
+    by *returning* a replacement instead.
 
     In-place is the contract that matters for after-tool plugins: ADK's after-tool
     chain early-exits on the first non-None return, so a plugin that wants later
     observers to see its edits must mutate the shared result and return ``None``.
 
     Args:
-        obj: Any tool result — dict, list, or scalar.
+        obj: Any tool result — dict, list, object, or scalar.
         transform: String rewriter returning ``(new_value, substitutions)``.
 
     Returns:
@@ -115,4 +141,15 @@ def map_strings(obj: Any, transform: Callable[[str], tuple[str, int]], _depth: i
                     count += n
             else:
                 count += map_strings(item, transform, _depth + 1)
+    elif (attributes := mutable_attributes(obj)) is not None:
+        for name, value in list(attributes.items()):
+            if isinstance(value, str):
+                new, n = transform(value)
+                if n:
+                    # setattr, not the __dict__ entry: a Pydantic model validates
+                    # and tracks assignment, and bypassing it can desync the model.
+                    setattr(obj, name, new)
+                    count += n
+            else:
+                count += map_strings(value, transform, _depth + 1)
     return count

@@ -147,7 +147,7 @@ class SafetyScreenPlugin(BasePlugin):
         tool_args: dict[str, Any],
         tool_context: ToolContext,
         result: Any,
-    ) -> None:
+    ) -> Any:
         """Neutralize instruction-like text in a tool result, in place.
 
         Offloaded above :data:`~orrery_core.payload.OFFLOAD_THRESHOLD_CHARS` for
@@ -155,7 +155,28 @@ class SafetyScreenPlugin(BasePlugin):
         callback, and a multi-MiB log payload would otherwise stall the loop for
         every concurrent request. Mutating in a worker thread is safe because
         nothing else touches the result until this callback returns.
+
+        A bare string result is the one shape that cannot be mutated, so it is
+        screened by returning a replacement — which early-exits the rest of the
+        chain. See ``pii_plugin._redact_immutable_result`` for why that trade is
+        the right way round.
         """
+        if isinstance(result, (str, bytes)):
+            text = result.decode("utf-8", "replace") if isinstance(result, bytes) else result
+            neutralized, count = neutralize_text(text, self._patterns)
+            if not count:
+                return None
+            logger.warning(
+                "neutralized %d instruction-like span(s) in '%s' result, which was a "
+                "bare %s (possible indirect prompt injection). Returning a replacement "
+                "short-circuits the remaining after-tool observers for this call — "
+                "return a dict from the tool to keep them.",
+                count,
+                tool.name,
+                type(result).__name__,
+            )
+            return neutralized
+
         if text_volume(result, OFFLOAD_THRESHOLD_CHARS) >= OFFLOAD_THRESHOLD_CHARS:
             count = await asyncio.to_thread(neutralize_structure, result, self._patterns)
         else:

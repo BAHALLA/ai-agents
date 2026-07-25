@@ -99,7 +99,19 @@ class ConfirmationStore:
     def add(self, pending: PendingConfirmation) -> None:
         """Register a pending, replacing any prior one for the same
         ``(scope_key, tool_name)`` — a newer request supersedes the stale
-        card/prompt, which can then no longer authorize anything."""
+        card/prompt, which can then no longer authorize anything.
+
+        Deliberately *not* keyed by ``args_hash`` as well. Doing so would let two
+        pendings for one tool live at once, which sounds like an improvement — it
+        would stop the second of two parallel same-tool calls from evicting the
+        first — but it means a card the requester has scrolled past and forgotten
+        can still authorize an execution minutes later. Superseding is the safer
+        default, and the cost is bounded: :meth:`consume_pending` matches on
+        ``args_hash`` exactly, so the evicted call cannot be authorized by the
+        survivor's approval. It simply re-prompts. Liveness, not authority.
+
+        See ``test_confirmation_store.py::TestSupersedingPendings``.
+        """
         with self._lock:
             self._prune_expired_locked()
             for action_id, existing in list(self._pending.items()):
