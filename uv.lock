@@ -2046,7 +2046,7 @@ server = [
 requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.139.0" },
-    { name = "google-adk", extras = ["eval", "db"], specifier = ">=2.4.0" },
+    { name = "google-adk", extras = ["eval", "db"], specifier = ">=2.5.0" },
     { name = "litellm", specifier = ">=1.91.2" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.42.1" },
