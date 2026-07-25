@@ -4,12 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Development Commands
 
+Variants are **flags, not separate targets** (`SSO=1`, `PERSIST=1`, `MODE=socket|pubsub`,
+`ROLE=`, `PROFILES=`). `make help` lists everything.
+
 ```bash
-make install          # Install all workspace packages (uv sync --all-extras)
-make test             # Run all unit tests across all packages (~930)
-make eval             # Run 33 agent eval scenarios (requires LLM credentials)
-make lint             # ruff check + format check
-make fmt              # Auto-fix linting and formatting
+make install  # Python workspace (uv sync --all-extras) + web console (npm ci)
+make check    # Full gate: lint + ty + Python tests + web gate — mirrors CI
+make test     # Python tests only (~1200)
+make test-web # Web console gate only (lint + format + types + tests + build)
+make eval     # Run 33 agent eval scenarios (requires LLM credentials)
+make lint     # ruff check + format check
+make fmt      # Auto-fix lint + formatting, Python *and* web
 ```
 
 Run tests for a single agent:
@@ -17,12 +22,19 @@ Run tests for a single agent:
 uv run pytest agents/kafka-health/tests/ -v
 ```
 
-Run infrastructure (Kafka + Zookeeper + Kafka UI):
+Infrastructure — `up`/`down` act on **everything**; `PROFILES` narrows it:
 ```bash
-make infra-up         # Start infrastructure
-make infra-down       # Stop infrastructure
-make infra-reset      # Stop + wipe volumes (fixes cluster.id mismatch)
+make up                     # All containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+make up PROFILES=tracing    # Just the base stack + Tempo/Grafana
+make down                   # Stop everything (volumes kept)
+make reset                  # Stop + wipe volumes (fixes cluster.id mismatch); prompts unless FORCE=1
+make ps                     # What's running
+make logs SERVICE=kafka     # Tail logs
 ```
+
+The `demo` and `slack` compose profiles are deliberately **excluded** from `make up`:
+they run the agent itself in Docker on the same ports as `make run-api` / `make run-slack`,
+so starting them by default would collide with local runs.
 
 Docker demo (full stack with web UI on :8000):
 ```bash
@@ -31,14 +43,25 @@ docker compose --profile demo down
 ```
 
 Run the orchestrator (orrery-assistant composes every specialist agent, so run it
-directly rather than each agent standalone):
+directly rather than each agent standalone). **One target per surface** — there are
+no per-agent run targets:
 ```bash
-make run-assistant              # ADK Dev UI (in-memory)
-make run-assistant-cli          # Terminal mode
-make run-assistant-api          # FastAPI front door (auth ON, dev JWT)
-make run-assistant-persistent   # Persistent store (Postgres via DATABASE_URL, else in-memory)
-make run-triage                 # Deterministic triage Workflow, one batch run
+make run-dev            # ADK Dev UI (in-memory)
+make run-cli            # Terminal mode
+make run-cli PERSIST=1  # Persistent store (Postgres via DATABASE_URL, else in-memory)
+make run-api            # FastAPI front door + web console on :8000 (auth ON, dev JWT)
+make run-api SSO=1      # …with Keycloak SSO (needs `make up PROFILES=sso`)
+make run-web            # Web console dev server with HMR (Vite :5173)
+make run-slack          # Slack bot (MODE=socket for Socket Mode)
+make run-chat           # Google Chat bot (MODE=pubsub for Pub/Sub mode)
+make run-triage         # Deterministic triage Workflow, one batch run
+make dev-token ROLE=…   # Mint a local JWT (viewer|operator|admin)
 ```
+
+`run-api` builds the web console into `core/orrery_core/serving/static/` before
+starting, so it is the single command for "the product". A missing `npm` warns and
+serves the existing bundle rather than failing — Node stays optional for
+Python-only contributors.
 
 ## Architecture
 
@@ -75,7 +98,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 - **Multi-provider LLM**: `resolve_model()` in `core/orrery_core/agent/base.py` reads `MODEL_PROVIDER` + `MODEL_NAME` env vars. For Gemini returns a string; for others returns `LiteLlm(model=...)`. All agents use this via `create_agent()` — no per-agent changes needed.
 - **Reply-text extraction**: All user-facing transports (Google Chat, Slack, HTTP `/chat`, CLI) build the response by funneling runner events through `extract_reply_text()` in `core/orrery_core/serving/events.py`. It concatenates part text but skips ADK "thought" parts (`part.thought is True`) — Gemini native thinking, `PlanReActPlanner` planning phases, and LiteLLM-surfaced provider reasoning are all normalized onto that flag — so planner/thinking output never leaks into a user reply regardless of provider. Add a new transport? Call this helper rather than iterating `content.parts` yourself.
 - **Prometheus metrics**: `MetricsPlugin` in `core/orrery_core/plugins/` wraps `MetricsCollector` to track tool call counts, latency histograms, error rates, circuit breaker state, and LLM tokens globally. `start_server(port=9100)` exposes `/metrics` for Prometheus scraping.
-- **Distributed tracing (OpenTelemetry)**: `core/orrery_core/observability/tracing.py` provides `configure_tracing()` (installs a global `TracerProvider` → OTLP exporter, idempotent, gated by `OTEL_TRACING_ENABLED`) and `TracingPlugin`. ADK 2.0 already emits native spans for agent/tool/LLM calls under the `gcp.vertex.agent` tracer, so `TracingPlugin` **enriches the current span** (`orrery.request_id`, `orrery.user_role`, `orrery.tool.status`/`result_size`, exception recording) rather than creating duplicate spans; `after_model` only bridges tokens to `track_llm_tokens()` since ADK already sets `gen_ai.usage.*`. `default_plugins(enable_tracing=None)` resolves from `OTEL_TRACING_ENABLED` and prepends the plugin first, so a single env flag turns tracing on across every transport — a missing `[otel]` extra is a skip-with-warning, not a crash. Requires `orrery-core[otel]`; imported lazily (not re-exported from `__init__.py`), mirroring `server.py`/`[server]`. Log↔trace correlation: `JSONFormatter` (`log.py`) stamps `request_id` (a ContextVar, dependency-free) plus `trace_id`/`span_id` (lazy OTel) onto every record. Local stack: `make tracing-up` (Tempo + Grafana under the `tracing` compose profile, with a provisioned `Orrery — Agent Observability` dashboard).
+- **Distributed tracing (OpenTelemetry)**: `core/orrery_core/observability/tracing.py` provides `configure_tracing()` (installs a global `TracerProvider` → OTLP exporter, idempotent, gated by `OTEL_TRACING_ENABLED`) and `TracingPlugin`. ADK 2.0 already emits native spans for agent/tool/LLM calls under the `gcp.vertex.agent` tracer, so `TracingPlugin` **enriches the current span** (`orrery.request_id`, `orrery.user_role`, `orrery.tool.status`/`result_size`, exception recording) rather than creating duplicate spans; `after_model` only bridges tokens to `track_llm_tokens()` since ADK already sets `gen_ai.usage.*`. `default_plugins(enable_tracing=None)` resolves from `OTEL_TRACING_ENABLED` and prepends the plugin first, so a single env flag turns tracing on across every transport — a missing `[otel]` extra is a skip-with-warning, not a crash. Requires `orrery-core[otel]`; imported lazily (not re-exported from `__init__.py`), mirroring `server.py`/`[server]`. Log↔trace correlation: `JSONFormatter` (`log.py`) stamps `request_id` (a ContextVar, dependency-free) plus `trace_id`/`span_id` (lazy OTel) onto every record. Local stack: `make up PROFILES=tracing` (Tempo + Grafana under the `tracing` compose profile, with a provisioned `Orrery — Agent Observability` dashboard).
 - **Resilience**: `ResiliencePlugin` in `core/orrery_core/plugins/` wraps `CircuitBreaker` for per-tool circuit breaking globally. `@with_retry` decorator adds exponential backoff with jitter to async tool functions.
 - **Context caching**: `create_context_cache_config()` in `core/orrery_core/serving/runner.py` creates an ADK `ContextCacheConfig` with env-var defaults (`CONTEXT_CACHE_MIN_LENGTH`, `CONTEXT_CACHE_TTL_SECONDS`, `CONTEXT_CACHE_INTERVALS`). Only effective with Gemini models. Enabled in orrery-assistant via the `App` object.
 - **Context compaction (AEP-020, default-on)**: caching shrinks what a request *costs*; compaction shrinks what it *contains*. `create_events_compaction_config()` (same module) configures ADK's **native** `EventsCompactionConfig` on the `App` — past `ORRERY_COMPACTION_TOKEN_THRESHOLD` (250k) ADK replaces older events with an LLM digest, keeping the last `ORRERY_COMPACTION_RETENTION_EVENTS` verbatim. Without it a long incident session grows until the request exceeds the model window: `ToolOutputCapPlugin` bounds one 4 MiB tool result, never the accumulated transcript, and three of those already approach Gemini's ~10 MiB ceiling. Lossy for the model, **lossless for the record** — ADK appends the digest as an event carrying the compacted timestamp range and filters the originals only at request-assembly time, so audit/replay are untouched. Three things are non-obvious: (1) the summarizer is **always** passed explicitly — ADK otherwise derives it from the root agent's model, which bills digests at the agent's rate and raises outright for a non-`LlmAgent` root (`orrery_triage_workflow`); (2) `compaction_interval`/`overlap_size` are required by ADK, so the sliding-window backstop **cannot be disabled** — its default is set high so the token trigger normally fires first; (3) compaction events bypass `on_event_callback` (the Runner appends them after the agent generator is exhausted), so the metric hook lives in `_ObservedEventSummarizer`, not `MetricsPlugin`. Threaded through every `App`/`AgentGateway` site; `ORRERY_CONTEXT_COMPACTION=false` disables.

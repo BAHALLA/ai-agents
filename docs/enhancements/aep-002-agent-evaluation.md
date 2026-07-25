@@ -102,8 +102,8 @@ Currently only **tool trajectory** is evaluated:
 ### Running Evals
 
 ```bash
-make eval                    # runs all 27 eval scenarios (requires LLM credentials)
-make test                    # runs 439 unit tests, skips evals
+make eval  # runs all 27 eval scenarios (requires LLM credentials)
+make test  # runs 439 unit tests, skips evals
 ```
 
 Evals are gated behind `@pytest.mark.eval` and skip when no LLM credentials are available. CI runs evals via the `eval` job (manual trigger or `run-eval` label).

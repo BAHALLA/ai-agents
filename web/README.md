@@ -23,7 +23,7 @@ transcript plus the server-issued `sessionId`.
 
 Milestone 1 — an authenticated chat console:
 
-- Bearer-token gate (paste the dev JWT from `make run-assistant-api`)
+- Bearer-token gate (paste the dev JWT from `make run-api`)
 - Chat against `POST /chat`, threading the server-issued `session_id`
 - Identity + role badge (viewer / operator / admin), decoded client-side for
   display — the server remains authoritative for RBAC
@@ -57,13 +57,13 @@ workflow only today), and Milestone 3 (onboarding wizard).
 From the repo root, wrapped as Make targets (one command each):
 
 ```bash
-make run-console     # build the SPA + serve it behind the API at http://localhost:8000
-make web-dev         # Vite dev server on :5173 with hot reload (proxies /chat to :8000)
-make web-install     # npm ci
+make run-api  # build the SPA + serve it behind the API at http://localhost:8000
+make run-web  # Vite dev server on :5173 with hot reload (proxies /chat to :8000)
+make install  # npm ci
 ```
 
-`make run-console` is the production-like path (same-origin, single port). For
-fast iteration use two terminals — `make run-assistant-api` and `make web-dev` —
+`make run-api` is the production-like path (same-origin, single port). For
+fast iteration use two terminals — `make run-api` and `make run-web` —
 then mint a token with `make dev-token` and paste it into the gate.
 
 The underlying npm scripts still work directly if you prefer:
@@ -77,11 +77,11 @@ Copy `.env.example` to `.env.local` to override the API base or dev proxy.
 ## Quality gate
 
 ```bash
-make web-check       # lint + format + typecheck + test + build (mirrors CI)
-make web-fmt         # prettier --write .
+make test-web  # lint + format + typecheck + test + build (mirrors CI)
+make fmt       # prettier --write .
 ```
 
-CI runs `make web-check` in a dedicated `web` job (see
+CI runs `make test-web` in a dedicated `web` job (see
 `.github/workflows/ci.yml`), so the gate is defined once and matches local.
 Underlying scripts: `npm run check`, `npm run test:watch`, `npm run build`.
 

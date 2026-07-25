@@ -8,14 +8,14 @@ Orrery is designed to be interface-agnostic. A single agent runner can be expose
 The product UI: chat, a tool-call timeline, Approve/Deny for guarded actions, a triage view, and a first-run environment check.
 - **Features**: Server-resolved role + autonomy badge, per-system triage chips derived from recorded tool calls, stop/retry on a turn, and a read-only self-test that names which integrations are wired and what to configure when one is not.
 - **Best For**: Operators running incidents, and anyone evaluating the platform for the first time.
-- **Run Command**: `make run-console` (builds the bundle and serves it at `:8000`; off unless `ORRERY_WEB_CONSOLE_ENABLED=true`).
+- **Run Command**: `make run-api` (builds the bundle and serves it at `:8000`; off unless `ORRERY_WEB_CONSOLE_ENABLED=true`).
 - **Setup Guide**: [Web Console Reference](integrations/web-console.md)
 
 ### 2. ADK Web UI (Developer Portal)
 The primary interface for local development and agent debugging.
 - **Features**: Real-time trace visualization, session state inspection, and artifact downloads.
 - **Best For**: SREs and developers building or testing new agent capabilities.
-- **Run Command**: `make run-assistant` (binds `:8000`).
+- **Run Command**: `make run-dev` (binds `:8000`).
 - **Testing roles here**: see [Testing RBAC across surfaces → ADK Web](rbac-testing.md#testing-in-adk-web-adk-web).
 
 ### 3. Slack Bot (Collaborative Operations)
@@ -34,7 +34,7 @@ Brings the same collaborative pattern to Google Workspace, including Workspace A
 A headless interface for terminal-based interactions and CI/CD automation.
 - **Features**: Persistent session support (in-memory or PostgreSQL), structured JSON logging, and a health probe server for readiness checks.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
-- **Run Commands**: `make run-assistant-cli` (ephemeral REPL via `adk run`) or `make run-assistant-persistent` (session store + memory + health probes via `run_persistent()`).
+- **Run Commands**: `make run-cli` (ephemeral REPL via `adk run`) or `make run-cli PERSIST=1` (session store + memory + health probes via `run_persistent()`).
 - **Entry point**: [`core.runner.run_persistent`](core/README.md) — this is also what the production container runs.
 
 ---

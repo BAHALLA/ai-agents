@@ -22,7 +22,7 @@ Before every agent turn, `GuardrailsPlugin.before_agent_callback` runs `ensure_d
 |---------|--------------|---------------|
 | ADK Web (`adk web`) | `viewer` | Edit session state: set `user_role` **and** `_role_set_by_server: true`, then start a **new session** |
 | ADK CLI (`adk run <agent>`) | `viewer` | No env-var knob — wrap the agent with `core.runner.run_persistent_cli()` or write a small script |
-| Persistent CLI (`make run-assistant-persistent`) | `admin` (hard-coded) | Edit the role stamped in `core/orrery_core/serving/runner.py` to change |
+| Persistent CLI (`make run-cli PERSIST=1`) | `admin` (hard-coded) | Edit the role stamped in `core/orrery_core/serving/runner.py` to change |
 | Slack bot | `viewer` unless mapped | Set `SLACK_ADMIN_USERS` / `SLACK_OPERATOR_USERS`; start a **new thread** |
 | Google Chat bot | `viewer` unless mapped | Set `GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`; start a **new thread** |
 | HTTP front door (`orrery_core.serving.server`) | Derived from JWT every request | Mint a JWT with the matching `JWT_ROLE_CLAIM` value (`admin` / `operator` / `viewer` or aliases) |
@@ -58,7 +58,7 @@ The LLM will usually relay this verbatim. If you see a confirmation prompt inste
 ADK's Dev UI is the easiest way to inspect state and try each role.
 
 ```bash
-make run-assistant              # opens http://localhost:8000
+make run-dev              # opens http://localhost:8000
 ```
 
 1. Open the Dev UI, pick the agent, and start a session.
@@ -86,7 +86,7 @@ Workarounds, ordered by convenience:
 **A. Use the persistent runner** (already wires `set_user_role(..., "admin")`):
 
 ```bash
-make run-assistant-persistent
+make run-cli PERSIST=1
 ```
 
 To test a non-admin role here, temporarily edit `core/orrery_core/serving/runner.py` — change `set_user_role(initial_state, "admin")` to `"operator"` or `"viewer"` and re-run.
@@ -119,7 +119,7 @@ Slack resolves the role from the Slack user ID on the first message in a thread.
    SLACK_ADMIN_USERS=U01ABC123
    SLACK_OPERATOR_USERS=U02DEF456
    ```
-3. Restart the bot: `make run-slack-bot-socket` (Socket Mode, no public URL needed).
+3. Restart the bot: `make run-slack MODE=socket` (Socket Mode, no public URL needed).
 4. Open a **new thread** in a channel the bot is in and @-mention it.
 5. To retest with a different role: edit `.env`, restart, start **another new thread**. The existing thread keeps the role it was created with.
 
@@ -134,7 +134,7 @@ Google Chat resolves the role from the signed-in user's email claim in the token
    GOOGLE_CHAT_ADMIN_EMAILS=you@example.com
    GOOGLE_CHAT_OPERATOR_EMAILS=ops@example.com
    ```
-2. Restart: `make run-google-chat` (and ensure ngrok / the endpoint URL still matches `GOOGLE_CHAT_AUDIENCE` byte-for-byte).
+2. Restart: `make run-chat` (and ensure ngrok / the endpoint URL still matches `GOOGLE_CHAT_AUDIENCE` byte-for-byte).
 3. DM the bot (or @-mention it in a space) from an account whose email matches.
 4. To retest, change `.env`, restart, and start a **new thread** — same caveat as Slack, the role is locked in for the life of the thread's session.
 

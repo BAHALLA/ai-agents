@@ -104,14 +104,13 @@ uv run adk run orrery_assistant   # Terminal mode
 Or from the repo root:
 
 ```bash
-make run-assistant              # ADK Dev UI (in-memory state)
-make run-assistant-cli          # Terminal mode (in-memory state)
-make run-assistant-persistent   # Terminal with persistence (in-memory, or PostgreSQL via DATABASE_URL)
-make run-assistant-api          # FastAPI front door with JWT auth (dev secret)
-make run-triage                 # Run the deterministic triage Workflow once (batch)
+make run-dev            # ADK Dev UI (in-memory state)
+make run-cli            # Terminal mode (in-memory state)
+make run-cli PERSIST=1  # Terminal with persistence (PostgreSQL via DATABASE_URL, else in-memory)
+make run-api            # FastAPI front door + web console on :8000 (JWT auth)
+make run-api SSO=1      # …with Keycloak SSO instead of a pasted token
+make run-triage         # Run the deterministic triage Workflow once (batch)
 ```
-
-`make run-devops*` are aliases for the `run-assistant*` targets.
 
 ### Persistent Mode
 
@@ -119,7 +118,7 @@ By default (`adk web`), state resets on restart. Use persistent mode to keep `us
 and `app:*` state across sessions:
 
 ```bash
-make run-assistant-persistent
+make run-cli PERSIST=1
 ```
 
 Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` and

@@ -26,13 +26,13 @@ Terminal 1 — boot the server with auth on. First run generates a persistent
 secret at `~/.cache/orrery/jwt-secret`:
 
 ```bash
-make run-assistant-api
+make run-api
 ```
 
 Terminal 2 — mint a token against the same secret and call `/chat`:
 
 ```bash
-TOKEN=$(make dev-token-admin)        # or dev-token-viewer / dev-token-operator
+TOKEN=$(make dev-token ROLE=admin)        # or dev-token-viewer / dev-token-operator
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
   -d '{"message":"hi"}'
@@ -54,7 +54,7 @@ always matches whatever the server is using:
 1. `--secret <value>` (CLI arg)
 2. `--secret-file <path>` (CLI arg)
 3. `$JWT_SECRET` environment variable
-4. `~/.cache/orrery/jwt-secret` (the file `make run-assistant-api` writes)
+4. `~/.cache/orrery/jwt-secret` (the file `make run-api` writes)
 5. Built-in dev fallback (prints a warning — tokens won't validate against
    a server using a different secret)
 
@@ -66,10 +66,10 @@ stderr).
 
 | Target | What it does |
 |--------|--------------|
-| `make run-assistant-api`       | Boot the FastAPI server with auth ON, port 8000. |
+| `make run-api`       | Boot the FastAPI server with auth ON, port 8000. |
 | `make dev-token ROLE=admin`    | Mint a JWT with the given role. |
-| `make dev-token-viewer`        | Convenience alias. |
-| `make dev-token-operator`      | Convenience alias. |
-| `make dev-token-admin`         | Convenience alias. |
-| `make print-dev-jwt-config`    | Show the dev secret path + audience + issuer. |
-| `make rotate-dev-jwt-secret`   | Regenerate the secret (invalidates outstanding tokens). |
+| `make dev-token ROLE=viewer`        | Convenience alias. |
+| `make dev-token ROLE=operator`      | Convenience alias. |
+| `make dev-token ROLE=admin`         | Convenience alias. |
+| `make dev-token-reset`    | Show the dev secret path + audience + issuer. |
+| `make dev-token-reset`   | Regenerate the secret (invalidates outstanding tokens). |

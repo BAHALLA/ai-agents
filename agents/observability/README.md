@@ -40,11 +40,12 @@ uv run adk run observability_agent    # Terminal mode
 uv run adk api_server                 # API server
 ```
 
-Or from the repo root:
+Or from the repo root — the orchestrator composes this agent alongside every
+other specialist, which is how it is meant to be run:
 
 ```bash
-make run-observability      # ADK Dev UI
-make run-observability-cli  # Terminal mode
+make run-dev  # ADK Dev UI
+make run-cli  # Terminal mode
 ```
 
 ## Local Infrastructure
@@ -52,7 +53,7 @@ make run-observability-cli  # Terminal mode
 Start the full observability stack with Docker Compose:
 
 ```bash
-make infra-up   # Starts Prometheus, Loki, Alertmanager (+ Kafka, Zookeeper)
+make up   # Starts Prometheus, Loki, Alertmanager (+ Kafka, Zookeeper)
 ```
 
 This provisions demo alert rules (`TargetDown`, `HighPrometheusScrapeLatency`) so you have real firing alerts to test against immediately. Config files live in `infra/`.

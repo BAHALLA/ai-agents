@@ -41,7 +41,7 @@ Quick pointers:
 
 ```bash
 # 1. Start the bot on :3001
-make run-google-chat
+make run-chat
 
 # 2. Expose with ngrok and paste the HTTPS URL into the Chat API console
 ngrok http 3001
@@ -52,7 +52,7 @@ ngrok http 3001
 ```bash
 GOOGLE_CHAT_PUBSUB_SUBSCRIPTION=orrery-chat-events-sub \
 GOOGLE_CHAT_PUBSUB_PROJECT=your-project-id \
-make run-google-chat-pubsub
+make run-chat MODE=pubsub
 ```
 
 In-cluster deployment uses the Helm chart's `pubsubWorker.enabled: true`.

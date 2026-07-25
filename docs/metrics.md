@@ -8,7 +8,7 @@ Orrery ships three correlated signals, all wired globally through `default_plugi
 | **Traces** | *Where* did a single request spend its time? | OpenTelemetry → Tempo / Jaeger |
 | **Logs** | *What happened*, line by line, correlated to a trace | Structured JSON → Loki / Cloud Logging |
 
-Metrics are on by default; tracing is an opt-in extra. The two share a Grafana stack you can bring up with `make tracing-up`.
+Metrics are on by default; tracing is an opt-in extra. The two share a Grafana stack you can bring up with `make up PROFILES=tracing`.
 
 ---
 
@@ -125,14 +125,14 @@ Every JSON log line emitted while handling a request carries `request_id`, plus 
 
 ### Local stack: Tempo + Grafana
 
-`make tracing-up` starts Tempo (OTLP ingest + storage) and Grafana under the `tracing` compose profile:
+`make up PROFILES=tracing` starts Tempo (OTLP ingest + storage) and Grafana under the `tracing` compose profile:
 
 ```bash
-make tracing-up                                      # Tempo :4317/:3200, Grafana :3001
+make up PROFILES=tracing                                      # Tempo :4317/:3200, Grafana :3001
 OTEL_TRACING_ENABLED=true \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
-make run-assistant                                   # spans flow to Tempo
-make tracing-down
+make run-dev                                   # spans flow to Tempo
+make down
 ```
 
 Open Grafana at [http://localhost:3001](http://localhost:3001) (anonymous admin). It ships with two provisioned artifacts:

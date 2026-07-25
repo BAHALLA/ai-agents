@@ -30,9 +30,9 @@ The root orchestrator. The interactive root is `orrery_chat_agent` — a chat-mo
 
 **Run it:**
 ```bash
-make run-assistant           # ADK Dev UI on :8000
-make run-assistant-cli       # Terminal REPL
-make run-assistant-persistent # Persistent sessions + memory (in-memory, or PostgreSQL via DATABASE_URL)
+make run-dev  # ADK Dev UI on :8000
+make run-cli  # Terminal REPL
+make run-cli PERSIST=1 # Persistent sessions + memory (in-memory, or PostgreSQL via DATABASE_URL)
 make run-triage              # Deterministic triage Workflow, one batch run
 ```
 

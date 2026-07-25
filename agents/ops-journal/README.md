@@ -41,7 +41,7 @@ The `ctx.state` object is **delta-aware**: changes are tracked and only the diff
 With `adk web`, state resets on restart. Use `run_persistent.py` for true persistence:
 
 ```bash
-make run-journal-persistent
+make run-cli PERSIST=1
 ```
 
 Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `user:*` and `app:*` state survive across sessions and restarts. SQLite is not supported.
@@ -77,10 +77,10 @@ Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `
 
 ```bash
 # ADK Dev UI (in-memory state — resets on restart)
-make run-journal
+make run-cli
 
 # Terminal mode with persistence (in-memory, or PostgreSQL via DATABASE_URL)
-make run-journal-persistent
+make run-cli PERSIST=1
 ```
 
 ## Things to Try

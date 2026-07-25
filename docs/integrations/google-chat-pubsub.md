@@ -126,7 +126,7 @@ The Pub/Sub worker runs as a separate process:
 
 ```bash
 # Local (requires GOOGLE_APPLICATION_CREDENTIALS pointing to a SA key)
-make run-google-chat-pubsub
+make run-chat MODE=pubsub
 
 # In-cluster (enabled via Helm)
 # pubsubWorker.enabled: true

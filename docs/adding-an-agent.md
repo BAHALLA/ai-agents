@@ -176,14 +176,14 @@ Refer to `agents/k8s-health/tests/` for more complex examples including Agent Ev
 Before opening a PR, run through:
 
 ```bash
-make install   # sync the workspace (`uv sync`)
-make test      # runs all unit tests
-make eval      # agent eval scenarios (requires LLM credentials)
-make lint      # ruff check + format check
-make fmt       # auto-fix linting and formatting
+make install  # sync the workspace (`uv sync`)
+make test     # runs all unit tests
+make eval     # agent eval scenarios (requires LLM credentials)
+make lint     # ruff check + format check
+make fmt      # auto-fix linting and formatting
 ```
 
-Agents are normally reached through the orchestrator (`make run-assistant`) rather
+Agents are normally reached through the orchestrator (`make run-dev`) rather
 than run standalone, so you don't need a per-agent run target. If your agent is
 also useful on its own, add a `make run-<name>` target to the root `Makefile`
 following the pattern of `run-assistant` / `run-console` (`make help` lists them all).

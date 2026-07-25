@@ -180,7 +180,7 @@ services:
       - ./infra/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
 
-  # ── Single sign-on (use: make sso-up, or --profile sso) ────────────
+  # ── Single sign-on (use: make up PROFILES=sso) ────────────
   #
   # A local OIDC provider so the console's SSO path can be developed and demoed
   # without an external IdP. The realm ships three users — viewer / operator /
@@ -206,7 +206,7 @@ services:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
     # No healthcheck: the image is distroless (no shell, curl or wget), so a
     # CMD-SHELL probe can never run and the container just sits "unhealthy"
-    # forever. `make sso-up` polls the realm's discovery document from the host
+    # forever. `make up` polls the realm's discovery document from the host
     # instead — a better readiness signal anyway, since realm *import* finishes
     # after the server starts listening, and it fails loudly with the import
     # errors when it doesn't come up.

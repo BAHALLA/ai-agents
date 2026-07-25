@@ -11,7 +11,7 @@
 > **Implementation note (2026-06-21).** Landed as `core/orrery_core/tracing.py`
 > (`configure_tracing()` + `TracingPlugin`), wired into `default_plugins()` via the
 > `OTEL_TRACING_ENABLED` env flag, with log↔trace correlation in `log.py`, the
-> `orrery-core[otel]` extra, and a local Tempo + Grafana stack (`make tracing-up`)
+> `orrery-core[otel]` extra, and a local Tempo + Grafana stack (`make up PROFILES=tracing`)
 > including a provisioned *Orrery — Agent Observability* dashboard. The final design
 > differs from the original sketch below in two deliberate ways: (1) `TracingPlugin`
 > **enriches ADK's native spans** instead of creating its own, avoiding duplicate

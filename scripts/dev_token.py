@@ -6,16 +6,16 @@ Secret resolution order (first non-empty wins):
     1. ``--secret <value>``
     2. ``--secret-file <path>``
     3. ``$JWT_SECRET`` environment variable
-    4. ``~/.cache/orrery/jwt-secret`` (the file ``make run-assistant-api``
+    4. ``~/.cache/orrery/jwt-secret`` (the file ``make run-api``
        generates and reads)
     5. Built-in dev fallback (prints a warning)
 
-So after ``make run-assistant-api`` has been run once, any of these
+So after ``make run-api`` has been run once, any of these
 Just Work because they all resolve to the same secret on disk:
 
     uv run python scripts/dev_token.py
     make dev-token
-    make dev-token-viewer
+    make dev-token ROLE=viewer
 
 Pick a role with ``--role``; the token's ``roles`` claim is read by
 ``orrery_core.security.auth.extract_role`` and mapped to viewer/operator/admin.
@@ -39,7 +39,7 @@ import jwt as pyjwt
 # deployments must override JWT_SECRET to a 32+ byte value.
 _DEV_FALLBACK_SECRET = "x" * 64  # 64-byte filler, NOT for production use
 
-# The default location ``make run-assistant-api`` writes the dev secret
+# The default location ``make run-api`` writes the dev secret
 # to. Lives under XDG_CACHE_HOME (~/.cache) so it sits outside any repo
 # checkout and is not at risk of being committed.
 DEFAULT_SECRET_FILE = (
@@ -140,7 +140,7 @@ def main() -> int:
     if secret == _DEV_FALLBACK_SECRET:
         print(
             "warning: using built-in dev fallback secret — tokens won't validate "
-            "against a server using a different secret. Run `make run-assistant-api` "
+            "against a server using a different secret. Run `make run-api` "
             "once to generate ~/.cache/orrery/jwt-secret, or set $JWT_SECRET.",
             file=sys.stderr,
         )

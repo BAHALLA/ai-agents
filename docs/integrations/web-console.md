@@ -18,10 +18,10 @@ environment is actually wired. Both coexist; neither replaces the other.
 ## Enabling it
 
 ```bash
-make run-console          # builds the bundle and serves it at http://localhost:8000
+make run-api          # builds the bundle and serves it at http://localhost:8000
 ```
 
-That is `make web-build` (Vite → `serving/static/`) plus `make run-assistant-api`.
+That is `make web-build` (Vite → `serving/static/`) plus `make run-api`.
 Mint a token in another terminal and paste it into the console:
 
 ```bash
@@ -108,12 +108,12 @@ browser must not leak the previous user's conversations to whoever is next.
 A throwaway Keycloak ships under the `sso` compose profile:
 
 ```bash
-make sso-up            # Keycloak on :8081, realm "orrery" pre-imported
-make run-console-sso   # builds the console with SSO, serves it on :8000
+make up PROFILES=sso  # Keycloak on :8081, realm "orrery" pre-imported
+make run-api SSO=1    # builds the console with SSO, serves it on :8000
 ```
 
 Three demo users, password same as username: `viewer`, `operator`, `admin` —
-enough to see the RBAC tiers behave differently in the browser. `make sso-down`
+enough to see the RBAC tiers behave differently in the browser. `make down`
 stops it.
 
 !!! danger "Two gotchas that produce a generic 'Invalid or expired token'"
@@ -216,9 +216,9 @@ never existed.
 ## Developing
 
 ```bash
-make web-install   # npm ci
-make web-dev       # Vite dev server with HMR (expects the API on :8000)
-make web-check     # lint + format + typecheck + tests + build (mirrors CI)
+make install   # npm ci
+make run-web   # Vite dev server with HMR (expects the API on :8000)
+make test-web  # lint + format + typecheck + tests + build (mirrors CI)
 ```
 
 `web/` is a separate toolchain, deliberately outside the uv workspace: `make

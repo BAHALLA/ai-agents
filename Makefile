@@ -1,44 +1,74 @@
-.PHONY: help install test eval lint type-check ty fmt check clean \
-       web-install web-dev web-build web-check web-fmt run-console \
-       infra-up infra-down infra-reset tracing-up tracing-down sso-up sso-down \
-       docs-serve docs-build docs-deploy \
-       run-assistant run-assistant-api run-assistant-cli run-assistant-persistent run-triage \
-       run-console run-console-sso \
-       _ensure-dev-jwt-secret dev-token dev-token-viewer dev-token-operator dev-token-admin \
-       rotate-dev-jwt-secret print-dev-jwt-config \
-       run-slack-bot run-slack-bot-socket run-google-chat run-google-chat-pubsub
+.PHONY: help \
+        install check fmt test test-web eval lint type-check ty clean \
+        run-dev run-cli run-api run-web run-slack run-chat run-triage \
+        up down reset logs ps \
+        dev-token dev-token-reset \
+        docs docs-build docs-deploy \
+        web-build _console _dev-jwt-secret
 
-# ── Local dev auth configuration ───────────────────────
-# A persistent JWT secret for local-only dev work. Stored outside the
-# repo so it can't be accidentally committed. Both `run-assistant-api`
-# (which boots the authenticated server) and `dev-token` (which mints
-# test tokens) read from this file, so a token minted in one terminal
-# always validates against the server running in another.
+# One target per job. Variants are flags, not extra targets:
+#   make run-cli PERSIST=1     make run-api SSO=1
+#   make run-slack MODE=socket make run-chat MODE=pubsub
+#   make dev-token ROLE=viewer make up PROFILES=tracing
+
+help: ## Show this help
+	@echo "Orrery — make <target>"
+	@echo
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+	@echo
+	@echo "  Flags: SSO=1 PERSIST=1 MODE=socket|pubsub ROLE=viewer|operator|admin"
+	@echo "         PROFILES=\"tracing sso elastic\"  FORCE=1"
+
+WEB_DIR        := web
+WEB_STATIC_DIR := core/orrery_core/serving/static
+ASSISTANT_DIR  := agents/orrery-assistant
+
+# ── Local dev auth ─────────────────────────────────────
+# A persistent JWT secret for local-only work, stored outside the repo so it
+# can't be committed. `run-api` and `dev-token` read the same file, so a token
+# minted in one terminal always validates against the server in another.
 DEV_JWT_SECRET_FILE := $(HOME)/.cache/orrery/jwt-secret
 DEV_JWT_AUDIENCE    := orrery-local
 DEV_JWT_ISSUER      := https://dev.local
 
-# Local Keycloak (docker compose --profile sso). The console and the API must
-# agree on the issuer string exactly — Keycloak signs `iss` with the URL the
-# browser used, so "localhost" here and "127.0.0.1" there fails verification.
+# Local Keycloak (the `sso` compose profile). The console and the API must agree
+# on the issuer string exactly — Keycloak signs `iss` with the URL the browser
+# used, so "localhost" here and "127.0.0.1" there fails verification.
 SSO_ISSUER    := http://localhost:8081/realms/orrery
 SSO_CLIENT_ID := orrery-console
 
-help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
-
 # ── Setup & quality gate ───────────────────────────────
 
-install: ## Install all workspace packages
+install: ## Install everything (Python workspace + web console)
 	uv sync --all-extras
+	@if command -v npm >/dev/null 2>&1; then \
+		cd $(WEB_DIR) && npm ci; \
+	else \
+		echo "▶ npm not found — skipped the web console (Python-only setup)"; \
+	fi
 
-test: ## Run all tests (excludes evals)
+check: lint type-check test test-web ## Full gate: lint + types + Python tests + web (mirrors CI)
+
+fmt: ## Auto-fix formatting and lint, Python and web
+	uv run ruff check --fix .
+	uv run ruff format .
+	@command -v npm >/dev/null 2>&1 && (cd $(WEB_DIR) && npm run format) || true
+
+test: ## Run Python tests (excludes evals)
 	uv run pytest -v
 
-eval: ## Run agent evaluation tests (requires LLM access)
+test-web: ## Run the web console gate (lint + format + types + tests + build)
+	@if command -v npm >/dev/null 2>&1; then \
+		cd $(WEB_DIR) && npm run check; \
+	else \
+		echo "▶ npm not found — SKIPPING the web gate. CI still runs it."; \
+	fi
+
+eval: ## Run agent evaluation scenarios (requires LLM access)
 	uv run pytest -m eval -v
 
-lint: ## Run linter checks (ruff check + format check)
+lint: ## Lint Python (ruff check + format check)
 	uv run ruff check .
 	uv run ruff format --check .
 
@@ -46,123 +76,157 @@ lint: ## Run linter checks (ruff check + format check)
 # so a newly added agent is picked up automatically — no manual edit needed.
 TY_SEARCH_PATHS := $(addprefix --extra-search-path ,core $(patsubst %/,%,$(dir $(wildcard agents/*/pyproject.toml))))
 
-type-check: ## Run type checks (ty)
+type-check: ## Type-check Python (ty)
 	uv run ty check $(TY_SEARCH_PATHS) .
 
 ty: type-check ## Alias for type-check
 
-fmt: ## Auto-fix lint and format issues
-	uv run ruff check --fix .
-	uv run ruff format .
+# Trees `clean` must never walk into. node_modules is the important one: plenty
+# of npm packages ship their compiled output in a directory literally named
+# `build` (pretty-format, jwt-decode, …), so a bare `find . -name build -exec
+# rm -rf` silently guts them and the web tests then fail with "Cannot find
+# module …/build/index.js" long after the fact.
+CLEAN_PRUNE := -type d \( -name .venv -o -name node_modules -o -name .git \) -prune -o
 
-check: lint ty test ## Run the full quality gate, verify-only (lint + ty + test — mirrors CI; run `make fmt` first to auto-fix)
-
-# ── Web console (AEP-019) ──────────────────────────────
-# Isolated Node toolchain under web/ (not a uv workspace member). These wrap
-# npm so the console has the same one-command ergonomics as the Python side;
-# `make check` stays Node-free — run `make web-check` for the web gate.
-WEB_DIR        := web
-WEB_STATIC_DIR := core/orrery_core/serving/static
-
-web-install: ## Install web console dependencies (npm ci)
-	cd $(WEB_DIR) && npm ci
-
-web-dev: ## Run the web console dev server (Vite on :5173, proxies /chat to :8000)
-	cd $(WEB_DIR) && npm run dev
-
-web-build: ## Build the console and install it into serving/static for local serving
-	cd $(WEB_DIR) && npm run build
-	rm -rf $(WEB_STATIC_DIR)
-	mkdir -p $(WEB_STATIC_DIR)
-	cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/
-	@echo "▶ Console built into $(WEB_STATIC_DIR)"
-
-web-check: ## Run the full web console gate (lint + format + typecheck + test + build — mirrors CI)
-	cd $(WEB_DIR) && npm run check
-
-web-fmt: ## Auto-fix web console formatting (prettier --write)
-	cd $(WEB_DIR) && npm run format
-
-clean: ## Remove Python caches, tool caches, and build artifacts (keeps .venv)
+clean: ## Remove caches and build artifacts (keeps .venv and node_modules)
 	@echo "▶ Cleaning build artifacts and caches…"
-	find . -type d -name '__pycache__' -not -path './.venv/*' -prune -exec rm -rf {} +
-	find . -type d -name '*.egg-info' -not -path './.venv/*' -prune -exec rm -rf {} +
-	find . -type d -name 'build' -not -path './.venv/*' -prune -exec rm -rf {} +
-	find . -type d -name '.adk' -not -path './.venv/*' -prune -exec rm -rf {} +
-	find . -type f -name '*.py[co]' -not -path './.venv/*' -delete
+	@find . $(CLEAN_PRUNE) -type d \
+		\( -name '__pycache__' -o -name '*.egg-info' -o -name 'build' -o -name '.adk' \) \
+		-print0 | xargs -0 --no-run-if-empty rm -rf
+	@find . $(CLEAN_PRUNE) -type f -name '*.py[co]' -print0 | xargs -0 --no-run-if-empty rm -f
 	rm -rf .pytest_cache .ruff_cache .hypothesis .mypy_cache .coverage htmlcov dist site
-	@echo "▶ Clean. (.venv preserved — use 'rm -rf .venv' for a full reset.)"
+	@echo "▶ Clean. (.venv and node_modules preserved.)"
 
 # ── Infrastructure ─────────────────────────────────────
+# Profiles `up` starts. The app profiles (demo, slack) are excluded on purpose:
+# they run the agent itself in Docker on the same ports as `make run-api` and
+# `make run-slack`, so starting them by default would collide with local runs.
+# Pick your own set with:  make up PROFILES="tracing"
+PROFILES ?= tracing sso elastic
+COMPOSE_PROFILES := $(addprefix --profile ,$(PROFILES))
 
-infra-up: ## Start shared infrastructure (Kafka, Postgres, Prometheus, Loki, Alertmanager)
-	docker compose up -d
-
-infra-down: ## Stop shared infrastructure
-	docker compose down
-
-infra-reset: ## Stop infrastructure and wipe volumes
-	docker compose down -v
-
-tracing-up: ## Start the tracing stack (Tempo + Grafana on :3001)
-	docker compose --profile tracing up -d tempo grafana
-
-tracing-down: ## Stop the tracing stack (leaves the rest of the stack alone)
-	# Same footgun as sso-down: `--profile tracing down` stops everything in the
-	# file, not just the tracing services.
-	docker compose rm -sf tempo grafana
-
-sso-up: ## Start local Keycloak for console SSO (realm "orrery" on :8080)
-	docker compose --profile sso up -d keycloak
-	@echo "▶ Waiting for the orrery realm to import…"
-	@ready=0; for i in $$(seq 1 60); do \
-		if curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1; then ready=1; break; fi; \
-		sleep 2; \
-	done; \
-	if [ $$ready -eq 0 ]; then \
-		echo "✗ Realm did not come up. Import errors are usually the cause:"; \
-		docker logs keycloak 2>&1 | grep -i "ERROR" | tail -5; \
-		exit 1; \
+up: ## Start all containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+	docker compose $(COMPOSE_PROFILES) up -d
+	@if echo "$(PROFILES)" | grep -qw sso; then \
+		echo "▶ Waiting for the Keycloak realm to import…"; \
+		ready=0; for i in $$(seq 1 60); do \
+			if curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1; then ready=1; break; fi; \
+			sleep 2; \
+		done; \
+		if [ $$ready -eq 0 ]; then \
+			echo "✗ Keycloak realm did not come up. Import errors are the usual cause:"; \
+			docker logs keycloak 2>&1 | grep -i "ERROR" | tail -5; \
+			exit 1; \
+		fi; \
+		echo "▶ Keycloak ready at $(SSO_ISSUER) — users viewer/operator/admin (password = username)"; \
 	fi
-	@echo "▶ Keycloak ready: $(SSO_ISSUER)"
-	@echo "▶ Demo users (password = username): viewer / operator / admin"
-	@echo "▶ Now run: make run-console-sso"
+	@$(MAKE) --no-print-directory ps
 
-sso-down: ## Stop local Keycloak (leaves the rest of the stack alone)
-	# `docker compose --profile sso down` would tear down every service in the
-	# file — a profile filter only *adds* services, it does not scope `down`.
-	# Target the container by name so stopping SSO can't take Kafka with it.
-	docker compose rm -sf keycloak
+down: ## Stop all containers (volumes are kept)
+	docker compose $(COMPOSE_PROFILES) down
 
-# ── Documentation ──────────────────────────────────────
+reset: ## Stop all containers AND delete their volumes (destroys local data)
+	@echo "▶ This deletes these volumes and everything in them:"
+	@docker volume ls --format '{{.Name}}' | grep "^$$(basename $$PWD)_" | sed 's/^/    /' || true
+	@if [ "$(FORCE)" != "1" ]; then \
+		printf "▶ Type 'yes' to continue: "; read ans; [ "$$ans" = "yes" ] || { echo "Aborted."; exit 1; }; \
+	fi
+	docker compose $(COMPOSE_PROFILES) down -v
 
-docs-serve: ## Serve documentation locally
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs serve
+ps: ## Show running containers
+	@docker compose $(COMPOSE_PROFILES) ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'
 
-docs-build: ## Build documentation site
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs build
+logs: ## Tail container logs (SERVICE=kafka to narrow)
+	docker compose $(COMPOSE_PROFILES) logs -f --tail=100 $(SERVICE)
 
-docs-deploy: ## Deploy documentation to GitHub Pages
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs gh-deploy --force
+# ── Run ────────────────────────────────────────────────
+# The orchestrator composes every specialist agent (kafka / k8s / observability
+# / elasticsearch / docker / ops-journal), so run it rather than each agent
+# standalone. One target per surface.
 
-# ── Orchestrator (orrery-assistant) ────────────────────
-# The orchestrator composes every specialist agent (kafka / k8s /
-# observability / elasticsearch / docker / ops-journal), so run it
-# directly rather than each agent standalone.
+run-dev: ## Agent in the ADK Dev UI (no auth, developer tooling)
+	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run adk web
 
-run-assistant: ## Launch orrery-assistant in ADK Dev UI
-	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run adk web
-
-run-assistant-cli: ## Run orrery-assistant in terminal
-	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run adk run orrery_assistant
-
-run-assistant-persistent: ## Run orrery-assistant with a persistent store (Postgres via DATABASE_URL, else in-memory)
-	cd agents/orrery-assistant && ENABLE_METRICS_SERVER=true uv run python run_persistent.py
+run-cli: ## Agent in the terminal (PERSIST=1 for a persistent store)
+ifeq ($(PERSIST),1)
+	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run python run_persistent.py
+else
+	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run adk run orrery_assistant
+endif
 
 run-triage: ## Run the deterministic triage Workflow once (batch / scheduled)
-	cd agents/orrery-assistant && uv run python run_triage.py
+	cd $(ASSISTANT_DIR) && uv run python run_triage.py
 
-_ensure-dev-jwt-secret:
+run-web: ## Web console dev server with HMR (Vite :5173, proxies the API on :8000)
+	cd $(WEB_DIR) && npm run dev
+
+# `run-api` serves the console at / as well, so it is the one command for
+# "the product". SSO=1 swaps the pasted-token gate for Keycloak (needs `make up`
+# with the sso profile), which changes both the console build and how the server
+# verifies tokens — hence the paired blocks below.
+ifeq ($(SSO),1)
+WEB_BUILD_ENV := VITE_OIDC_ISSUER=$(SSO_ISSUER) \
+                 VITE_OIDC_CLIENT_ID=$(SSO_CLIENT_ID) \
+                 VITE_OIDC_ROLE_CLAIM=realm_access.roles
+API_AUTH_ENV  := JWT_ALGORITHM=RS256 \
+                 JWT_JWKS_URL=$(SSO_ISSUER)/protocol/openid-connect/certs \
+                 JWT_AUDIENCE=$(SSO_CLIENT_ID) \
+                 JWT_ISSUER=$(SSO_ISSUER) \
+                 JWT_ROLE_CLAIM=realm_access.roles
+else
+WEB_BUILD_ENV :=
+API_AUTH_ENV  := JWT_ALGORITHM=HS256 \
+                 JWT_SECRET=$$(cat $(DEV_JWT_SECRET_FILE)) \
+                 JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
+                 JWT_ISSUER=$(DEV_JWT_ISSUER)
+endif
+
+run-api: _dev-jwt-secret _console ## API front door + web console on :8000 (SSO=1 for Keycloak)
+ifeq ($(SSO),1)
+	@curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1 || \
+		{ echo "✗ Keycloak unreachable at $(SSO_ISSUER). Run: make up PROFILES=sso"; exit 1; }
+	@echo "▶ http://localhost:8000 — sign in as viewer / operator / admin"
+else
+	@echo "▶ http://localhost:8000 — mint a token in another terminal: make dev-token"
+endif
+	cd $(ASSISTANT_DIR) && \
+		AUTH_ENABLED=true \
+		$(API_AUTH_ENV) \
+		ENABLE_METRICS_SERVER=true \
+		ORRERY_WEB_CONSOLE_ENABLED=true \
+		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
+
+run-slack: ## Slack bot on :3000 (MODE=socket for Socket Mode, no public URL)
+ifeq ($(MODE),socket)
+	cd agents/slack-bot && uv run python -m slack_bot
+else
+	cd agents/slack-bot && uv run uvicorn slack_bot.app:api --host 0.0.0.0 --port 3000
+endif
+
+run-chat: ## Google Chat bot on :3001 (MODE=pubsub for private-GKE Pub/Sub mode)
+ifeq ($(MODE),pubsub)
+	cd agents/google-chat-bot && uv run python -m google_chat_bot.pubsub_worker
+else
+	cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001
+endif
+
+# Build the console into the package so the API can serve it. Node is optional
+# for Python-only contributors, so a missing npm warns instead of failing.
+_console:
+	@if command -v npm >/dev/null 2>&1; then \
+		(cd $(WEB_DIR) && $(WEB_BUILD_ENV) npm run build) && \
+		rm -rf $(WEB_STATIC_DIR) && mkdir -p $(WEB_STATIC_DIR) && \
+		cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/ && \
+		echo "▶ Console built into $(WEB_STATIC_DIR)"; \
+	else \
+		echo "▶ npm not found — serving whatever console bundle is already built"; \
+	fi
+
+web-build: _console ## Build the console into the package without starting the API
+
+# ── Dev auth tokens ────────────────────────────────────
+
+_dev-jwt-secret:
 	@if [ ! -f $(DEV_JWT_SECRET_FILE) ]; then \
 		mkdir -p $$(dirname $(DEV_JWT_SECRET_FILE)) && \
 		openssl rand -hex 32 > $(DEV_JWT_SECRET_FILE) && \
@@ -170,78 +234,27 @@ _ensure-dev-jwt-secret:
 		echo "▶ Generated dev JWT secret at $(DEV_JWT_SECRET_FILE)"; \
 	fi
 
-run-assistant-api: _ensure-dev-jwt-secret ## Run orrery-assistant FastAPI front door (auth ON, dev secret; serves the web console at / when built)
-	@echo "▶ Auth enabled — mint a token in another terminal with: make dev-token"
-	@echo "▶ Web console served at http://localhost:8000/ when built (run: make web-build, or one-shot: make run-console)"
-	cd agents/orrery-assistant && \
-		AUTH_ENABLED=true \
-		JWT_ALGORITHM=HS256 \
-		JWT_SECRET=$$(cat $(DEV_JWT_SECRET_FILE)) \
-		JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
-		JWT_ISSUER=$(DEV_JWT_ISSUER) \
-		ENABLE_METRICS_SERVER=true \
-		ORRERY_WEB_CONSOLE_ENABLED=true \
-		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
-
-run-console: web-build run-assistant-api ## Build the web console and serve it behind the API (one command, http://localhost:8000)
-
-run-console-sso: ## Build the console with SSO and serve it behind an RS256/JWKS API (needs: make sso-up)
-	@curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1 || \
-		{ echo "✗ Keycloak is not reachable at $(SSO_ISSUER). Run: make sso-up"; exit 1; }
-	cd $(WEB_DIR) && \
-		VITE_OIDC_ISSUER=$(SSO_ISSUER) \
-		VITE_OIDC_CLIENT_ID=$(SSO_CLIENT_ID) \
-		VITE_OIDC_ROLE_CLAIM=realm_access.roles \
-		npm run build
-	rm -rf $(WEB_STATIC_DIR) && mkdir -p $(WEB_STATIC_DIR)
-	cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/
-	@echo "▶ Console (SSO) at http://localhost:8000 — sign in as viewer / operator / admin"
-	cd agents/orrery-assistant && \
-		AUTH_ENABLED=true \
-		JWT_ALGORITHM=RS256 \
-		JWT_JWKS_URL=$(SSO_ISSUER)/protocol/openid-connect/certs \
-		JWT_AUDIENCE=$(SSO_CLIENT_ID) \
-		JWT_ISSUER=$(SSO_ISSUER) \
-		JWT_ROLE_CLAIM=realm_access.roles \
-		ENABLE_METRICS_SERVER=true \
-		ORRERY_WEB_CONSOLE_ENABLED=true \
-		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
-
-dev-token: _ensure-dev-jwt-secret ## Mint a JWT for local testing (ROLE=viewer|operator|admin, default admin)
+dev-token: _dev-jwt-secret ## Mint a local JWT (ROLE=viewer|operator|admin, default admin)
 	@JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
 	JWT_ISSUER=$(DEV_JWT_ISSUER) \
 		uv run python scripts/dev_token.py \
 			--role $(or $(ROLE),admin) \
 			--secret-file $(DEV_JWT_SECRET_FILE)
 
-dev-token-viewer: _ensure-dev-jwt-secret ## Mint a viewer-role JWT
-	@$(MAKE) --no-print-directory dev-token ROLE=viewer
-
-dev-token-operator: _ensure-dev-jwt-secret ## Mint an operator-role JWT
-	@$(MAKE) --no-print-directory dev-token ROLE=operator
-
-dev-token-admin: _ensure-dev-jwt-secret ## Mint an admin-role JWT
-	@$(MAKE) --no-print-directory dev-token ROLE=admin
-
-print-dev-jwt-config: _ensure-dev-jwt-secret ## Show the dev auth config (secret path, audience, issuer)
+dev-token-reset: ## Regenerate the dev JWT secret (invalidates existing tokens)
+	@rm -f $(DEV_JWT_SECRET_FILE)
+	@$(MAKE) --no-print-directory _dev-jwt-secret
 	@echo "Secret file: $(DEV_JWT_SECRET_FILE)"
 	@echo "Audience:    $(DEV_JWT_AUDIENCE)"
 	@echo "Issuer:      $(DEV_JWT_ISSUER)"
 
-rotate-dev-jwt-secret: ## Regenerate the dev JWT secret (invalidates existing tokens)
-	@rm -f $(DEV_JWT_SECRET_FILE)
-	@$(MAKE) --no-print-directory _ensure-dev-jwt-secret
+# ── Documentation ──────────────────────────────────────
 
-# ── Chat transports (orchestrator over Slack / Google Chat) ──
+docs: ## Serve the documentation site locally
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs serve
 
-run-slack-bot: ## Run the Slack bot (FastAPI + slack-bolt on :3000)
-	cd agents/slack-bot && uv run uvicorn slack_bot.app:api --host 0.0.0.0 --port 3000
+docs-build: ## Build the documentation site
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs build
 
-run-slack-bot-socket: ## Run the Slack bot in Socket Mode (no public URL needed)
-	cd agents/slack-bot && uv run python -m slack_bot
-
-run-google-chat: ## Run the Google Chat bot (FastAPI on :3001)
-	cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001
-
-run-google-chat-pubsub: ## Run the Google Chat bot in Pub/Sub mode (private GKE friendly)
-	cd agents/google-chat-bot && uv run python -m google_chat_bot.pubsub_worker
+docs-deploy: ## Deploy documentation to GitHub Pages
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs gh-deploy --force

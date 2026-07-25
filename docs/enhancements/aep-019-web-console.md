@@ -22,7 +22,7 @@ purpose-built product UI for a first-time user or an operator running a triage:
   autonomy levels, or the requester-verified confirmation flow.
 - **`POST /chat`** (`core/orrery_core/serving/server.py`) — a JSON-only front
   door behind JWT. It returns `{"reply": str, "session_id": str}` with no UI.
-- **CLI** (`make run-assistant-cli`) — terminal only.
+- **CLI** (`make run-cli`) — terminal only.
 - **Slack / Google Chat bots** — excellent for existing teams already in those
   tools, but they assume the platform is already configured, credentialed, and
   deployed. They are not an onboarding path.

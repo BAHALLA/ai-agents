@@ -155,7 +155,7 @@ OpenTelemetry tracing follows a single request *through* the agent hierarchy so 
 | `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Head-sampling ratio `0.0`–`1.0`. Uses a `ParentBased` sampler, so a trace already sampled upstream is always kept. |
 
 !!! tip "Full guide → [Platform Features → Observability](../metrics.md#distributed-tracing)"
-    The Observability page covers what the spans look like, the `make tracing-up` local Tempo + Grafana stack, the provisioned dashboard, and log↔trace correlation.
+    The Observability page covers what the spans look like, the `make up PROFILES=tracing` local Tempo + Grafana stack, the provisioned dashboard, and log↔trace correlation.
 
 ---
 
@@ -203,11 +203,11 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 ### Management Commands
 
 ```bash
-make infra-up     # start all services
-make infra-down   # stop all services
-make infra-reset  # stop and wipe volumes
-make tracing-up   # start the tracing stack (Tempo + Grafana)
-make tracing-down # stop the tracing stack
+make up                   # start all services
+make down                 # stop all services
+make reset                # stop and wipe volumes
+make up PROFILES=tracing  # start the tracing stack (Tempo + Grafana)
+make down # stop the tracing stack
 ```
 
 ### Docker Compose profiles

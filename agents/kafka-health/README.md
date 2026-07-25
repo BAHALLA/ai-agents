@@ -57,9 +57,10 @@ uv run adk run kafka_health_agent # Terminal mode
 uv run adk api_server             # API server
 ```
 
-Or from the repo root:
+Or from the repo root — the orchestrator composes this agent alongside every
+other specialist, which is how it is meant to be run:
 
 ```bash
-make run-kafka-health      # ADK Dev UI
-make run-kafka-health-cli  # Terminal mode
+make run-dev  # ADK Dev UI
+make run-cli  # Terminal mode
 ```

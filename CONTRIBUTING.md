@@ -11,8 +11,10 @@ contributions are **new specialist agents**, **new tools on existing agents**, a
 1. **Fork and clone** the repository.
 2. **Install everything** (all workspace packages + dev tools):
    ```bash
-   make install          # uv sync --all-extras
+   make install   # uv sync --all-extras, plus npm ci for the web console
    ```
+   Node is optional — without `npm` the console is skipped and everything else
+   still works.
 3. **Configure your LLM** — copy the root env file and set a provider + key:
    ```bash
    cp .env.example .env   # set MODEL_PROVIDER / MODEL_NAME + the matching API key
@@ -20,11 +22,11 @@ contributions are **new specialist agents**, **new tools on existing agents**, a
 4. **Start infrastructure** (only if you're working on agents that need Kafka,
    Postgres, Prometheus, …):
    ```bash
-   make infra-up
+   make up
    ```
 5. **Run the orchestrator** to verify your setup:
    ```bash
-   make run-assistant     # ADK Dev UI at http://localhost:8000
+   make run-dev     # ADK Dev UI at http://localhost:8000
    ```
    Agents are composed by `orrery-assistant`, so you generally run the
    orchestrator rather than each agent standalone. `make help` lists every run
@@ -98,11 +100,13 @@ can be discussed before code — follow the structure of an existing one.
 2. **Make your changes** following the patterns in existing agents.
 3. **Run the checks** before pushing:
    ```bash
-   make fmt          # auto-fix lint + formatting (ruff)
-   make lint         # ruff check + format --check (what CI runs)
-   make test         # all unit tests, fully mocked (~930)
-   make eval         # OPTIONAL: agent eval scenarios — needs LLM credentials
+   make fmt    # auto-fix lint + formatting, Python and web
+   make check  # the whole gate: lint + types + Python tests + web — mirrors CI
+   make eval   # OPTIONAL: agent eval scenarios — needs LLM credentials
    ```
+   `make check` is the one to run before pushing. Its parts are also available
+   individually (`lint`, `type-check`, `test`, `test-web`) when you want a
+   faster loop.
 4. **Update the docs and CHANGELOG.** Add a `[Unreleased]` entry to
    [`CHANGELOG.md`](CHANGELOG.md) (this project keeps it current per change) and
    touch any affected page under `docs/`.

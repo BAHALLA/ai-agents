@@ -53,14 +53,14 @@ ALERTMANAGER_URL=http://localhost:9093
 ### Socket Mode (local dev, no public URL needed)
 
 ```bash
-make infra-up              # start infrastructure
-make run-slack-bot-socket  # start the bot
+make up                     # start infrastructure
+make run-slack MODE=socket  # start the bot
 ```
 
 ### Webhook mode (production)
 
 ```bash
-make run-slack-bot         # FastAPI on :3000
+make run-slack         # FastAPI on :3000
 ```
 
 Requires a public URL (e.g., ngrok). Set `https://<host>/slack/events` as the Request URL in Event Subscriptions and Interactivity.

@@ -126,11 +126,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        run: make web-install
+        run: cd web && npm ci
 
       - name: Check (lint + format + typecheck + test + build)
         # Same target contributors run locally — the web gate is defined once.
-        run: make web-check
+        run: make test-web
 
   eval:
     name: Agent Evaluation

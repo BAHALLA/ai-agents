@@ -101,8 +101,8 @@ Usually one of:
 ### Readiness probe flaps
 The startup probe allows up to 60 seconds (12 × 5s). Slow cold starts usually come from LLM warm-up calls or blocking client initialization. Full guidance: [Deployment → Readiness probe flaps](deployment.md#readiness-probe-flaps).
 
-### `make run-assistant` fails with "address already in use"
-Both `make run-assistant` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. Run one or the other — `docker compose down` clears the demo.
+### `make run-dev` fails with "address already in use"
+Both `make run-dev` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. Run one or the other — `docker compose down` clears the demo.
 
 ---
 

@@ -43,7 +43,7 @@ To test the HTTP transport locally, use `ngrok` to create a secure tunnel:
 
 1.  **Start the bot**:
     ```bash
-    make run-google-chat  # Binds to :3001
+    make run-chat  # Binds to :3001
     ```
 2.  **Expose with ngrok**:
     ```bash

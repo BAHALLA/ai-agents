@@ -45,9 +45,10 @@ uv run adk web                      # ADK Dev UI
 uv run adk run docker_agent         # Terminal mode
 ```
 
-Or from the repo root:
+Or from the repo root — the orchestrator composes this agent alongside every
+other specialist, which is how it is meant to be run:
 
 ```bash
-make run-docker      # ADK Dev UI
-make run-docker-cli  # Terminal mode
+make run-dev  # ADK Dev UI
+make run-cli  # Terminal mode
 ```

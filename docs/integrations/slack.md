@@ -40,8 +40,8 @@ GOOGLE_API_KEY=your-google-api-key
 5. Run:
 
 ```bash
-make infra-up              # start infrastructure
-make run-slack-bot-socket  # start the bot (Socket Mode, no public URL needed)
+make up                     # start infrastructure
+make run-slack MODE=socket  # start the bot (Socket Mode, no public URL needed)
 ```
 
 6. Invite the bot to a channel (`/invite @DevOps Agent`) and start chatting.
