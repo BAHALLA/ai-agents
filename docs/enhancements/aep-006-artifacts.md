@@ -43,6 +43,7 @@ Currently these are ephemeral text in the chat — they cannot be downloaded, sh
 ```python
 from google.genai import types
 
+
 async def get_kafka_cluster_health(tool_context: ToolContext) -> dict:
     health_data = await _run_sync(_fetch_cluster_health)
 

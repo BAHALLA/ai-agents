@@ -73,6 +73,7 @@ Handle SIGTERM for zero-downtime deploys:
 import signal
 import asyncio
 
+
 class GracefulShutdown:
     def __init__(self, runner):
         self.runner = runner
@@ -166,10 +167,10 @@ from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
 
+
 @app.post("/run")
 @limiter.limit("30/minute")
-async def run_agent(request: Request):
-    ...
+async def run_agent(request: Request): ...
 ```
 
 ### Step 6: Helm Chart

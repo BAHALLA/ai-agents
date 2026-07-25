@@ -62,7 +62,7 @@ Extend `resolve_model()` to read an optional chain:
 ```python
 # MODEL_FALLBACK_CHAIN="anthropic/claude-sonnet-5,gemini-2.0-flash"
 def resolve_model_chain() -> str | BaseLlm:
-    primary = resolve_model()                       # unchanged default
+    primary = resolve_model()  # unchanged default
     raw = os.getenv("MODEL_FALLBACK_CHAIN", "").strip()
     if not raw:
         return primary
@@ -87,17 +87,19 @@ class FallbackLlm(BaseLlm):
         last_exc = None
         for i, target in enumerate(self._targets):
             if self._breakers[i].is_open():
-                continue                              # skip a known-bad provider
+                continue  # skip a known-bad provider
             try:
                 async for resp in target.generate_content_async(llm_request, **kw):
                     yield resp
                 self._breakers[i].record_success()
                 return
             except Exception as exc:
-                if not _is_retryable(exc):            # 4xx/validation: caller's fault, don't failover
+                if not _is_retryable(exc):  # 4xx/validation: caller's fault, don't failover
                     raise
                 self._breakers[i].record_failure()
-                logger.warning("llm_failover", extra={"from_target": i, "error": type(exc).__name__})
+                logger.warning(
+                    "llm_failover", extra={"from_target": i, "error": type(exc).__name__}
+                )
                 last_exc = exc
         raise LlmChainExhausted("all providers failed") from last_exc
 ```

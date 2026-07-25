@@ -24,10 +24,12 @@ The decorator just attaches metadata — it doesn't change tool behavior at impo
 from orrery_core import confirm, destructive, with_retry
 from orrery_core.security.validation import validate_string
 
+
 @with_retry(max_retries=3)
 async def list_topics() -> dict:
     """Read-only — no decorator needed."""
     ...
+
 
 @confirm("Creates a topic in the cluster.")
 async def create_topic(name: str, partitions: int) -> dict:
@@ -35,6 +37,7 @@ async def create_topic(name: str, partitions: int) -> dict:
     if err := validate_string(name, "name", max_len=100):
         return err
     ...
+
 
 @destructive("Permanently deletes all data in the topic.")
 async def delete_topic(name: str) -> dict:
@@ -84,10 +87,12 @@ Rationale: confirmation needs to work identically whether the agent is called as
 ```python
 from orrery_core import RolePolicy, Role, default_plugins
 
-policy = RolePolicy(overrides={
-    "list_sensitive_topics": Role.OPERATOR,   # read-only, but gated
-    "create_kafka_topic": Role.ADMIN,         # elevate from @confirm default
-})
+policy = RolePolicy(
+    overrides={
+        "list_sensitive_topics": Role.OPERATOR,  # read-only, but gated
+        "create_kafka_topic": Role.ADMIN,  # elevate from @confirm default
+    }
+)
 plugins = default_plugins(role_policy=policy)
 ```
 
@@ -95,6 +100,7 @@ plugins = default_plugins(role_policy=policy)
 
 ```python
 from orrery_core import requires_role, Role
+
 
 @requires_role(Role.ADMIN)
 async def list_audit_log() -> dict:

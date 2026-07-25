@@ -15,7 +15,44 @@ updates:
   # The web console is a separate toolchain outside the uv workspace, so the
   # pip ecosystem above never sees it. Without this its dependencies — React,
   # the OIDC client that handles sign-in — get no security updates at all.
+  #
+  # The groups below exist because npm peer ranges make some packages
+  # un-upgradable alone: a lone `vite` bump hits `@vitejs/plugin-react`'s peer
+  # range and dies at `npm ci` with ERESOLVE, and so does a lone `react-dom` or
+  # `@types/react-dom`. Three of the four open Dependabot PRs failed exactly this
+  # way — the update was fine, the *partition* was wrong. Grouping makes
+  # Dependabot propose the coherent set in one PR that can actually install.
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
+    groups:
+      # react-dom's peer is react; @types/react-dom's peer is @types/react.
+      # All four move together or none do.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      # @vitejs/plugin-react pins a vite major in its peer range; vitest and its
+      # coverage provider track vite too.
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "@tailwindcss/vite"
+          - "vitest"
+          - "@vitest/*"
+      # typescript-eslint's peer range gates which TypeScript major is
+      # installable, so a TS major needs its plugin to have caught up first.
+      typescript:
+        patterns:
+          - "typescript"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+      # Everything else that is test-only, batched to keep the PR count sane.
+      testing:
+        patterns:
+          - "@testing-library/*"
+          - "jsdom"

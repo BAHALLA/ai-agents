@@ -102,11 +102,13 @@ from orrery_assistant.agent import root_agent
 # Patch the initial state by monkey-patching set_user_role's default.
 # Simpler: just spin up your own Runner — see the "Custom Runner" section below.
 
-asyncio.run(run_persistent_cli(
-    agent=root_agent,
-    app_name="orrery_assistant",
-    user_id="taoufiq@example.com",
-))
+asyncio.run(
+    run_persistent_cli(
+        agent=root_agent,
+        app_name="orrery_assistant",
+        user_id="taoufiq@example.com",
+    )
+)
 ```
 
 ## Testing with the Slack bot
@@ -191,7 +193,7 @@ from orrery_assistant.agent import root_agent
 
 session_service = InMemorySessionService()
 initial_state = {}
-set_user_role(initial_state, "operator")          # ← this is the trusted entry point
+set_user_role(initial_state, "operator")  # ← this is the trusted entry point
 
 session = await session_service.create_session(
     app_name="orrery_assistant",
@@ -236,6 +238,7 @@ Or annotate the tool directly:
 
 ```python
 from orrery_core import requires_role, Role
+
 
 @requires_role(Role.OPERATOR)
 async def list_sensitive_topics() -> dict: ...

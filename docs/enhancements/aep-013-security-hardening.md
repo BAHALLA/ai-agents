@@ -51,7 +51,8 @@ import jwt
 
 security = HTTPBearer()
 
-async def verify_token(credentials = Depends(security)):
+
+async def verify_token(credentials=Depends(security)):
     try:
         payload = jwt.decode(
             credentials.credentials,
@@ -61,6 +62,7 @@ async def verify_token(credentials = Depends(security)):
         return payload
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
 
 # Map JWT claims to RBAC roles
 def extract_role(token_payload: dict) -> str:
@@ -104,10 +106,10 @@ class PIIRedactionPlugin(BasePlugin):
     """Redacts infrastructure-sensitive data from tool outputs."""
 
     PATTERNS = [
-        (r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '[REDACTED_IP]'),
-        (r'password["\s:=]+\S+', 'password=[REDACTED]'),
-        (r'token["\s:=]+\S+', 'token=[REDACTED]'),
-        (r'(?i)api[_-]?key["\s:=]+\S+', 'api_key=[REDACTED]'),
+        (r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "[REDACTED_IP]"),
+        (r'password["\s:=]+\S+', "password=[REDACTED]"),
+        (r'token["\s:=]+\S+', "token=[REDACTED]"),
+        (r'(?i)api[_-]?key["\s:=]+\S+', "api_key=[REDACTED]"),
     ]
 
     def __init__(self):

@@ -136,9 +136,9 @@ root_agent = create_agent(
     name="my_agent",
     description="...",
     instruction="You have a `load_memory` tool that searches past sessions. "
-        "Call it before diagnosing a symptom or when the user references an "
-        "earlier incident; skip it for greetings and simple status checks. "
-        "Pass a short, specific query (system + symptom), not the whole message.",
+    "Call it before diagnosing a symptom or when the user references an "
+    "earlier incident; skip it for greetings and simple status checks. "
+    "Pass a short, specific query (system + symptom), not the whole message.",
     tools=[..., LoadMemoryTool()],
 )
 ```

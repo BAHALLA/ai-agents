@@ -62,11 +62,11 @@ root_agent = create_agent(
     tools=[],
     sub_agents=[
         incident_triage_agent,  # deterministic workflow
-        kafka_agent,            # LLM-routed
-        k8s_agent,              # LLM-routed
-        observability_agent,    # LLM-routed
-        docker_agent,           # LLM-routed
-        journal_agent,          # LLM-routed
+        kafka_agent,  # LLM-routed
+        k8s_agent,  # LLM-routed
+        observability_agent,  # LLM-routed
+        docker_agent,  # LLM-routed
+        journal_agent,  # LLM-routed
     ],
 )
 ```

@@ -66,6 +66,7 @@ class ToolStep:
     args: dict[str, Any]
     status: str
 
+
 @dataclass
 class Trajectory:
     invocation_id: str
@@ -79,14 +80,16 @@ class Trajectory:
         """Emit an ADK AgentEvaluator `*.test.json` eval_case."""
         return {
             "eval_id": eval_id,
-            "conversation": [{
-                "user_content": {"parts": [{"text": self.prompt}]},
-                "final_response": {"parts": [{"text": self.final_response}]},
-                "intermediate_data": {
-                    "tool_uses": [{"name": s.name, "args": s.args} for s in self.steps],
-                    "intermediate_responses": [],
-                },
-            }],
+            "conversation": [
+                {
+                    "user_content": {"parts": [{"text": self.prompt}]},
+                    "final_response": {"parts": [{"text": self.final_response}]},
+                    "intermediate_data": {
+                        "tool_uses": [{"name": s.name, "args": s.args} for s in self.steps],
+                        "intermediate_responses": [],
+                    },
+                }
+            ],
         }
 ```
 
@@ -104,7 +107,8 @@ class TrajectoryCapturePlugin(BasePlugin):
     async def after_tool_callback(self, *, tool, tool_args, tool_context, result):
         # Runs AFTER PIIRedactionPlugin (registration order), so args/result are scrubbed.
         self._steps[tool_context.invocation_id].append(
-            ToolStep(name=tool.name, args=dict(tool_args), status=_status_of(result)))
+            ToolStep(name=tool.name, args=dict(tool_args), status=_status_of(result))
+        )
         return None
 
     async def after_run_callback(self, *, invocation_context):

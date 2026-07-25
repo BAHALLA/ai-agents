@@ -72,8 +72,9 @@ with (
     patch("kafka_health_agent.tools._get_admin_client", return_value=fake_broker),
     patch.object(strimzi_mod, "_custom_objects_api", return_value=MagicMock()),
 ):
-    await AgentEvaluator.evaluate(agent_module="kafka_health_agent.agent",
-                                  eval_dataset_file_path_or_dir=EVAL_DIR, num_runs=1)
+    await AgentEvaluator.evaluate(
+        agent_module="kafka_health_agent.agent", eval_dataset_file_path_or_dir=EVAL_DIR, num_runs=1
+    )
 ```
 
 ---

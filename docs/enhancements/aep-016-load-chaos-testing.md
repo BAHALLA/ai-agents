@@ -67,6 +67,7 @@ tests/load/
 from locust import HttpUser, task, between
 import uuid, json
 
+
 class SlackUser(HttpUser):
     wait_time = between(2, 8)
 

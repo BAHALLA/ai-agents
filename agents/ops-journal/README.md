@@ -22,10 +22,11 @@ Tools receive a `ToolContext` (alias for `Context`) as their first parameter. AD
 ```python
 from google.adk.tools import ToolContext
 
+
 def save_note(ctx: ToolContext, title: str, content: str) -> dict:
-    notes = ctx.state.get("user:notes", [])   # read
+    notes = ctx.state.get("user:notes", [])  # read
     notes.append({"title": title, "content": content})
-    ctx.state["user:notes"] = notes            # write
+    ctx.state["user:notes"] = notes  # write
     return {"status": "success"}
 ```
 

@@ -49,6 +49,7 @@ import asyncio
 from orrery_core import with_retry, confirm, destructive, ToolResult
 from orrery_core.security.validation import validate_string
 
+
 @with_retry(max_retries=3)
 async def get_status(name: str) -> dict:
     """Check the status of a specific resource."""
@@ -62,10 +63,12 @@ async def get_status(name: str) -> dict:
     except Exception as e:
         return ToolResult.error(f"Failed to get status: {e}").to_dict()
 
+
 @confirm("This will modify the resource state.")
 async def update_resource(name: str, value: str) -> dict:
     """Update a resource's configuration."""
     ...
+
 
 @destructive("This action is irreversible and will delete the resource.")
 async def delete_resource(name: str) -> dict:
@@ -119,13 +122,11 @@ import asyncio
 from orrery_core import run_persistent, default_plugins
 from .agent import root_agent
 
+
 async def main():
     # default_plugins() enables RBAC, Audit, Resilience, and Metrics
-    await run_persistent(
-        root_agent, 
-        app_name="my_agent", 
-        plugins=default_plugins()
-    )
+    await run_persistent(root_agent, app_name="my_agent", plugins=default_plugins())
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -158,6 +159,7 @@ Create a `tests/` directory and use `pytest-asyncio`. Mock external dependencies
 import pytest
 from unittest.mock import patch
 from my_agent.tools import get_status
+
 
 @pytest.mark.asyncio
 @patch("my_agent.tools._blocking_api_call")

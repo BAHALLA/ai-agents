@@ -11,10 +11,11 @@ A Pydantic model for structured tool outputs. While agents can return raw dicts,
 ```python
 from orrery_core import ToolResult
 
+
 async def my_tool(name: str) -> dict:
     if not name:
         return ToolResult.error("Name is required", error_type="MissingInput").to_dict()
-    
+
     return ToolResult.ok(message=f"Hello {name}", length=len(name)).to_dict()
 ```
 
@@ -99,15 +100,19 @@ Each plugin can also be instantiated independently for custom configurations:
 
 ```python
 from orrery_core import (
-    GuardrailsPlugin, ResiliencePlugin, MetricsPlugin,
-    AuditPlugin, ActivityPlugin, ErrorHandlerPlugin,
+    GuardrailsPlugin,
+    ResiliencePlugin,
+    MetricsPlugin,
+    AuditPlugin,
+    ActivityPlugin,
+    ErrorHandlerPlugin,
 )
 
 plugins = [
-    GuardrailsPlugin(mode="dry_run"),      # dry-run mode for testing
+    GuardrailsPlugin(mode="dry_run"),  # dry-run mode for testing
     ResiliencePlugin(failure_threshold=3),  # custom threshold
     MetricsPlugin(),
-    AuditPlugin(log_path="audit.jsonl"),   # also write to local file
+    AuditPlugin(log_path="audit.jsonl"),  # also write to local file
     ErrorHandlerPlugin(),
 ]
 ```
@@ -232,15 +237,16 @@ All tool functions must be `async def`. Use `asyncio.to_thread()` or `asyncio.cr
 import asyncio
 from orrery_core import with_retry, destructive
 
+
 @with_retry(max_retries=3, retryable=(ConnectionError, TimeoutError))
 async def list_topics() -> dict:
     admin = _get_admin_client()
     metadata = await asyncio.to_thread(admin.list_topics, timeout=10)
     return {"status": "success", "topics": list(metadata.topics.keys())}
 
+
 @destructive("permanently deletes the topic")
-async def delete_topic(topic_name: str) -> dict:
-    ...
+async def delete_topic(topic_name: str) -> dict: ...
 ```
 
 The `@with_retry` decorator automatically detects async functions and uses `await asyncio.sleep()` for backoff delays.
@@ -268,9 +274,9 @@ Decorator for async tool functions that adds retry with exponential backoff and 
 ```python
 from orrery_core import with_retry
 
+
 @with_retry(max_retries=3, retryable=(ConnectionError, TimeoutError))
-async def list_kafka_topics(timeout: int = 10) -> dict:
-    ...
+async def list_kafka_topics(timeout: int = 10) -> dict: ...
 ```
 
 | Parameter | Default | Description |
@@ -306,6 +312,7 @@ Reusable validators for tool inputs. Each returns `None` on success or `{"status
 
 ```python
 from orrery_core.validation import validate_string, validate_positive_int, KAFKA_TOPIC_PATTERN
+
 
 async def create_kafka_topic(topic_name: str, num_partitions: int = 1) -> dict:
     if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
@@ -348,9 +355,9 @@ Guardrails prevent destructive tools from executing without confirmation. They a
 ```python
 from orrery_core import destructive
 
+
 @destructive("permanently deletes the topic and all its data")
-async def delete_kafka_topic(topic_name: str) -> dict:
-    ...
+async def delete_kafka_topic(topic_name: str) -> dict: ...
 ```
 
 The `@destructive()` decorator marks the function with metadata. The `GuardrailsPlugin` reads this metadata at runtime and gates execution.
@@ -407,9 +414,9 @@ Decorator for explicit role annotation on tools that don't use `@destructive`/`@
 ```python
 from orrery_core import requires_role, Role
 
+
 @requires_role(Role.ADMIN)
-async def manage_users() -> dict:
-    ...
+async def manage_users() -> dict: ...
 ```
 
 ### Setting the user role
@@ -481,13 +488,15 @@ A pydantic-settings base class for typed, validated configuration. Replaces raw 
 ```python
 from orrery_core import AgentConfig, load_config
 
+
 class KafkaConfig(AgentConfig):
     kafka_bootstrap_servers: str = "localhost:9092"
 
+
 config = load_config(KafkaConfig, __file__)
 print(config.kafka_bootstrap_servers)
-print(config.model_provider)   # "gemini", "anthropic", "openai", etc.
-print(config.model_name)       # "gemini-2.0-flash", "anthropic/claude-sonnet-4-20250514", etc.
+print(config.model_provider)  # "gemini", "anthropic", "openai", etc.
+print(config.model_name)  # "gemini-2.0-flash", "anthropic/claude-sonnet-4-20250514", etc.
 ```
 
 Base fields (inherited by all configs):
