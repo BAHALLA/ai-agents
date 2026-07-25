@@ -2,7 +2,10 @@
 
 An open-source framework for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/).
 
-![Google Chat Demo](images/google-chat-demo.png){ align=center }
+<figure markdown>
+  ![The Orrery web console after a full incident triage. The agent reports a Critical verdict: Kafka and Elasticsearch healthy, a TargetDown alert firing in Alertmanager, two unhealthy Docker containers, and the Kubernetes check unverified. The side panel keeps the recorded verdict and the per-system findings behind it.](images/web-console-triage.png)
+  <figcaption>One question, five systems checked in parallel, one verdict — with the evidence for it kept alongside.</figcaption>
+</figure>
 
 ## Pick your path
 
