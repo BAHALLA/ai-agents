@@ -1,6 +1,12 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # `uv`, not `pip`: this workspace is uv-managed (pyproject.toml + a tracked
+  # uv.lock). The pip ecosystem only ever edited pyproject.toml, so every Python
+  # update landed with a lockfile still recording the old constraint — #76 merged
+  # green that way, and `uv sync` hid it by rewriting the lock in the runner. The
+  # uv ecosystem knows about uv.lock. `make lock-check` in CI is the backstop,
+  # because Dependabot's uv support can still leave one file behind.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -13,7 +19,7 @@ updates:
     schedule:
       interval: "weekly"
   # The web console is a separate toolchain outside the uv workspace, so the
-  # pip ecosystem above never sees it. Without this its dependencies — React,
+  # uv ecosystem above never sees it. Without this its dependencies — React,
   # the OIDC client that handles sign-in — get no security updates at all.
   #
   # The groups below exist because npm peer ranges make some packages
@@ -56,3 +62,25 @@ updates:
         patterns:
           - "@testing-library/*"
           - "jsdom"
+    ignore:
+      # HOLD — remove this entry when typescript-eslint ships a release whose
+      # `typescript` peer range admits 7.x. Check with:
+      #     npm view typescript-eslint@latest peerDependencies.typescript
+      #
+      # TypeScript 7 (the native port) cannot be installed here at all. Latest
+      # (8.65.0) and canary (8.65.1-alpha.7) both peer `>=4.8.4 <6.1.0`, and the
+      # package carries a hard runtime guard — "typescript-eslint does not support
+      # TS 7.0" — so even --legacy-peer-deps only moves the failure from install
+      # to lint. There is no 6.x stable to step through either; the registry goes
+      # 5.9.3 straight to 7.0.x.
+      #
+      # Grouping cannot solve this: a group only bundles updates that exist, and
+      # no compatible typescript-eslint exists. So Dependabot rebuilt the same
+      # unmergeable PR every week (#70, #77), each one now sitting BLOCKED against
+      # the required checks. The hold is on the *major* only — 5.x patches and
+      # minors still flow.
+      #
+      # The console itself is already TS 7-clean: `tsc --noEmit` under 7.0.2
+      # reports zero errors. This is a toolchain hold, not a code problem.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
