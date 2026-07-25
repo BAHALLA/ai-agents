@@ -1,0 +1,87 @@
+name: Dependabot relock
+
+# Keeps uv.lock consistent with a Dependabot Python PR that changed
+# pyproject.toml (or vice versa) by committing the missing half back onto its
+# branch. `make lock-check` in CI makes drift fail; this is what stops that
+# failure from turning every Python update into manual work.
+#
+# Why it exists at all: Dependabot's uv ecosystem is expected to update both
+# files, but it has known cases where it updates only one. Rather than trust
+# that, the gate fails loudly and this heals the common cause.
+#
+# ── The GITHUB_TOKEN caveat, read before relying on this ──
+# A push made with the default GITHUB_TOKEN does **not** re-trigger workflows
+# (GitHub's loop guard). Under the branch ruleset's required checks, the relock
+# commit would therefore leave the PR waiting on checks that never run.
+#
+# So: set a `DEPENDABOT_RELOCK_TOKEN` **Dependabot** secret (Settings → Secrets
+# and variables → Dependabot) to a fine-grained PAT with Contents: read/write on
+# this repo. It must be a *Dependabot* secret, not an Actions secret — a
+# dependabot-triggered run cannot read Actions secrets. With it, the relock push
+# re-runs CI and the PR goes green on its own.
+#
+# Without the token the job still relocks and pushes, and annotates the run
+# explaining that you need to close/reopen the PR (or push any commit) to get
+# checks to run against the new head.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      # Any workspace member's manifest feeds the single root lock.
+      - "**/pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: write
+
+jobs:
+  relock:
+    # Dependabot's own PRs only. A human who edits pyproject.toml is told to run
+    # `make lock` by the failing gate; silently rewriting someone's branch is a
+    # worse experience than a clear error.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    # Job-level env, because the `secrets` context is not available in a
+    # step-level `if:` — resolving it here is what makes the check below legal.
+    env:
+      HAS_RELOCK_TOKEN: ${{ secrets.DEPENDABOT_RELOCK_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.DEPENDABOT_RELOCK_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Relock if the lockfile drifted
+        id: relock
+        run: |
+          if uv lock --check; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "uv.lock already matches pyproject.toml — nothing to do."
+            exit 0
+          fi
+          uv lock
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the lockfile
+        if: steps.relock.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore(deps): relock uv.lock for ${{ github.event.pull_request.title }}"
+          git push
+
+      - name: Warn when checks will not re-run on their own
+        if: steps.relock.outputs.changed == 'true' && env.HAS_RELOCK_TOKEN == 'false'
+        run: |
+          echo "::warning title=Relocked, but checks will not re-run::A push made with \
+          GITHUB_TOKEN does not trigger workflows. Close and reopen this PR to run the \
+          required checks against the relocked commit, or configure a \
+          DEPENDABOT_RELOCK_TOKEN Dependabot secret to make this automatic."
