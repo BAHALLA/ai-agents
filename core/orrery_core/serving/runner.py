@@ -14,12 +14,17 @@ from collections.abc import Sequence
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.apps.app import EventsCompactionConfig
+from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
+from google.adk.events.event import Event
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.workflow import Workflow
 
+from ..agent.base import resolve_summarizer_model
 from ..concurrency import configure_default_executor
 from ..observability.log import mask_dsn
+from ..observability.metrics import track_compaction_event
 from ..persistence.db import create_session_service
 from ..security.rbac import set_user_role
 from .gateway import AgentGateway
@@ -71,6 +76,118 @@ def create_context_cache_config(
     )
 
 
+class _ObservedEventSummarizer(LlmEventSummarizer):
+    """``LlmEventSummarizer`` that records each compaction it performs.
+
+    The compaction event is appended straight to the session service by the ADK
+    Runner, after the agent's event generator is exhausted — it never passes
+    through the plugin pipeline, so ``MetricsPlugin`` cannot observe it. The
+    summarizer is the one component in the path that is ours, and it is called
+    exactly once per compaction.
+    """
+
+    async def maybe_summarize_events(self, *, events: list[Event]) -> Event | None:
+        summary = await super().maybe_summarize_events(events=events)
+        if summary is None:
+            # ADK returns None when summarization produced nothing; the
+            # transcript is left untouched, so this is not a compaction.
+            return None
+        track_compaction_event()
+        logger.info(
+            "Compacted conversation history: %d events replaced by a summary",
+            len(events),
+        )
+        return summary
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+#: Compact once the last observed prompt crossed this many tokens. Sized to sit
+#: well under a 1M-token window while staying out of reach of ordinary sessions:
+#: turning compaction on must not change behaviour for anything but the long
+#: incident investigations it exists to rescue.
+DEFAULT_COMPACTION_TOKEN_THRESHOLD = 250_000
+
+
+def create_events_compaction_config(
+    *,
+    token_threshold: int | None = None,
+    event_retention_size: int | None = None,
+    compaction_interval: int | None = None,
+    overlap_size: int | None = None,
+) -> EventsCompactionConfig | None:
+    """Create an ``EventsCompactionConfig`` with env-var defaults, or ``None``.
+
+    Compaction replaces older turns with an LLM-written digest once a session's
+    prompt grows past ``token_threshold``, keeping the most recent
+    ``event_retention_size`` events verbatim. Without it a long incident session
+    grows monotonically until the request exceeds the model's window and the turn
+    fails — the per-result cap in ``ToolOutputCapPlugin`` bounds a *single* tool
+    result, never the accumulated transcript.
+
+    Compaction is lossy for the model but **lossless for the record**: ADK appends
+    the digest as a new event carrying the compacted timestamp range and filters
+    the originals out only when assembling the request, so audit and replay still
+    see the full history.
+
+    Each parameter falls back to an environment variable:
+
+    - ``ORRERY_CONTEXT_COMPACTION`` (default: on; set false/0 to disable)
+    - ``ORRERY_COMPACTION_TOKEN_THRESHOLD`` (default: 250000; ``0`` disables)
+    - ``ORRERY_COMPACTION_RETENTION_EVENTS`` (default: 20)
+    - ``ORRERY_COMPACTION_INTERVAL`` (default: 50)
+    - ``ORRERY_COMPACTION_OVERLAP`` (default: 2)
+    - ``ORRERY_COMPACTION_MODEL`` (see :func:`resolve_summarizer_model`)
+
+    Returns ``None`` when disabled — that is exactly how ADK reads "no
+    compaction", so callers pass the result straight to ``App`` without branching.
+    """
+    raw_enabled = os.getenv("ORRERY_CONTEXT_COMPACTION", "").strip().lower()
+    if raw_enabled and raw_enabled not in _TRUTHY:
+        return None
+
+    resolved_threshold = (
+        token_threshold
+        if token_threshold is not None
+        else int(
+            os.getenv("ORRERY_COMPACTION_TOKEN_THRESHOLD", str(DEFAULT_COMPACTION_TOKEN_THRESHOLD))
+        )
+    )
+    if resolved_threshold <= 0:
+        return None
+
+    resolved_retention = (
+        event_retention_size
+        if event_retention_size is not None
+        else int(os.getenv("ORRERY_COMPACTION_RETENTION_EVENTS", "20"))
+    )
+    # `compaction_interval`/`overlap_size` are required by ADK and the
+    # sliding-window path cannot be switched off, so it always runs as a backstop
+    # on invocations where the token threshold did not fire. The interval is set
+    # high enough that the token trigger is the one that normally does the work.
+    resolved_interval = (
+        compaction_interval
+        if compaction_interval is not None
+        else int(os.getenv("ORRERY_COMPACTION_INTERVAL", "50"))
+    )
+    resolved_overlap = (
+        overlap_size
+        if overlap_size is not None
+        else int(os.getenv("ORRERY_COMPACTION_OVERLAP", "2"))
+    )
+
+    return EventsCompactionConfig(
+        # Always explicit: ADK otherwise derives the summarizer from the root
+        # agent's own model, which bills summarization at the agent's rate and
+        # raises outright for a non-LlmAgent root (the batch triage Workflow).
+        summarizer=_ObservedEventSummarizer(llm=resolve_summarizer_model()),
+        token_threshold=resolved_threshold,
+        event_retention_size=resolved_retention,
+        compaction_interval=resolved_interval,
+        overlap_size=resolved_overlap,
+    )
+
+
 async def run_persistent(
     agent: Agent | Workflow,
     *,
@@ -81,6 +198,7 @@ async def run_persistent(
     memory_service: BaseMemoryService | None = None,
     health_port: int | None = None,
     context_cache_config: ContextCacheConfig | None = None,
+    events_compaction_config: EventsCompactionConfig | None = None,
 ) -> None:
     """Run an agent in a persistent CLI loop backed by in-memory or PostgreSQL.
 
@@ -101,6 +219,12 @@ async def run_persistent(
         context_cache_config: Optional context caching configuration.
             Use ``create_context_cache_config()`` for env-var-configurable
             defaults.  Only effective with Gemini models.
+        events_compaction_config: Optional history-compaction configuration.
+            Unlike the cache config this defaults to
+            ``create_events_compaction_config()`` rather than to "off" — a
+            persistent CLI session is long-lived by design, so it is the surface
+            that most needs the transcript bounded. Disable via
+            ``ORRERY_CONTEXT_COMPACTION=false``.
 
     Session store resolution order:
 
@@ -130,6 +254,13 @@ async def run_persistent(
     # The gateway owns the shared turn pipeline; this CLI is one surface over it.
     if context_cache_config is not None:
         logger.info("Context caching enabled: %s", context_cache_config)
+    compaction_config = events_compaction_config or create_events_compaction_config()
+    if compaction_config is not None:
+        logger.info(
+            "Context compaction enabled: token_threshold=%s retention=%s",
+            compaction_config.token_threshold,
+            compaction_config.event_retention_size,
+        )
     gateway = AgentGateway(
         app_name=app_name,
         root_agent=agent,
@@ -137,6 +268,7 @@ async def run_persistent(
         session_service=session_service,
         memory_service=memory_service,
         context_cache_config=context_cache_config,
+        events_compaction_config=compaction_config,
         # Guarded tools need an explicit 'approve'/'deny' from the same
         # verified user who triggered them (requester-verified confirmation).
         verified_confirmation=True,

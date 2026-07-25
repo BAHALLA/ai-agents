@@ -22,6 +22,7 @@ from orrery_core import (
     AgentGateway,
     MetricsPlugin,
     authorize,
+    create_events_compaction_config,
     create_session_service,
     default_plugins,
 )
@@ -136,6 +137,7 @@ async def lifespan(app: FastAPI):
         root_agent=root_agent,
         plugins=plugins,
         session_service=session_service,
+        events_compaction_config=create_events_compaction_config(),
         # Slack's own gate is the interactive buttons (slack_confirmation), so
         # this mainly stamps the strict flag + actor; the requester-only check
         # lives in the Approve handler below.

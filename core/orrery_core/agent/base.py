@@ -144,13 +144,55 @@ def resolve_model() -> str | BaseLlm:
             f"Example: MODEL_NAME=anthropic/claude-sonnet-4-20250514"
         )
 
-    # LiteLlm expects the provider prefix in the model name (e.g., "anthropic/claude-...")
-    # Add it if not already present.
-    if "/" not in model_name:
-        model_name = f"{provider}/{model_name}"
-
+    model_name = _prefix_provider(model_name, provider)
     logger.info("Using LiteLlm with model: %s", model_name)
     return LiteLlm(model=model_name)
+
+
+def _prefix_provider(model_name: str, provider: str) -> str:
+    """Qualify *model_name* with *provider* unless it is already qualified.
+
+    LiteLlm routes on a ``provider/name`` string (e.g. ``anthropic/claude-...``).
+    """
+    return model_name if "/" in model_name else f"{provider}/{model_name}"
+
+
+#: Summarizer default for event compaction. Compaction rewrites conversation
+#: history into a digest — plumbing, not user-facing reasoning — so it runs on a
+#: cheap model regardless of what the agent itself is configured with.
+DEFAULT_COMPACTION_MODEL = "gemini-flash-latest"
+
+
+def resolve_summarizer_model() -> BaseLlm:
+    """Resolve the model used to summarize compacted conversation history.
+
+    Unlike :func:`resolve_model`, this always returns a ``BaseLlm`` *instance* —
+    ADK's ``LlmEventSummarizer(llm=...)`` takes an object, not a model string.
+
+    Environment variables:
+        ORRERY_COMPACTION_MODEL: Summarizer model. Defaults to
+            ``gemini-flash-latest`` on Gemini; on other providers it defaults to
+            that provider's ``MODEL_NAME`` (there is no cross-provider cheap
+            default we can assume exists).
+        MODEL_PROVIDER: Selects the backend, as in :func:`resolve_model`.
+    """
+    provider = os.getenv("MODEL_PROVIDER", "gemini").lower()
+    override = os.getenv("ORRERY_COMPACTION_MODEL", "").strip()
+
+    if provider == "gemini":
+        from google.adk.models.google_llm import Gemini
+
+        return Gemini(model=override or DEFAULT_COMPACTION_MODEL)
+
+    from google.adk.models.lite_llm import LiteLlm
+
+    model_name = override or os.getenv("MODEL_NAME", "")
+    if not model_name:
+        raise ValueError(
+            f"ORRERY_COMPACTION_MODEL or MODEL_NAME must be set when "
+            f"MODEL_PROVIDER={provider}. Example: ORRERY_COMPACTION_MODEL=anthropic/claude-haiku-4-5"
+        )
+    return LiteLlm(model=_prefix_provider(model_name, provider))
 
 
 _SAFETY_THRESHOLDS = frozenset(
