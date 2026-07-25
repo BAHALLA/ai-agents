@@ -12,3 +12,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  # The web console is a separate toolchain outside the uv workspace, so the
+  # pip ecosystem above never sees it. Without this its dependencies — React,
+  # the OIDC client that handles sign-in — get no security updates at all.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"

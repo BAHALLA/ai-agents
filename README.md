@@ -72,17 +72,19 @@ graph LR
 - **Opt-in planning** — Set `ORRERY_PLANNER=plan_react` (provider-agnostic) or `builtin` (Gemini thinking tokens) to attach an ADK planner to the root orchestrator, triage summarizer, and remediation actor — explicit reasoning before destructive ops.
 - **Self-healing (graph workflow)** — Closed-loop remediation as a bounded graph cycle: **Act** (restart/scale) → **Verify** → **Retry** (up to 3 times), capped by `verify_route`.
 - **Cross-session memory** — Agents recall past incidents, investigations, and team preferences across sessions.
+- **Long incidents don't hit the context wall** — Past a token threshold, older turns are compacted into a digest while recent ones stay verbatim. Lossy for the model, **lossless for the record**: the original events remain in the session and are filtered only when the request is assembled, so audit and replay are untouched.
 
 ### 🛡️ Safety & Governance
 - **Human-in-the-Loop** — Mutating (`@confirm`) and destructive (`@destructive`) tools require explicit human confirmation.
 - **RBAC Hierarchy** — Three-role system (**Viewer**, **Operator**, **Admin**) enforced globally via plugins.
-- **JWT authentication** — Opt-in HTTP front door (`orrery_core.serving.server`) verifies HS256 or RS256/JWKS bearer tokens, maps claims → roles, and rejects unauthenticated traffic. See [`docs/config/security.md`](https://bahalla.github.io/orrery/config/security/).
+- **SSO / OIDC sign-in** — The web console signs in with **Authorization Code + PKCE** against any OIDC provider (Keycloak, Authentik, Auth0, Okta, Entra ID, Google); the front door verifies the resulting tokens via RS256/JWKS and maps claims → roles. A local Keycloak with viewer/operator/admin demo users ships behind `make up PROFILES=sso`. Without an issuer configured it falls back to a pasted bearer token, so CI and offline work need no IdP.
+- **JWT authentication** — The HTTP front door (`orrery_core.serving.server`) verifies HS256 or RS256/JWKS bearer tokens, maps claims → roles (including nested paths like `realm_access.roles`), and rejects unauthenticated traffic. See [`docs/config/security.md`](https://bahalla.github.io/orrery/config/security/).
 - **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context.
 - **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
 
 ### 🔌 Integration & Observability
 - **Multi-Interface** — Interact via the **Web Console**, **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
-- **Web Console** — Opt-in React SPA (`ORRERY_WEB_CONSOLE_ENABLED=true`) served by the FastAPI front door: token-gated chat against `POST /chat` with an identity + role badge. See [`web/README.md`](web/README.md).
+- **Web Console** — Opt-in React SPA (`ORRERY_WEB_CONSOLE_ENABLED=true`) served by the FastAPI front door: SSO or token-gated chat, a tool-call timeline, the approve/deny panel for guarded actions, a triage view, and a first-run **environment check** that tells you which integrations are actually wired and what to configure when one isn't. See [`docs/integrations/web-console.md`](https://bahalla.github.io/orrery/integrations/web-console/).
 - **Observability** — Built-in Prometheus metrics for tool latency, error rates, and circuit breaker states.
 - **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
 
@@ -121,6 +123,19 @@ GOOGLE_API_KEY=your-key docker compose --profile demo up -d
 # 3. Open the web UI
 open http://localhost:8000
 ```
+
+### From source
+
+```bash
+make install   # Python workspace + web console
+make up        # All containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+make run-api   # API + web console on http://localhost:8000
+make dev-token # Mint a token to sign in with (ROLE=viewer|operator|admin)
+```
+
+Variants are flags, not separate targets — `make run-api SSO=1`, `make run-cli PERSIST=1`,
+`make run-slack MODE=socket`, `make up PROFILES=tracing`. `make help` lists everything,
+and `make check` runs the whole gate (lint, types, Python tests, web tests).
 
 *For more setup options (Claude, OpenAI, local models), see the [Configuration Guide](https://bahalla.github.io/orrery/config/general/).*
 
