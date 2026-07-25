@@ -85,6 +85,11 @@ CONTEXT_CACHE_EVENTS_TOTAL = Counter(
     ["event"],  # "hit" or "miss"
 )
 
+CONTEXT_COMPACTION_TOTAL = Counter(
+    "orrery_context_compaction_total",
+    "Conversation history compactions performed",
+)
+
 # ── Module-level server guard ─────────────────────────────────────────
 # Multiple MetricsCollector instances may exist (one per agent module).
 # The HTTP server should start exactly once per process.
@@ -279,3 +284,17 @@ def track_cache_event(*, hit: bool) -> None:
         hit: True for a cache hit, False for a miss.
     """
     CONTEXT_CACHE_EVENTS_TOTAL.labels(event="hit" if hit else "miss").inc()
+
+
+def track_compaction_event() -> None:
+    """Record that conversation history was compacted into a summary.
+
+    Worth watching for two reasons: a session compacting repeatedly is one that
+    would otherwise have blown the context window, and each compaction
+    invalidates the context-cache prefix (the history it covers changed), so a
+    threshold tuned too low quietly erodes the cache-hit rate.
+
+    Unlabelled: compaction is driven by the ADK Runner and the summarizer that
+    observes it has no agent identity to attribute the event to.
+    """
+    CONTEXT_COMPACTION_TOTAL.inc()

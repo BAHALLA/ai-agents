@@ -20,7 +20,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from google.adk.apps import App
 from google.adk.runners import Runner
 
-from orrery_core import AgentGateway
+from orrery_core import AgentGateway, create_events_compaction_config
 from orrery_core.agent.base import load_agent_env
 from orrery_core.persistence.db import create_session_service
 from orrery_core.plugins import default_plugins
@@ -130,6 +130,9 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
         name="orrery_assistant_gchat",
         root_agent=root_agent,
         plugins=plugins,
+        # Chat threads are the longest-lived sessions of any transport (a space
+        # thread outlives any single incident), so bound the transcript here too.
+        events_compaction_config=create_events_compaction_config(),
     )
     runner = Runner(
         app=agent_app,

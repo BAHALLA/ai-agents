@@ -18,7 +18,13 @@ import re
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
-from orrery_core import AgentGateway, authorize, create_session_service, default_plugins
+from orrery_core import (
+    AgentGateway,
+    authorize,
+    create_events_compaction_config,
+    create_session_service,
+    default_plugins,
+)
 
 from .config import SlackBotConfig
 from .confirmation import (
@@ -207,6 +213,7 @@ async def main() -> None:
         root_agent=root_agent,
         plugins=default_plugins(guardrail_mode="none"),
         session_service=session_service,
+        events_compaction_config=create_events_compaction_config(),
         # Slack's own gate is the interactive buttons (slack_confirmation), so
         # this mainly stamps the strict flag + actor; the requester-only check
         # lives in the Approve handler below.

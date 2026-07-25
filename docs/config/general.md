@@ -114,6 +114,35 @@ Cache hit/miss events are exposed as the `orrery_context_cache_events_total` Pro
 
 ---
 
+## Context Compaction
+
+Caching shrinks what a request *costs*; compaction shrinks what it *contains*. Once a session's prompt grows past `ORRERY_COMPACTION_TOKEN_THRESHOLD`, ADK replaces the older turns with an LLM-written digest and keeps the most recent `ORRERY_COMPACTION_RETENTION_EVENTS` events verbatim.
+
+Without it a long incident session grows monotonically until the request exceeds the model's window and the turn fails (`400 INVALID_ARGUMENT` on Gemini). `ToolOutputCapPlugin` caps a *single* tool result at 4 MiB, never the accumulated transcript — three capped results in history already approach the ~10 MiB request ceiling. Compaction is the only thing that bounds the conversation as a whole.
+
+Compaction is **lossy for the model but lossless for the record**. ADK appends the digest as a new event carrying the compacted timestamp range; the original events stay in the session store and are filtered out only when assembling the request. Audit, replay, and `GET /session/{id}/activity` still see everything.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_CONTEXT_COMPACTION` | `true` | Master switch; `false`/`0` disables compaction entirely |
+| `ORRERY_COMPACTION_TOKEN_THRESHOLD` | `250000` | Compact once the last observed prompt reached this many tokens (`0` disables) |
+| `ORRERY_COMPACTION_RETENTION_EVENTS` | `20` | Recent raw events kept verbatim |
+| `ORRERY_COMPACTION_INTERVAL` | `50` | Sliding-window backstop: invocations before a turn-count compaction |
+| `ORRERY_COMPACTION_OVERLAP` | `2` | Invocations of overlap between consecutive summaries |
+| `ORRERY_COMPACTION_MODEL` | `gemini-flash-latest` | Model used to write the digest |
+
+On by default across every transport. The 250k default is deliberately out of reach for ordinary sessions — enabling compaction should change nothing except for the long investigations it exists to rescue.
+
+**Notes**
+
+- **The summarizer runs on a cheap model.** Summarization is plumbing, not user-facing reasoning. Left unset, ADK would derive it from the root agent's own model and bill digests at that rate. On non-Gemini providers there is no cheap default we can assume exists, so `ORRERY_COMPACTION_MODEL` falls back to the agent's `MODEL_NAME` — set it explicitly to get the savings.
+- **The sliding-window backstop cannot be switched off.** ADK requires `compaction_interval`/`overlap_size` whenever compaction is configured, so it always runs on invocations where the token threshold did not fire. The default interval is set high enough that the token trigger normally does the work.
+- **Compaction invalidates the cached prefix** on the turn it fires, since the history it covers changed. Tune the threshold well below the model's hard limit but high enough that most sessions never compact, and watch the counter below against your cache hit rate.
+
+Compactions are exposed as the `orrery_context_compaction_total` Prometheus counter on the `/metrics` endpoint.
+
+---
+
 ## Distributed Tracing
 
 OpenTelemetry tracing follows a single request *through* the agent hierarchy so you can attribute latency and localize failures. It is an opt-in extra (`uv sync --extra otel`), **off by default**, and driven entirely by the env vars below — `default_plugins()` reads `OTEL_TRACING_ENABLED` automatically, so one flag turns it on across every transport.

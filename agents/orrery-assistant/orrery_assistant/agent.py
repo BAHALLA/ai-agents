@@ -83,6 +83,7 @@ from orrery_core import (
     AgentTool,
     create_agent,
     create_context_cache_config,
+    create_events_compaction_config,
     default_plugins,
     load_agent_env,
     resolve_planner,
@@ -519,4 +520,5 @@ app = App(
     root_agent=orrery_chat_agent,
     plugins=default_plugins(enable_memory=True),
     context_cache_config=create_context_cache_config(),
+    events_compaction_config=create_events_compaction_config(),
 )

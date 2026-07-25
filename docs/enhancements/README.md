@@ -20,7 +20,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--amber">proposed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--amber">proposed</span> | Low | High |
-| <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--amber">proposed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-021](aep-021-provider-fallback.md) | LLM Provider Fallback Chain | <span class="badge badge--amber">proposed</span> | Low-Medium | High |
 | <span class="badge badge--blue">P2</span> | [AEP-022](aep-022-trajectory-capture.md) | Trajectory Capture & Eval Harvesting | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">proposed</span> | Medium | Medium |
@@ -68,7 +68,7 @@ make agents truly autonomous and operable in production:
 - **AEP-010 ✅**: OpenTelemetry distributed tracing across agent calls *(completed 2026-06-21)*
 - **AEP-015**: Per-tenant LLM cost tracking and budget alerts
 - **AEP-017**: Runbooks for common incidents (circuit breaker open, loop storm, session DB full)
-- **AEP-020**: Conversation context compaction so long incident sessions don't overflow the model window
+- **AEP-020 ✅**: Conversation context compaction so long incident sessions don't overflow the model window *(completed 2026-07-25)*
 - **AEP-021**: LLM provider fallback chain so a provider outage/quota isn't a full platform outage
 
 ### Phase 3 - Extended Features (P2)
@@ -116,4 +116,5 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-07-18 | AEP-013: in-progress → completed | Remaining content-level defenses shipped: SafetyScreenPlugin (prompt-injection screen, blocks in before_run), PIIRedactionPlugin (credential scrubbing of tool results, registered before audit), and Gemini safety filters in create_agent — all on by default with env off-switches. |
 | 2026-07-18 | AEP-014: proposed → completed | Chain of custody closed: digest-pinned base images, CycloneDX Python SBOM on CI builds + releases, Trivy image scan gating releases with SARIF to code scanning, PR dependency-review gate, opt-in Sigstore admission policy. Cosign signing and buildx SBOM/provenance had already landed with AEP-011. |
 | 2026-07-19 | AEP-019: Milestone 1 complete | Tool-call timeline (GET /session/{id}/activity over ActivityPlugin's session_log, owner-scoped) and confirmation UI (GET /confirmations/pending + Approve/Deny panel sending the literal decision words through POST /chat) landed — the console now renders the orchestration and the guarded-action handshake, with the requester-verified gate unchanged as the sole approval authority. Milestones 2–3 (triage view, onboarding wizard) remain. |
+| 2026-07-25 | AEP-020: proposed → completed | Delivered by configuring ADK's native `EventsCompactionConfig` (ADK ≥ 1.16) rather than the hand-rolled `ContextEngine`/plugin the AEP originally specified. Native compaction also avoids splitting a `function_call` from its `function_response` — a bug the proposed slice-based design would have had — and preserves the original events by construction, so lineage needed no custom state. Effort dropped Medium → Low. |
 | 2026-07-19 | AEP-019: Milestone 2 triage view shipped | Run-triage button → incident_triage_agent; GET /session/{id}/triage exposes the recorded incident_severity + triage_report (AgentTool forwards sub-session state deltas to the parent session, verified against ADK 2.4); severity banner with collapsible markdown report; timeline polled every 2.5s while a request is in flight. Remaining for M2: per-system status chips and the remediation trace (batch-workflow-only today). |

@@ -33,6 +33,7 @@ from typing import Any, Protocol, runtime_checkable
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.apps import App
+from google.adk.apps.app import EventsCompactionConfig
 from google.adk.events import Event
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
@@ -188,6 +189,9 @@ class AgentGateway:
         db_url: PostgreSQL URL for the session store (see ``create_session_service``).
         memory_service: Optional long-term memory service.
         context_cache_config: Optional Gemini context-cache config.
+        events_compaction_config: Optional history-compaction config (see
+            ``create_events_compaction_config``). ``None`` disables compaction,
+            leaving the transcript to grow unbounded.
         session_resolver: Strategy mapping conversation keys to sessions.
             Defaults to :class:`MappedSessionResolver`.
         verified_confirmation: Arm requester-verified confirmation for guarded
@@ -208,6 +212,7 @@ class AgentGateway:
         db_url: str | None = None,
         memory_service: BaseMemoryService | None = None,
         context_cache_config: ContextCacheConfig | None = None,
+        events_compaction_config: EventsCompactionConfig | None = None,
         session_resolver: SessionResolver | None = None,
         verified_confirmation: bool = False,
     ) -> None:
@@ -225,6 +230,7 @@ class AgentGateway:
             root_agent=root_agent,
             plugins=list(plugins or []),
             context_cache_config=context_cache_config,
+            events_compaction_config=events_compaction_config,
         )
         self.runner = Runner(
             app=app, session_service=self.session_service, memory_service=memory_service

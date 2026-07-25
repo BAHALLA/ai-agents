@@ -52,8 +52,12 @@ All metrics use the `orrery_` namespace prefix following [Prometheus naming conv
 | `orrery_tool_errors_total` | Counter | `agent`, `tool`, `error_type` | Errors broken down by exception type |
 | `orrery_circuit_breaker_state` | Gauge | `tool` | Circuit breaker state: 0=closed, 1=open, 2=half_open |
 | `orrery_llm_tokens_total` | Counter | `agent`, `direction` | LLM token consumption (input/output) |
+| `orrery_context_cache_events_total` | Counter | `event` | Context cache hits and misses |
+| `orrery_context_compaction_total` | Counter | — | Conversation histories compacted into a summary |
 
 The `status` label on `orrery_tool_calls_total` is restricted to a fixed set — `ok`, `success`, `error`, `confirmation_required` — to prevent [cardinality explosion](https://prometheus.io/docs/practices/naming/#labels); any other value is normalised to `ok`.
+
+Watch `orrery_context_compaction_total` against the cache counter: each compaction rewrites the history and so invalidates the cached prefix. A rising compaction rate alongside a falling cache-hit rate means `ORRERY_COMPACTION_TOKEN_THRESHOLD` is set too low.
 
 ### How it works
 

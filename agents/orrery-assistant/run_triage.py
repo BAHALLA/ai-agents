@@ -19,7 +19,12 @@ from google.adk.runners import InMemoryRunner
 from google.genai import types
 
 from orrery_assistant.agent import orrery_triage_workflow
-from orrery_core import default_plugins, load_agent_env, set_user_role
+from orrery_core import (
+    create_events_compaction_config,
+    default_plugins,
+    load_agent_env,
+    set_user_role,
+)
 
 load_agent_env(__file__)
 
@@ -31,6 +36,12 @@ async def main() -> None:
         name=APP_NAME,
         root_agent=orrery_triage_workflow,
         plugins=default_plugins(enable_memory=True),
+        # A full sweep fans out to five specialists and can loop through
+        # remediation three times, so this root produces the longest transcripts
+        # of any surface. The explicit summarizer in the factory is required
+        # here: the root is a Workflow, and ADK raises rather than deriving a
+        # summarizer model from a non-LlmAgent root.
+        events_compaction_config=create_events_compaction_config(),
     )
     runner = InMemoryRunner(app=app)
 

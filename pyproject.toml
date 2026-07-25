@@ -126,6 +126,10 @@ markers = [
 addopts = "-m 'not eval' --import-mode=importlib"
 filterwarnings = [
     "ignore:\\[EXPERIMENTAL\\] feature.* is enabled:UserWarning:google.adk.features.*",
+    # ADK's @experimental decorator on EventsCompactionConfig / the summarizer
+    # ABC. Emitted from google.adk.utils.feature_decorator, so the filter above
+    # (scoped to google.adk.features) does not cover it.
+    "ignore:\\[EXPERIMENTAL\\] (EventsCompactionConfig|BaseEventsSummarizer).*:UserWarning",
     "ignore:.*_UnionGenericAlias.*:DeprecationWarning:google.genai.types",
     "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning:slowapi.extension",
     # Third-party deprecations we don't control (ADK internal agent-config base
