@@ -349,3 +349,47 @@ def test_strict_gate_approval_across_replicas(pg_store, fake_tool, fake_ctx):
         assert pg_store.latest_for_scope("alice@example.com") is None
     finally:
         _pending_confirmations.configure(None)
+
+
+# ── Superseding, and why it is not keyed by args_hash ─────────────────
+
+
+class TestSupersedingPendings:
+    """Pinning a deliberate trade-off against a plausible-sounding "fix".
+
+    `add()` evicts any prior pending for the same (scope_key, tool_name), so two
+    parallel same-tool calls leave one survivor. Adding args_hash to that key
+    would keep both — and would also let a card the requester scrolled past and
+    forgot still authorize an execution minutes later. The cost of superseding is
+    bounded to liveness: the evicted call re-prompts, and it can never be
+    authorized by the survivor's approval, because consume_pending matches
+    args_hash exactly.
+    """
+
+    def test_second_pending_for_one_tool_supersedes_the_first(self):
+        store = ConfirmationStore()
+        store.add(_pending(args_hash="hashA", args={"topic": "a"}))
+        store.add(_pending(args_hash="hashB", args={"topic": "b"}))
+        assert len(store._pending) == 1
+
+    def test_the_superseded_call_cannot_be_authorized_by_the_survivor(self):
+        """The safety half: an approval only ever authorizes its own arguments."""
+        store = ConfirmationStore()
+        store.add(_pending(args_hash="hashA", args={"topic": "a"}))
+        store.add(_pending(args_hash="hashB", args={"topic": "b"}))
+
+        assert store.consume_pending("threads/T1", "delete_topic", "hashA") is None
+        assert store.consume_pending("threads/T1", "delete_topic", "hashB") is not None
+
+    def test_different_tools_for_one_requester_coexist(self):
+        """Superseding is per tool — a scale and a delete do not evict each other."""
+        store = ConfirmationStore()
+        store.add(_pending(tool_name="delete_topic"))
+        store.add(_pending(tool_name="scale_deployment"))
+        assert len(store._pending) == 2
+
+    def test_the_same_tool_for_two_requesters_coexists(self):
+        store = ConfirmationStore()
+        store.add(_pending(scope_key="threads/T1"))
+        store.add(_pending(scope_key="threads/T2"))
+        assert len(store._pending) == 2

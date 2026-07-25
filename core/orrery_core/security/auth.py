@@ -124,6 +124,16 @@ def extract_role(
     """
     raw = _lookup_claim(claims, role_claim)
     if raw is None:
+        # Fails closed, but say so. A mistyped JWT_ROLE_CLAIM — or an IdP that
+        # moved its roles — silently demotes every caller to viewer, and with no
+        # log line the symptom ("my admin token can't do anything") has nothing
+        # pointing at the cause. Debug rather than warning: for a deployment that
+        # genuinely has no role claim this is the normal path, every request.
+        logger.debug(
+            "Role claim %r did not resolve in token claims (top-level keys: %s) — using viewer",
+            role_claim,
+            sorted(claims)[:20],
+        )
         return "viewer"
 
     if isinstance(raw, str):

@@ -41,6 +41,7 @@ from google.genai import types
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability.log import mask_dsn
+from ..security.redaction import REDACTED, SECRET_VALUE_PATTERNS
 from .db import (
     DatabaseUnavailableError,
     _inmemory_fallback_allowed,
@@ -57,20 +58,17 @@ def _extract_words_lower(text: str) -> set[str]:
 
 
 # ── Default redaction patterns ───────────────────────────────────────
+#
+# Sourced from ``security/redaction.py``, shared with ``PIIRedactionPlugin``.
+# This list used to be a shorter, separate one — key=value pairs and PEM blocks
+# only — while the tool-result path also caught bare provider tokens (``AKIA``,
+# ``ghp_``, ``xox``, ``sk-``, JWTs). A credential in one of those shapes was
+# therefore redacted on its way out of a tool but stored verbatim in memory, and
+# any later ``load_memory`` recall handed it straight back. One list, so the two
+# paths cannot disagree about what a secret looks like again.
+_DEFAULT_PATTERNS: list[re.Pattern[str]] = [pattern for pattern, _triggers in SECRET_VALUE_PATTERNS]
 
-_DEFAULT_PATTERNS: list[re.Pattern[str]] = [
-    # Key-value secrets: password=xxx, token: xxx, api_key=xxx, bearer xxx
-    re.compile(
-        r"(?i)(password|token|secret|api[_\-]?key|bearer|credential|auth)"
-        r"\s*[:=]\s*\S+",
-    ),
-    # PEM private key blocks
-    re.compile(
-        r"-----BEGIN [A-Z ]+(?:PRIVATE )?KEY-----[\s\S]*?-----END [A-Z ]+(?:PRIVATE )?KEY-----",
-    ),
-]
-
-_REDACTED = "[REDACTED]"
+_REDACTED = REDACTED
 
 
 # ── Secure wrapper ───────────────────────────────────────────────────

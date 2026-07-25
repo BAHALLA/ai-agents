@@ -207,3 +207,39 @@ async def test_events_without_content_preserved():
 
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="valid")
     assert len(result.memories) >= 1
+
+
+# ── Write-time redaction shares the tool-result pattern set ───────────
+
+
+class TestRedactionParityWithToolResults:
+    """Memory once carried a *shorter* pattern list than the tool-result path:
+    key=value pairs and PEM blocks, but no bare provider tokens. A `ghp_` pasted
+    into chat was scrubbed on the way out of a tool yet stored verbatim, and any
+    later `load_memory` recall handed it back. Both paths now share one list."""
+
+    @pytest.mark.parametrize(
+        "secret",
+        [
+            "password=hunter2",
+            "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "AKIAIOSFODNN7EXAMPLE",
+            "xoxb-1234567890-abcdefghij",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1",
+        ],
+    )
+    def test_secret_shapes_are_redacted_on_write(self, secret):
+        service = SecureMemoryService()
+        assert "[REDACTED]" in service._redact_text(f"the value is {secret}")
+
+    def test_ordinary_diagnostic_text_is_untouched(self):
+        service = SecureMemoryService()
+        text = "deployment api 3/3 ready, 0 restarts since 10:04"
+        assert service._redact_text(text) == text
+
+    def test_memory_and_tool_result_paths_agree(self):
+        """Parity is structural, not coincidental — one shared source."""
+        from orrery_core.persistence.memory import _DEFAULT_PATTERNS
+        from orrery_core.security.redaction import SECRET_VALUE_PATTERNS
+
+        assert [p for p, _ in SECRET_VALUE_PATTERNS] == _DEFAULT_PATTERNS

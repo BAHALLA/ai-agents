@@ -395,3 +395,47 @@ class TestJWKSKeyLookupFailures:
             )
             with pytest.raises(PyJWKClientConnectionError):
                 verify_token("a.b.c", JWTConfig(algorithm="RS256", jwks_url="https://idp/jwks"))
+
+
+# ── Dotted role-claim resolution ─────────────────────────────────────
+
+
+class TestDottedRoleClaimResolution:
+    """Every malformed shape must fail closed to viewer without raising, and
+    say so in the log — a mistyped JWT_ROLE_CLAIM silently demoting everyone
+    to viewer is otherwise a symptom with nothing pointing at its cause."""
+
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            {"realm_access": "admin"},  # intermediate is a string
+            {"realm_access": ["admin"]},  # intermediate is a list
+            {"realm_access": 1.5},  # intermediate is a number
+            {"realm_access": None},
+            {"realm_access": {"roles": {"a": 1}}},  # leaf is a mapping
+            {"realm_access": {"roles": 42}},  # leaf is a number
+            {},  # path absent entirely
+        ],
+    )
+    def test_malformed_claim_shapes_fail_closed_without_raising(self, claims):
+        assert extract_role(claims, role_claim="realm_access.roles") == "viewer"
+
+    def test_well_formed_nested_claims_still_resolve(self):
+        assert (
+            extract_role({"realm_access": {"roles": ["admin"]}}, role_claim="realm_access.roles")
+            == "admin"
+        )
+        assert (
+            extract_role(
+                {"resource_access": {"orrery": {"roles": ["operator"]}}},
+                role_claim="resource_access.orrery.roles",
+            )
+            == "operator"
+        )
+
+    def test_unresolved_claim_is_logged(self, caplog):
+        with caplog.at_level("DEBUG", logger="orrery.auth"):
+            extract_role({"sub": "alice"}, role_claim="realm_access.roles")
+        assert any("realm_access.roles" in r.getMessage() for r in caplog.records), (
+            "an unresolved role claim must leave a trace explaining the viewer fallback"
+        )
