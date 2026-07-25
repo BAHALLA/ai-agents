@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import type { ChatMessage } from "../chat/types";
 import { storageKeys } from "../config";
 import { NEW_CONVERSATION_TITLE, type Conversation } from "./types";
@@ -186,8 +186,11 @@ export interface ConversationsController {
  * transcript and its server session id; {@link useChat} drives it.
  */
 export function useConversations(): ConversationsController {
-  const initial = useRef(load());
-  const [state, dispatch] = useReducer(reducer, initial.current);
+  // Lazy initialiser rather than `useRef(load())` + reading `.current` during
+  // render: `load()` touches localStorage, so it must run exactly once, and
+  // reading a ref during render is what the previous form did to achieve that.
+  // `useReducer`'s third argument gives the same once-only guarantee without it.
+  const [state, dispatch] = useReducer(reducer, undefined, load);
   const { list, activeId } = state;
 
   useEffect(() => persist(state), [state]);

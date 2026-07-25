@@ -24,7 +24,7 @@ export function CopyButton({ value, label = "Copy", className = "" }: Props) {
   useEffect(() => () => (timer.current ? clearTimeout(timer.current) : undefined), []);
 
   const copy = useCallback(async () => {
-    let ok = false;
+    let ok: boolean;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(value);

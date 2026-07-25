@@ -73,7 +73,13 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // Which conversation the UI is showing *right now*, tracked synchronously so
   // an in-flight side-pane refresh can tell if the user has since switched away.
   const activeIdRef = useRef(activeId);
-  activeIdRef.current = activeId;
+  // Written in an effect, not during render. Every reader is an async
+  // side-pane callback that lands long after effects have flushed, so the
+  // value it sees is unchanged — and a ref write during render is exactly the
+  // impurity that breaks under StrictMode double-invocation.
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   // Keep the client's token current without recreating it (preserves identity).
   useEffect(() => {
@@ -109,13 +115,22 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
 
   // Switching conversations: drop the previous inspector state, then reload
   // this conversation's timeline/triage from the server if it has a session.
+  //
+  // `set-state-in-effect` is right in general — the idiomatic reset is to key
+  // the subtree on the conversation id and let React discard the state. That
+  // would mean remounting the pane, which also discards the in-flight abort
+  // controller and the stale-refresh guard this hook exists to hold. The race
+  // those protect against is the one fixed in 0.2.3/0.3.0 and covered by tests,
+  // so the reset stays explicit here rather than being traded for a remount.
   useEffect(() => {
     abortRef.current?.abort();
+    /* eslint-disable react-hooks/set-state-in-effect */
     setIsSending(false);
     setError(null);
     setActivity([]);
     setPending(null);
     setTriage(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
     lastSentRef.current = null;
     if (sessionId) void refreshSidePanes(sessionId, activeId);
     // Only re-run when the active conversation changes, not on every message.
