@@ -1,6 +1,7 @@
 """Docker tools for container and image management."""
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
@@ -53,8 +54,14 @@ async def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
         return False, "Docker CLI not found. Is Docker installed?"
     except TimeoutError:
         logger.exception("Docker command timed out after %ds", timeout)
-        if proc:
-            proc.kill()
+        proc.kill()
+        # Reap it. `kill()` only delivers the signal; without a wait the child
+        # stays a zombie until the event loop's SIGCHLD handler happens to
+        # collect it, and a tool that times out tends to do so repeatedly — one
+        # leaked PID per call adds up in a long-lived agent process. Suppressed:
+        # the loop's child watcher may have got there first.
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()
         return False, f"Command timed out after {timeout}s"
 
 

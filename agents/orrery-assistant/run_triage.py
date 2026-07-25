@@ -7,9 +7,20 @@ Unlike the interactive ``orrery_chat_agent`` root, this drives the graph-native
 Usage:
     uv run python run_triage.py
 
-Destructive remediation tools stay gated by the guardrail plugins: without an
-interactive confirmation transport they return ``confirmation_required`` rather
-than executing, so an unattended run never auto-applies a destructive action.
+This run is unattended, so **no mutating tool executes**, by two independent
+gates rather than one:
+
+- ``remediation_actor`` wires ``require_confirmation()``, so every ``@confirm``
+  and ``@destructive`` tool returns ``confirmation_required``. Nothing here can
+  answer that prompt — a model re-call inside the same invocation does not count
+  as a confirmation — so the loop reports the action it would take.
+- RBAC pins the session to ``operator``, so ``@destructive`` tools (restart,
+  rollback) are additionally refused outright as ``access_denied``.
+
+Both matter. The confirmation gate is what stops ``@confirm`` tools such as
+``scale_deployment``, which the ``operator`` role permits and which therefore did
+run unattended before the actor was gated. Do not raise the role here without
+keeping the actor's gate.
 """
 
 import asyncio
@@ -45,8 +56,9 @@ async def main() -> None:
     )
     runner = InMemoryRunner(app=app)
 
-    # Operator role so read-only checks run; destructive remediation is still
-    # gated by the confirmation guardrail (no transport here → not executed).
+    # Operator role so every read-only check runs. Mutations are stopped by the
+    # actor's confirmation gate (and destructive ones by RBAC on top) — see the
+    # module docstring; both gates are load-bearing on this path.
     state: dict[str, object] = {}
     set_user_role(state, "operator")
     session = await runner.session_service.create_session(

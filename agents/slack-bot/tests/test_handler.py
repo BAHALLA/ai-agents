@@ -96,13 +96,33 @@ class TestSlackAgentHandler:
         )
 
         mock_session_service.create_session.assert_called_once()
-        assert session_map.get("C_CHAN", "111.000") == "sess_new"
+        assert session_map.get("C_CHAN", "111.000", "U_USER") == "sess_new"
+
+    @pytest.mark.asyncio
+    async def test_each_thread_participant_gets_their_own_session(
+        self, handler, mock_runner, mock_session_service, session_map, say
+    ):
+        """ADK scopes sessions by user, so a shared thread cannot share one id."""
+        mock_runner.run_async = _empty_run_async
+        session_map.set("C_CHAN", "111.000", "U_FIRST", "sess_first")
+
+        await handler.handle_message(
+            text="check kafka",
+            channel="C_CHAN",
+            thread_ts="111.000",
+            user_id="U_SECOND",
+            say=say,
+        )
+
+        mock_session_service.create_session.assert_called_once()
+        assert session_map.get("C_CHAN", "111.000", "U_SECOND") == "sess_new"
+        assert session_map.get("C_CHAN", "111.000", "U_FIRST") == "sess_first"
 
     @pytest.mark.asyncio
     async def test_reuses_existing_session(
         self, handler, mock_runner, mock_session_service, session_map, say
     ):
-        session_map.set("C_CHAN", "111.000", "sess_existing")
+        session_map.set("C_CHAN", "111.000", "U_USER", "sess_existing")
         mock_runner.run_async = _empty_run_async
 
         await handler.handle_message(

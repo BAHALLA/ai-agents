@@ -731,3 +731,32 @@ def test_selftest_requires_auth(patched_runner):
 def test_me_reports_whether_a_selftest_is_possible(patched_runner):
     without = TestClient(_probe_app(patched_runner, []))
     assert without.get("/me", headers=_bearer()).json()["self_test_available"] is False
+
+
+# ── Interactive docs exposure ────────────────────────────────────────
+
+
+def test_docs_are_off_by_default_when_auth_is_on(app_with_auth):
+    """The schema is unauthenticatable (a navigation carries no bearer token),
+    so it must not enumerate every route on an authenticated deployment."""
+    assert ServerConfig(auth_enabled=True, jwt=JWTConfig(secret="s")).serve_docs is False
+
+    client = TestClient(app_with_auth)
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_docs_are_on_by_default_for_local_no_auth_runs(app_no_auth):
+    assert ServerConfig(auth_enabled=False).serve_docs is True
+    assert TestClient(app_no_auth).get("/docs").status_code == 200
+
+
+def test_docs_env_flag_overrides_in_both_directions(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("JWT_SECRET", "s")
+    monkeypatch.setenv("ORRERY_DOCS_ENABLED", "true")
+    assert ServerConfig.from_env().serve_docs is True
+
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("ORRERY_DOCS_ENABLED", "false")
+    assert ServerConfig.from_env().serve_docs is False

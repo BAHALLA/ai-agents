@@ -64,15 +64,17 @@ class SlackAgentHandler:
         # be frozen at whatever it was when the session was first created.
         role = self._config.resolve_role(user_id)
 
-        # Resolve or create ADK session for this thread
-        session_id = self.session_map.get(channel, thread_ts)
+        # Resolve or create this participant's ADK session for the thread. Keyed by
+        # user as well as thread because ADK scopes sessions by
+        # (app, user_id, session_id) — see SessionMap's docstring.
+        session_id = self.session_map.get(channel, thread_ts, user_id)
         if session_id is None:
             session = await self.gateway.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
             )
             session_id = session.id
-            self.session_map.set(channel, thread_ts, session_id)
+            self.session_map.set(channel, thread_ts, user_id, session_id)
             logger.info("New session for user=%s role=%s", user_id, role)
 
         # Per-turn identity: set_user_role stamps user_role + the server-trusted

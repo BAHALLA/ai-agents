@@ -12,9 +12,14 @@ loop is wired by the Workflow graph in ``agent.py`` via a ``RoutingMap``:
 ``mark_remediation_resolved``, and ``verify_route`` enforces the iteration cap.
 See ADR-003.
 
-RBAC: The remediation actor inherits the guardrails from the tools it calls
-(@destructive, @confirm), so only operator/admin roles can trigger destructive
-actions inside the loop.
+Safety: two independent gates, because this is the one root that acts without a
+human in the conversation. RBAC (``GuardrailsPlugin``) bounds *who* may act;
+``require_confirmation()`` on the actor bounds *whether* a mutating call may run
+at all. The second gate is not optional here — ``GuardrailsPlugin`` enforces RBAC
+only, so an actor without it would execute every ``@confirm`` tool its role
+happens to permit, unattended and unlogged as an approval. That is exactly what
+``scale_deployment`` did on the batch path before this was wired. The structural
+guard lives in ``tests/test_confirmation_wiring.py``, which walks *both* roots.
 """
 
 from google.adk.agents.context import Context
@@ -32,7 +37,7 @@ from k8s_health_agent.tools import (
 )
 from kafka_health_agent.tools import get_consumer_lag, get_kafka_cluster_health
 from ops_journal_agent.tools import log_operation
-from orrery_core import create_agent, resolve_planner
+from orrery_core import create_agent, require_confirmation, resolve_planner
 
 # Maximum act -> verify cycles before giving up (replaces LoopAgent.max_iterations).
 MAX_REMEDIATION_ITERATIONS = 3
@@ -87,7 +92,11 @@ remediation_actor = create_agent(
         "action — state what is missing and stop; the loop will surface it.\n"
         "- On a retry, the previous action did not work: do something DIFFERENT "
         "(different action or different target), never the same call again.\n"
-        "- Log the action with log_operation.\n\n"
+        "- Log the action with log_operation.\n"
+        "- A tool answering 'confirmation_required' or 'access_denied' has NOT run. "
+        "Do not retry it and do not report it as done: say which action is waiting "
+        "on which approval, and stop. An unapplied action reported as applied is "
+        "worse than no action at all.\n\n"
         "Output for the verifier, precisely: action taken, target (namespace/name), "
         "why, and what observable change would prove it worked."
     ),
@@ -97,6 +106,11 @@ remediation_actor = create_agent(
         rollback_deployment,
         log_operation,
     ],
+    # Every mutating call passes a confirmation gate, same as the interactive
+    # specialists. On an unattended run (no transport to answer) a guarded tool
+    # returns ``confirmation_required`` and the loop reports what it *would* do
+    # instead of doing it — the actor's instruction covers that outcome.
+    before_tool_callback=require_confirmation(),
     output_key="remediation_action",
 )
 

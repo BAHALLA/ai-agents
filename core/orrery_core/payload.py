@@ -15,10 +15,29 @@ number formatting), which is all a size *threshold* ever needs.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 #: Matches the recursion bound used by the redaction walk.
 _MAX_DEPTH = 32
+
+#: Above this many characters of text, a scanning after-tool plugin should move
+#: its work to a worker thread.
+#:
+#: Those callbacks are ``async`` but do pure CPU work (several regex passes over
+#: the same text), so on a big payload one of them holds the event loop and every
+#: other in-flight request stalls with it — a 20 MiB ``get_pod_logs`` result
+#: measured ~1.3 s of blocking for redaction alone. Below the threshold the
+#: common case (small status dicts) stays inline, where a thread hop would cost
+#: more than the scan itself.
+#:
+#: Shared by :mod:`orrery_core.plugins.pii_plugin` and
+#: :mod:`orrery_core.plugins.safety_plugin` so both make the same call about the
+#: same payload. Note these plugins see the *uncapped* result:
+#: ``ToolOutputCapPlugin`` must stay last in the chain (it returns a replacement,
+#: which early-exits ADK's after-tool chain), so its 4 MiB cap never bounds what
+#: arrives here.
+OFFLOAD_THRESHOLD_CHARS = 256 * 1024
 
 
 def text_volume(obj: Any, limit: int | None = None) -> int:
@@ -53,3 +72,47 @@ def text_volume(obj: Any, limit: int | None = None) -> int:
         if limit is not None and total >= limit:
             return total
     return total
+
+
+def map_strings(obj: Any, transform: Callable[[str], tuple[str, int]], _depth: int = 0) -> int:
+    """Rewrite every string in *obj* **in place** via *transform*; return the count.
+
+    *transform* takes a string and returns ``(new_string, n)`` where ``n`` counts
+    the substitutions it made; a zero count leaves the original object untouched
+    (no needless writes). Only mutable containers are rewritten — strings nested
+    in tuples/sets are left alone, since rebuilding an immutable container would
+    change object identity for a case that does not arise in tool results.
+
+    In-place is the contract that matters for after-tool plugins: ADK's after-tool
+    chain early-exits on the first non-None return, so a plugin that wants later
+    observers to see its edits must mutate the shared result and return ``None``.
+
+    Args:
+        obj: Any tool result — dict, list, or scalar.
+        transform: String rewriter returning ``(new_value, substitutions)``.
+
+    Returns:
+        Total substitutions reported by *transform* across the structure.
+    """
+    if _depth > _MAX_DEPTH:
+        return 0
+    count = 0
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(value, str):
+                new, n = transform(value)
+                if n:
+                    obj[key] = new
+                    count += n
+            else:
+                count += map_strings(value, transform, _depth + 1)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, str):
+                new, n = transform(item)
+                if n:
+                    obj[i] = new
+                    count += n
+            else:
+                count += map_strings(item, transform, _depth + 1)
+    return count

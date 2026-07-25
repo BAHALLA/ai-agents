@@ -235,6 +235,60 @@ async def test_mapped_resolver_creates_once_then_reuses():
 
 
 @pytest.mark.asyncio
+async def test_mapped_resolver_gives_each_participant_their_own_session():
+    """A second speaker in a shared thread must not be handed the first's session.
+
+    ADK scopes sessions by ``(app, user_id, session_id)``, so reusing one id
+    across users does not share history — it silently creates a fresh empty
+    session behind the same id. Keying the map by user makes that explicit
+    instead of accidental.
+    """
+    svc = MagicMock()
+    svc.create_session = AsyncMock(
+        side_effect=[SimpleNamespace(id="alice-1"), SimpleNamespace(id="bob-1")]
+    )
+    r = MappedSessionResolver()
+
+    alice = await r.resolve(session_service=svc, app_name="app", user_id="alice", key="chan:t1")
+    bob = await r.resolve(session_service=svc, app_name="app", user_id="bob", key="chan:t1")
+    assert alice != bob
+    assert svc.create_session.await_count == 2
+
+    # And each still reuses their own on the next turn.
+    svc.create_session = AsyncMock(side_effect=AssertionError("must not create again"))
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="alice", key="chan:t1")
+        == alice
+    )
+
+
+@pytest.mark.asyncio
+async def test_mapped_resolver_forget_clears_the_whole_thread_by_default():
+    svc = MagicMock()
+    svc.create_session = AsyncMock(side_effect=[SimpleNamespace(id=f"s{i}") for i in range(1, 6)])
+    r = MappedSessionResolver()
+    await r.resolve(session_service=svc, app_name="app", user_id="alice", key="chan:t1")
+    await r.resolve(session_service=svc, app_name="app", user_id="bob", key="chan:t1")
+
+    r.forget("chan:t1")
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="alice", key="chan:t1") == "s3"
+    )
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="bob", key="chan:t1") == "s4"
+    )
+
+    # Scoped forget touches only that participant.
+    r.forget("chan:t1", user_id="alice")
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="bob", key="chan:t1") == "s4"
+    )
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="alice", key="chan:t1") == "s5"
+    )
+
+
+@pytest.mark.asyncio
 async def test_explicit_resolver_reuses_existing_and_creates_when_absent():
     svc = MagicMock()
     svc.get_session = AsyncMock(return_value=SimpleNamespace(id="existing"))
