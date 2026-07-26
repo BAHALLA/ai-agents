@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "orrery-core",
     "confluent-kafka>=2.15.0",
-    "kubernetes>=36.0.2",
+    "kubernetes>=36.0.3",
 ]
 
 [tool.uv.sources]
