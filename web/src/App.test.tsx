@@ -47,10 +47,10 @@ describe("App auth flow", () => {
   });
 
   it("sends a message and renders the assistant reply", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse({ session_id: "s1", response: "Kafka is healthy." })),
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ session_id: "s1", response: "Kafka is healthy." }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
@@ -60,11 +60,145 @@ describe("App auth flow", () => {
     await user.click(screen.getByRole("button", { name: /send/i }));
 
     expect(await screen.findByText("Kafka is healthy.")).toBeInTheDocument();
-    // The server session id is threaded into the persisted conversation.
+
+    // The server's session id threads the next turn onto the same conversation.
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "and the lag?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
     await waitFor(() => {
-      const raw = localStorage.getItem(storageKeys.conversations) ?? "[]";
-      expect(JSON.stringify(JSON.parse(raw))).toContain("s1");
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      expect(chatCalls).toHaveLength(2);
+      expect(JSON.parse(String(chatCalls[1][1]?.body))).toMatchObject({ session_id: "s1" });
     });
+    // Nothing about the conversation is written to disk.
+    expect(localStorage.getItem("orrery.console.conversations")).toBeNull();
+  });
+
+  it("restores history from the server in a browser that has never seen it", async () => {
+    // The point of the server-backed history: a different machine (or cleared
+    // site data) rebuilds the sidebar and the transcript from the session store.
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const path = new URL(String(url), "http://localhost").pathname;
+      if (path === "/sessions") {
+        return jsonResponse({
+          sessions: [
+            { session_id: "s-old", title: "check kafka", last_update_time: 100 },
+            { session_id: "s-new", title: "restart payment-api", last_update_time: 200 },
+          ],
+        });
+      }
+      if (path === "/session/s-new") {
+        return jsonResponse({
+          session_id: "s-new",
+          title: "restart payment-api",
+          messages: [
+            { role: "user", text: "restart payment-api", at: 200 },
+            { role: "assistant", text: "Rolled the deployment.", at: 201 },
+          ],
+          last_update_time: 201,
+        });
+      }
+      return jsonResponse({ entries: [], pending: null, severity: null, report: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+
+    render(<App />);
+
+    // Both conversations are listed, newest first, with the latest one open.
+    const history = await screen.findByRole("navigation", { name: /conversation history/i });
+    await waitFor(() =>
+      expect(within(history).getByText("restart payment-api")).toBeInTheDocument(),
+    );
+    expect(within(history).getByText("check kafka")).toBeInTheDocument();
+    expect(await screen.findByText("Rolled the deployment.")).toBeInTheDocument();
+  });
+
+  it("opens an older conversation and fetches its transcript on demand", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const path = new URL(String(url), "http://localhost").pathname;
+      if (path === "/sessions") {
+        return jsonResponse({
+          sessions: [
+            { session_id: "s-old", title: "check kafka", last_update_time: 100 },
+            { session_id: "s-new", title: "restart payment-api", last_update_time: 200 },
+          ],
+        });
+      }
+      if (path === "/session/s-old") {
+        return jsonResponse({
+          session_id: "s-old",
+          title: "check kafka",
+          messages: [{ role: "assistant", text: "All brokers up.", at: 100 }],
+          last_update_time: 100,
+        });
+      }
+      if (path === "/session/s-new") {
+        return jsonResponse({
+          session_id: "s-new",
+          title: "restart payment-api",
+          messages: [],
+          last_update_time: 200,
+        });
+      }
+      return jsonResponse({ entries: [], pending: null, severity: null, report: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    const history = await screen.findByRole("navigation", { name: /conversation history/i });
+    await waitFor(() => expect(within(history).getByText("check kafka")).toBeInTheDocument());
+    // The older conversation's transcript is only fetched when it is opened.
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/session/s-old"))).toBe(false);
+
+    await user.click(within(history).getByText("check kafka"));
+
+    expect(await screen.findByText("All brokers up.")).toBeInTheDocument();
+  });
+
+  it("deletes a conversation from the store, not just the sidebar", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(url), "http://localhost").pathname;
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (path === "/sessions") {
+        return jsonResponse({
+          sessions: [
+            { session_id: "s1", title: "check kafka", last_update_time: 100 },
+            { session_id: "s2", title: "restart payment-api", last_update_time: 200 },
+          ],
+        });
+      }
+      if (path.startsWith("/session/")) {
+        return jsonResponse({
+          session_id: path.slice("/session/".length),
+          title: "",
+          messages: [],
+          last_update_time: 0,
+        });
+      }
+      return jsonResponse({ entries: [], pending: null, severity: null, report: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    const history = await screen.findByRole("navigation", { name: /conversation history/i });
+    await waitFor(() => expect(within(history).getByText("check kafka")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /delete conversation: check kafka/i }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u, init]) => String(u).endsWith("/session/s1") && init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(within(history).queryByText("check kafka")).not.toBeInTheDocument());
   });
 
   it("renders assistant markdown as formatted output, not raw asterisks", async () => {

@@ -37,12 +37,15 @@ function readStoredToken(): string | null {
 }
 
 /** Drop everything user-scoped so a shared browser never leaks the previous
- *  user's transcripts to whoever signs in next. */
+ *  user's session to whoever signs in next.
+ *
+ *  Transcripts are no longer among it — history lives in the session store and
+ *  is fetched with the new user's own token, so signing in as someone else can
+ *  only ever show that person's conversations. The legacy keys are still cleared
+ *  because a browser upgraded from an earlier build may hold a copy on disk. */
 function clearLocalState(): void {
   try {
     localStorage.removeItem(storageKeys.token);
-    localStorage.removeItem(storageKeys.conversations);
-    localStorage.removeItem(storageKeys.activeConversation);
     legacyStorageKeys.forEach((k) => localStorage.removeItem(k));
   } catch {
     // ignore

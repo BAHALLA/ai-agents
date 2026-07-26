@@ -24,7 +24,7 @@ uv run pytest agents/kafka-health/tests/ -v
 
 Infrastructure — `up`/`down` act on **everything**; `PROFILES` narrows it:
 ```bash
-make up                     # All containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+make up                     # All containers (Kafka, Postgres + pgAdmin, observability, Keycloak, Elasticsearch)
 make up PROFILES=tracing    # Just the base stack + Tempo/Grafana
 make down                   # Stop everything (volumes kept)
 make reset                  # Stop + wipe volumes (fixes cluster.id mismatch); prompts unless FORCE=1

@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Pre-registered connection so pgAdmin opens on the session store instead of",
+    "an empty tree. Loaded once, on the first start with an empty pgadmin-data",
+    "volume (the container's entrypoint imports it, then never looks again) — so",
+    "editing this file after that needs `make reset` or a manual re-import.",
+    "The password is deliberately absent: pgAdmin only accepts a saved-password",
+    "file at mode 0600 owned by its own uid (5050), which a host bind mount",
+    "cannot provide. Enter it once (POSTGRES_PASSWORD, default agents_secret)",
+    "and tick Save password — that lands in the volume and persists."
+  ],
+  "Servers": {
+    "1": {
+      "Name": "Orrery session store",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "agents",
+      "Username": "agents",
+      "SSLMode": "prefer",
+      "Comment": "ADK sessions, events and app/user state. The console's history reads from `sessions` + `events`."
+    }
+  }
+}

@@ -110,6 +110,70 @@ describe("ApiClient.activity", () => {
   });
 });
 
+describe("ApiClient conversation history", () => {
+  it("GETs the caller's session list", async () => {
+    const payload = { sessions: [{ session_id: "s1", title: "check kafka", last_update_time: 5 }] };
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const res = await new ApiClient("tok").sessions();
+
+    expect(res).toEqual(payload);
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url), "http://localhost").pathname).toBe("/sessions");
+    expect(init.method).toBe("GET");
+  });
+
+  it("GETs one conversation's transcript", async () => {
+    const payload = {
+      session_id: "s1",
+      title: "check kafka",
+      messages: [{ role: "user", text: "check kafka", at: 5 }],
+      last_update_time: 6,
+    };
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    expect(await new ApiClient("tok").session("s1")).toEqual(payload);
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url), "http://localhost").pathname).toBe("/session/s1");
+  });
+
+  it("DELETEs a conversation and tolerates the empty 204 body", async () => {
+    // A 204 has no body at all; parsing it as JSON would throw on the empty
+    // string and report a successful delete as a failure.
+    mockFetch(async () => new Response(null, { status: 204 }));
+
+    await expect(new ApiClient("tok").deleteSession("s1")).resolves.toBeUndefined();
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url), "http://localhost").pathname).toBe("/session/s1");
+    expect(init.method).toBe("DELETE");
+    expect(init.body).toBeNull();
+  });
+
+  it("raises on a delete the server refused", async () => {
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify({ detail: "Session not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const err = await new ApiClient("t").deleteSession("gone").catch((e: unknown) => e);
+    expect((err as ApiError).status).toBe(404);
+  });
+});
+
 describe("ApiClient.pendingConfirmation", () => {
   it("returns the caller's pending action", async () => {
     const payload = {
@@ -177,6 +241,9 @@ describe("API path coverage", () => {
     const client = new ApiClient("tok");
     await Promise.all([
       client.chat({ message: "x" }),
+      client.sessions(),
+      client.session("s1"),
+      client.deleteSession("s1"),
       client.activity("s1"),
       client.pendingConfirmation(),
       client.triage("s1"),

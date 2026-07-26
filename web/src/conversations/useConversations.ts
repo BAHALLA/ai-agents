@@ -1,17 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { ApiClient, ApiError } from "../api/client";
+import type { SessionMessage, SessionSummary } from "../api/types";
 import type { ChatMessage } from "../chat/types";
-import { storageKeys } from "../config";
+import { legacyStorageKeys } from "../config";
+import { describeApiError } from "../system/useSystem";
 import { NEW_CONVERSATION_TITLE, type Conversation } from "./types";
-
-/** Cap on stored conversations so localStorage can't grow without bound and
- * silently start failing to persist. The least-recently-updated drop first —
- * the same order the sidebar shows, so what disappears is never a surprise. */
-const MAX_CONVERSATIONS = 50;
-
-/** Cap on messages persisted per conversation. The conversation count alone
- * does not bound storage: one long-running incident thread grows forever. The
- * live in-memory transcript is never trimmed — only what gets written. */
-const MAX_PERSISTED_MESSAGES = 200;
 
 let seq = 0;
 function newId(): string {
@@ -19,6 +12,7 @@ function newId(): string {
   return `c-${Date.now()}-${seq}`;
 }
 
+/** A conversation that exists only in the browser, until its first turn is sent. */
 function emptyConversation(): Conversation {
   return {
     id: newId(),
@@ -26,86 +20,58 @@ function emptyConversation(): Conversation {
     title: NEW_CONVERSATION_TITLE,
     messages: [],
     updatedAt: Date.now(),
+    loaded: true,
   };
 }
 
-function isMessage(v: unknown): v is ChatMessage {
-  const m = v as ChatMessage | null;
-  return (
-    !!m &&
-    typeof m.id === "string" &&
-    (m.role === "user" || m.role === "assistant") &&
-    typeof m.text === "string" &&
-    typeof m.at === "number"
-  );
+/** True for a "New chat" entry the user hasn't used yet. */
+function isUntouchedDraft(c: Conversation): boolean {
+  return c.sessionId === null && c.messages.length === 0;
 }
 
-/** A stored conversation is only trusted if every field matches the current
- * shape — a corrupt or old-schema entry is dropped rather than allowed to
- * throw later during render (e.g. reading `.messages.length`). */
-function isConversation(v: unknown): v is Conversation {
-  const c = v as Conversation | null;
-  return (
-    !!c &&
-    typeof c.id === "string" &&
-    (c.sessionId === null || typeof c.sessionId === "string") &&
-    typeof c.title === "string" &&
-    typeof c.updatedAt === "number" &&
-    Array.isArray(c.messages) &&
-    c.messages.every(isMessage)
-  );
+/** The conversation to fall back to when the active one goes away: the most
+ * recently updated, which is also the one the sidebar shows at the top. The
+ * list is not held in display order, so this cannot be `list[0]`. */
+function mostRecent(list: Conversation[]): Conversation {
+  return list.reduce((best, c) => (c.updatedAt > best.updatedAt ? c : best), list[0]);
 }
 
-/** Keep the {@link MAX_CONVERSATIONS} most-recently-updated conversations. */
-function evict(list: Conversation[]): Conversation[] {
-  if (list.length <= MAX_CONVERSATIONS) return list;
-  const keep = new Set(
-    [...list]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_CONVERSATIONS)
-      .map((c) => c.id),
-  );
-  return list.filter((c) => keep.has(c.id));
+/** A listed session, as a sidebar row: title and time, transcript not yet fetched. */
+function fromSummary(summary: SessionSummary): Conversation {
+  return {
+    id: summary.session_id,
+    sessionId: summary.session_id,
+    title: summary.title || NEW_CONVERSATION_TITLE,
+    messages: [],
+    // The server's clock, in seconds; the console works in epoch ms. A 0 means
+    // the store had no timestamp — kept as 0 so the sidebar can omit the age
+    // rather than claim the conversation just happened.
+    updatedAt: summary.last_update_time > 0 ? summary.last_update_time * 1000 : 0,
+    loaded: false,
+  };
 }
 
-function load(): ConversationsState {
-  try {
-    const raw = localStorage.getItem(storageKeys.conversations);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    const list = evict(Array.isArray(parsed) ? parsed.filter(isConversation) : []);
-    if (list.length > 0) {
-      const stored = localStorage.getItem(storageKeys.activeConversation);
-      const activeId = list.some((c) => c.id === stored) ? stored! : list[0].id;
-      return { list, activeId };
-    }
-  } catch {
-    // fall through to a fresh conversation
-  }
-  const fresh = emptyConversation();
-  return { list: [fresh], activeId: fresh.id };
+function toChatMessages(sessionId: string, messages: SessionMessage[]): ChatMessage[] {
+  return messages.map((m, i) => ({
+    id: `${sessionId}:${i}`,
+    role: m.role,
+    text: m.text,
+    at: m.at * 1000,
+  }));
 }
 
-/** Write the history back, shedding load rather than failing silently.
+/**
+ * Drop the conversation history the console used to keep in localStorage.
  *
- * A browser that refuses the write (quota, private mode) would otherwise leave
- * the operator with a console that looks like it is saving and is not, so a
- * rejected write retries against progressively smaller slices before giving up.
+ * Transcripts now live in the session store, so these keys are dead — but a
+ * browser that used an earlier build still holds a full copy of past
+ * conversations on disk, which nothing would ever read or clear again.
  */
-function persist(state: ConversationsState): void {
-  const trimmed = state.list.map((c) =>
-    c.messages.length > MAX_PERSISTED_MESSAGES
-      ? { ...c, messages: c.messages.slice(-MAX_PERSISTED_MESSAGES) }
-      : c,
-  );
-  const byRecency = [...trimmed].sort((a, b) => b.updatedAt - a.updatedAt);
-  for (const size of [byRecency.length, 10, 1]) {
-    try {
-      localStorage.setItem(storageKeys.conversations, JSON.stringify(byRecency.slice(0, size)));
-      localStorage.setItem(storageKeys.activeConversation, state.activeId);
-      return;
-    } catch {
-      // quota or storage unavailable — retry with fewer conversations
-    }
+function purgeLegacyStorage(): void {
+  try {
+    legacyStorageKeys.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    // storage unavailable (private mode) — nothing to purge
   }
 }
 
@@ -125,26 +91,28 @@ type ConversationsAction =
   | { type: "new"; fresh: Conversation }
   | { type: "select"; id: string }
   | { type: "delete"; id: string; fallback: Conversation }
-  | { type: "patch"; patch: ConversationPatch; at: number };
+  | { type: "patch"; patch: ConversationPatch; at: number }
+  | { type: "hydrate"; listed: Conversation[] }
+  | { type: "transcript"; id: string; title: string; messages: ChatMessage[] };
 
 /**
  * The list and the active selection move together, in one reducer.
  *
- * They are a single piece of state: creating, deleting, and selecting all
- * change both at once. Held as two `useState`s they could only be updated by
- * either reading the list from the render closure (a stale snapshot — an
- * update queued earlier in the same tick, such as an arriving assistant reply,
- * gets overwritten) or by calling `setActiveId` inside the list updater (an
- * impure reducer, double-invoked under StrictMode). A reducer has neither
- * problem: React replays every dispatch against the freshest state.
+ * They are a single piece of state: creating, deleting, selecting and hydrating
+ * all change both at once. Held as two `useState`s they could only be updated by
+ * either reading the list from the render closure (a stale snapshot — an update
+ * queued earlier in the same tick, such as an arriving assistant reply, gets
+ * overwritten) or by calling `setActiveId` inside the list updater (an impure
+ * reducer, double-invoked under StrictMode). A reducer has neither problem:
+ * React replays every dispatch against the freshest state.
  */
 function reducer(state: ConversationsState, action: ConversationsAction): ConversationsState {
   switch (action.type) {
     case "new": {
       // Reuse an existing empty conversation instead of piling up blanks.
-      const blank = state.list.find((c) => c.messages.length === 0);
+      const blank = state.list.find(isUntouchedDraft);
       if (blank) return { ...state, activeId: blank.id };
-      return { list: evict([action.fresh, ...state.list]), activeId: action.fresh.id };
+      return { list: [action.fresh, ...state.list], activeId: action.fresh.id };
     }
     case "select":
       return state.activeId === action.id ? state : { ...state, activeId: action.id };
@@ -153,7 +121,7 @@ function reducer(state: ConversationsState, action: ConversationsAction): Conver
       if (next.length === 0) return { list: [action.fallback], activeId: action.fallback.id };
       return {
         list: next,
-        activeId: state.activeId === action.id ? next[0].id : state.activeId,
+        activeId: state.activeId === action.id ? mostRecent(next).id : state.activeId,
       };
     }
     case "patch": {
@@ -164,6 +132,33 @@ function reducer(state: ConversationsState, action: ConversationsAction): Conver
       });
       return { ...state, list };
     }
+    case "hydrate": {
+      // Local entries win over the listing. A turn sent while `/sessions` was in
+      // flight has a transcript the summary doesn't carry, and re-adding the
+      // server's row for the same session would duplicate the conversation.
+      const local = state.list.filter((c) => !isUntouchedDraft(c));
+      const known = new Set(local.map((c) => c.sessionId));
+      const merged = [...local, ...action.listed.filter((c) => !known.has(c.sessionId))];
+      if (merged.length === 0) {
+        // Nothing stored and nothing local: keep the draft that was already here.
+        return state;
+      }
+      // The untouched draft is dropped when there is real history to show —
+      // otherwise every load opens on a blank "New chat" above the conversation
+      // the operator was actually in, which is the one to reopen.
+      const activeId = merged.some((c) => c.id === state.activeId)
+        ? state.activeId
+        : mostRecent(merged).id;
+      return { list: merged, activeId };
+    }
+    case "transcript": {
+      const list = state.list.map((c) =>
+        c.id === action.id
+          ? { ...c, title: action.title || c.title, messages: action.messages, loaded: true }
+          : c,
+      );
+      return { ...state, list };
+    }
   }
 }
 
@@ -172,30 +167,108 @@ export interface ConversationsController {
   conversations: Conversation[];
   activeId: string;
   active: Conversation;
+  /** True while the history list is being fetched for the first time. */
+  isLoading: boolean;
+  /** Why history is incomplete, when a fetch failed in a way worth showing. */
+  error: string | null;
   newConversation: () => void;
   selectConversation: (id: string) => void;
-  deleteConversation: (id: string) => void;
+  /** Deletes server-side first, so the row only disappears once it is really gone. */
+  deleteConversation: (id: string) => Promise<void>;
   /** Merge a partial update into the active conversation (bumps updatedAt).
    * Accepts an updater so async callers always read the freshest transcript. */
   patchActive: (patch: ConversationPatch) => void;
 }
 
 /**
- * Owns the conversation history (list + active selection), persisted to
- * localStorage. The active conversation is the source of truth for the
- * transcript and its server session id; {@link useChat} drives it.
+ * Owns the conversation history (list + active selection), backed by the server.
+ *
+ * The session store is the source of truth: `GET /sessions` rebuilds the sidebar
+ * on any browser and `GET /session/{id}` fetches a transcript when its
+ * conversation is opened. The console keeps nothing in localStorage, so history
+ * follows the user between machines instead of being stranded in whichever
+ * browser happened to create it — and a long thread is no longer silently
+ * truncated to fit a storage quota.
+ *
+ * Transcripts load lazily, one conversation at a time: the listing carries
+ * titles only, so opening the console costs one request regardless of how much
+ * history the user has.
  */
-export function useConversations(): ConversationsController {
-  // Lazy initialiser rather than `useRef(load())` + reading `.current` during
-  // render: `load()` touches localStorage, so it must run exactly once, and
-  // reading a ref during render is what the previous form did to achieve that.
-  // `useReducer`'s third argument gives the same once-only guarantee without it.
-  const [state, dispatch] = useReducer(reducer, undefined, load);
+export function useConversations(token: string | null): ConversationsController {
+  const client = useMemo(() => new ApiClient(token), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [state, dispatch] = useReducer(reducer, undefined, () => {
+    const fresh = emptyConversation();
+    return { list: [fresh], activeId: fresh.id };
+  });
   const { list, activeId } = state;
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => persist(state), [state]);
+  // Which transcripts are already being fetched, so switching back and forth
+  // between two conversations doesn't queue a request per click.
+  const inFlight = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    client.setToken(token);
+  }, [client, token]);
 
   const active = useMemo(() => list.find((c) => c.id === activeId) ?? list[0], [list, activeId]);
+
+  // Load the history list once, then open whatever conversation ends up active.
+  useEffect(() => {
+    let cancelled = false;
+    purgeLegacyStorage();
+    void (async () => {
+      try {
+        const res = await client.sessions();
+        if (cancelled) return;
+        dispatch({ type: "hydrate", listed: (res.sessions ?? []).map(fromSummary) });
+      } catch (err) {
+        if (cancelled) return;
+        // A console with no history is still a usable console: the draft stays,
+        // and the next turn opens a real session.
+        setError(describeApiError(err, "Could not load your conversation history."));
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  // Fetch the active conversation's transcript whenever it is missing — covers
+  // both the initial hydrate and every later selection, without either path
+  // having to remember to ask.
+  //
+  // No cancel-on-cleanup flag here, unlike the listing above: this effect
+  // re-runs on every change to the active conversation, including an arriving
+  // reply, so cancelling would abandon a transcript fetch mid-flight and leave
+  // the conversation permanently unloaded (the in-flight guard would suppress
+  // the retry). The `inFlight` set is what prevents duplicate requests, and a
+  // dispatch after unmount is a no-op.
+  useEffect(() => {
+    const { id, sessionId, loaded } = active;
+    if (sessionId === null || loaded || inFlight.current.has(sessionId)) return;
+    inFlight.current.add(sessionId);
+    void (async () => {
+      try {
+        const res = await client.session(sessionId);
+        dispatch({
+          type: "transcript",
+          id,
+          title: res.title,
+          messages: toChatMessages(sessionId, res.messages ?? []),
+        });
+      } catch (err) {
+        // Left unloaded on purpose: reopening it retries, which is the only
+        // recovery a transient failure needs.
+        setError(describeApiError(err, "Could not load that conversation."));
+      } finally {
+        inFlight.current.delete(sessionId);
+      }
+    })();
+  }, [active, client]);
 
   const newConversation = useCallback(
     () => dispatch({ type: "new", fresh: emptyConversation() }),
@@ -205,8 +278,23 @@ export function useConversations(): ConversationsController {
   const selectConversation = useCallback((id: string) => dispatch({ type: "select", id }), []);
 
   const deleteConversation = useCallback(
-    (id: string) => dispatch({ type: "delete", id, fallback: emptyConversation() }),
-    [],
+    async (id: string) => {
+      const target = list.find((c) => c.id === id);
+      // A draft was never stored; there is nothing to delete but the row.
+      if (target?.sessionId) {
+        try {
+          await client.deleteSession(target.sessionId);
+        } catch (err) {
+          // 404 means it is already gone — the row should still disappear.
+          if (!(err instanceof ApiError && err.status === 404)) {
+            setError(describeApiError(err, "Could not delete that conversation."));
+            return;
+          }
+        }
+      }
+      dispatch({ type: "delete", id, fallback: emptyConversation() });
+    },
+    [client, list],
   );
 
   const patchActive = useCallback(
@@ -220,6 +308,8 @@ export function useConversations(): ConversationsController {
     conversations: sorted,
     activeId,
     active,
+    isLoading,
+    error,
     newConversation,
     selectConversation,
     deleteConversation,

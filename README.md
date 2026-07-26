@@ -129,7 +129,7 @@ open http://localhost:8000
 
 ```bash
 make install   # Python workspace + web console
-make up        # All containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+make up        # All containers (Kafka, Postgres + pgAdmin, observability, Keycloak, Elasticsearch)
 make run-api   # API + web console on http://localhost:8000
 make dev-token # Mint a token to sign in with (ROLE=viewer|operator|admin)
 ```

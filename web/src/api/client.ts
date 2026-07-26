@@ -6,6 +6,8 @@ import type {
   MeResponse,
   PendingResponse,
   SelfTestResponse,
+  SessionResponse,
+  SessionsResponse,
   TriageResponse,
 } from "./types";
 
@@ -40,6 +42,8 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   signal?: AbortSignal;
+  /** Override the inferred verb. Only DELETE needs this (no body, not a GET). */
+  method?: "DELETE";
 }
 
 /**
@@ -69,7 +73,7 @@ export class ApiClient {
     let res: Response;
     try {
       res = await fetch(`${config.apiBaseUrl}${path}`, {
-        method: body !== undefined ? "POST" : "GET",
+        method: options.method ?? (body !== undefined ? "POST" : "GET"),
         headers,
         body: body !== undefined ? JSON.stringify(body) : null,
         signal: options.signal ?? null,
@@ -83,6 +87,10 @@ export class ApiClient {
     if (!res.ok) {
       throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
     }
+
+    // A 204 carries no body by definition (DELETE answers with one), so parsing
+    // it would fail on the empty string rather than on anything being wrong.
+    if (res.status === 204) return undefined as T;
 
     try {
       return (await res.json()) as T;
@@ -107,6 +115,28 @@ export class ApiClient {
   /** Send one chat turn. Pass the returned session_id back on the next call. */
   chat(req: ChatRequest, options?: RequestOptions): Promise<ChatResponse> {
     return this.request<ChatResponse>("/chat", req, options);
+  }
+
+  /** The caller's conversations, newest first. No transcripts — see {@link session}. */
+  sessions(options?: RequestOptions): Promise<SessionsResponse> {
+    return this.request<SessionsResponse>("/sessions", undefined, options);
+  }
+
+  /** One conversation with its full transcript, rebuilt server-side from the events. */
+  session(sessionId: string, options?: RequestOptions): Promise<SessionResponse> {
+    return this.request<SessionResponse>(
+      `/session/${encodeURIComponent(sessionId)}`,
+      undefined,
+      options,
+    );
+  }
+
+  /** Delete one of the caller's conversations. Answers 204, so nothing is returned. */
+  deleteSession(sessionId: string, options?: RequestOptions): Promise<void> {
+    return this.request<void>(`/session/${encodeURIComponent(sessionId)}`, undefined, {
+      ...options,
+      method: "DELETE",
+    });
   }
 
   /** Tool-call timeline for one of the caller's sessions. */
