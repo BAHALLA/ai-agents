@@ -129,7 +129,7 @@ clean: ## Remove caches and build artifacts (keeps .venv and node_modules)
 PROFILES ?= tracing sso elastic
 COMPOSE_PROFILES := $(addprefix --profile ,$(PROFILES))
 
-up: ## Start all containers (Kafka, Postgres, observability, Keycloak, Elasticsearch)
+up: ## Start all containers (Kafka, Postgres + pgAdmin, observability, Keycloak, Elasticsearch)
 	docker compose $(COMPOSE_PROFILES) up -d
 	@if echo "$(PROFILES)" | grep -qw sso; then \
 		echo "▶ Waiting for the Keycloak realm to import…"; \

@@ -82,6 +82,43 @@ services:
       timeout: 5s
       retries: 5
 
+  # Browse the session store the way kafka-ui browses Kafka — unprofiled for the
+  # same reason, since the thing it inspects is always running. `sessions`,
+  # `events` and `app_states`/`user_states` are ADK's tables; the console's
+  # conversation history is the first two.
+  #
+  # Desktop mode (SERVER_MODE=False) drops both the sign-in page and the master
+  # password prompt: this listens on localhost only, in front of a database whose
+  # password is in a committed .env.example, so a second login to reach it buys
+  # nothing. The default email/password below are still required by the image's
+  # entrypoint, which refuses to start without them.
+  pgadmin:
+    image: dpage/pgadmin4:9.16
+    container_name: pgadmin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5050:80"   # http://localhost:5050
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@orrery.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      # `.local` is a reserved TLD, and pgAdmin validates the default email
+      # against deliverable domains — without this it refuses to start and
+      # restart-loops on "does not appear to be a valid email address". Allowing
+      # the domain beats inventing one that resolves to a real mail server for
+      # what is only a local login identifier. The value is Python, not a string:
+      # the entrypoint writes PGADMIN_CONFIG_* into config_distro.py verbatim.
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['local']"
+      # Quieter startup: no upgrade check phoning home.
+      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: 'False'
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+
   # ── Observability stack ───────────────────────────────────────────────
 
   prometheus:
@@ -360,6 +397,7 @@ services:
 volumes:
   kafka-data:
   postgres-data:
+  pgadmin-data:
   prometheus-data:
   loki-data:
   tempo-data:

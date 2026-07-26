@@ -30,12 +30,21 @@ export const oidcConfig = {
 /** True when SSO is configured; drives which sign-in surface the app renders. */
 export const isOidcEnabled = oidcConfig.issuer.length > 0;
 
-/** localStorage keys — namespaced to avoid collisions with other apps on the host. */
+/** localStorage keys — namespaced to avoid collisions with other apps on the host.
+ *
+ * Only the token mode's bearer token is stored. Conversation history is not:
+ * it lives in the session store and is fetched per browser session, so a shared
+ * machine holds no transcripts on disk and no thread is capped to fit a quota.
+ */
 export const storageKeys = {
   token: "orrery.console.token",
-  conversations: "orrery.console.conversations",
-  activeConversation: "orrery.console.activeConversation",
 } as const;
 
-/** Legacy keys cleared on sign-out but no longer written (kept for migration). */
-export const legacyStorageKeys = ["orrery.console.sessionId"] as const;
+/** Keys earlier builds wrote and this one doesn't. Purged on load (see
+ * `useConversations`) and on sign-out, so an upgraded browser stops carrying a
+ * stale copy of past conversations around. */
+export const legacyStorageKeys = [
+  "orrery.console.sessionId",
+  "orrery.console.conversations",
+  "orrery.console.activeConversation",
+] as const;

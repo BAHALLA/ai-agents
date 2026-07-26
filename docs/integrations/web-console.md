@@ -100,8 +100,10 @@ usable with no identity provider running.
     treat pasted tokens as short-lived and scope them to the role the operator
     actually needs. SSO mode does not have this exposure.
 
-Signing out clears the token, the transcripts, and any legacy keys — a shared
-browser must not leak the previous user's conversations to whoever is next.
+Signing out clears the token and any keys an earlier build wrote. Transcripts
+are no longer among them: history lives in the session store and is fetched with
+the signed-in user's own token, so a shared browser can only ever show the
+current user's conversations.
 
 ### Trying SSO locally
 
@@ -159,6 +161,31 @@ requester-verified gate is the only authority on who may approve, and it
 refuses a decision from anyone but the requester, or one that predates the
 action it would authorize.
 
+### Conversation history that follows the user
+
+The sidebar is a view of the **session store**, not of the browser. On load the
+console asks `GET /sessions` for the caller's conversations and fetches a
+transcript (`GET /session/{id}`) only for the one it opens, so a long history
+costs one request. Deleting a conversation deletes the session.
+
+Consequences worth knowing, since the console used to keep this in `localStorage`:
+
+- History is the same on every machine, and clearing site data loses nothing.
+  Previously the sidebar was the only index of which sessions belonged to whom,
+  so a different browser left the transcripts unreachable in the store.
+- Long threads are no longer truncated. The browser copy was capped at 200
+  messages per conversation, which made the visible transcript disagree with
+  what the agent still remembered.
+- Titles come from the server, written into session state on a conversation's
+  first turn. A session opened by another transport (Slack, the CLI) has none
+  and renders as "New chat".
+
+!!! note "In-memory deployments have no history to list"
+    Without `DATABASE_URL` the session store is per-process and empty at startup,
+    so the sidebar starts blank on every restart. That is the same trade-off
+    every other stateful feature makes — see the fail-fast behaviour in
+    `persistence/db.py`.
+
 ### Triage view
 
 **Run triage** sends a canned prompt to the `incident_triage_agent`. The result
@@ -203,6 +230,9 @@ package.
 | Endpoint | Purpose |
 |---|---|
 | `POST /chat` | One conversation turn (rate limited per caller). |
+| `GET /sessions` | The caller's conversations, newest first — the sidebar's history. No transcripts. |
+| `GET /session/{id}` | One conversation with its transcript, rebuilt from the stored events. |
+| `DELETE /session/{id}` | Delete one of the caller's conversations. |
 | `GET /session/{id}/activity` | Tool-call timeline, scoped to the caller's own session. |
 | `GET /session/{id}/triage` | Recorded severity + report for that session. |
 | `GET /confirmations/pending` | The caller's own pending guarded action, for rendering. |

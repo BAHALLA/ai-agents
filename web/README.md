@@ -15,9 +15,11 @@ mode follows the OS (`prefers-color-scheme`); there is no manual toggle.
 The UI is an app shell: a **left sidebar** (brand, New chat, Run triage,
 conversation history, identity), a **chat column** in the middle, and a
 **right inspector panel** (Tool calls table + Triage report) that toggles from
-the header. Conversation history is kept **client-side** in `localStorage`
-(the server has no "list sessions" endpoint) — each entry stores the full
-transcript plus the server-issued `sessionId`.
+the header. Conversation history is **server-backed**: `GET /sessions` rebuilds
+the sidebar and `GET /session/{id}` fetches a transcript when its conversation
+is opened, so history follows the user to any browser. Nothing about a
+conversation is written to `localStorage` — only the token mode's bearer token
+is stored there.
 
 ## Status
 
@@ -34,8 +36,10 @@ Milestone 1 — an authenticated chat console:
   is awaiting the caller's decision, an Approve/Deny panel renders inline. The
   buttons send the literal words `approve`/`deny` through the normal chat
   flow — the server's requester-verified gate stays the sole authority
-- **Conversation history** sidebar — client-side, titled from the first
-  message; New chat starts a fresh session
+- **Conversation history** sidebar (`GET /sessions`, `GET /session/{id}`,
+  `DELETE /session/{id}`) — read from the session store, titled server-side
+  from the conversation's first message; New chat starts a fresh session and
+  deleting one removes it from the store, not just from this browser
 - Loading, error, and auth-expiry states
 
 Milestone 2 — triage view:

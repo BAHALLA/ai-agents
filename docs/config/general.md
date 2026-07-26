@@ -96,6 +96,30 @@ Multi-replica deployments **require** PostgreSQL.
     no migration step is needed. See [Cross-session memory](../memory.md) and
     [Production deployment → Provision Postgres](../deployment.md#step-2-provision-postgres).
 
+### Inspecting the store locally
+
+`make up` starts **pgAdmin** on [http://localhost:5050](http://localhost:5050),
+alongside Postgres and unprofiled for the same reason `kafka-ui` is — the thing
+it inspects is always running. It opens straight into the browser tree with the
+connection pre-registered (`infra/pgadmin/servers.json`): no sign-in page, no
+master password. Enter the database password once on first connect
+(`POSTGRES_PASSWORD`, default `agents_secret`) and tick **Save password**; it
+persists in the `pgadmin-data` volume.
+
+The tables worth knowing, all created by ADK:
+
+| Table | Holds |
+|---|---|
+| `sessions` | One row per conversation — `state` carries `conversation_title`, `user_role`, `incident_severity`, the activity log. |
+| `events` | Every turn's events: user messages, model replies, tool calls, compaction digests. The console's transcripts are rebuilt from here. |
+| `app_states` / `user_states` | App- and user-scoped state, merged into a session's `state` on read. |
+| `orrery_memory_events` | Long-term memory (`SecureMemoryService`), searched by `load_memory`. |
+
+It binds to `127.0.0.1` only, and the login page is disabled because it sits in
+front of a database whose password ships in `.env.example` — a second login to
+reach it would buy nothing. Both facts stop being true the moment this is
+exposed off-host, so don't: it is a local-development container.
+
 ---
 
 ## Context Caching

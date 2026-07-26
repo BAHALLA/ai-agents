@@ -18,7 +18,7 @@ interface Props {
 
 /** The authenticated console: sidebar + chat column + inspector panel. */
 export function ChatConsole({ token, identity, onSignOut }: Props) {
-  const conversations = useConversations();
+  const conversations = useConversations(token);
   const chat = useChat(token, conversations);
   const system = useSystem(token);
 

@@ -15,6 +15,9 @@
  */
 export const API_PREFIXES = [
   "/chat",
+  // Both are needed: the prefix match is exact-or-followed-by-slash, so
+  // "/session" does not cover the "/sessions" collection.
+  "/sessions",
   "/session",
   "/confirmations",
   "/healthz",

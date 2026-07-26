@@ -1,81 +1,197 @@
-import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../chat/types";
-import { storageKeys } from "../config";
-import { NEW_CONVERSATION_TITLE, type Conversation } from "./types";
+import { legacyStorageKeys } from "../config";
+import { NEW_CONVERSATION_TITLE } from "./types";
 import { useConversations } from "./useConversations";
 
 function msg(id: string): ChatMessage {
   return { id, role: "assistant", text: "reply", at: 1 };
 }
 
-function makeConversation(id: string, withMessage = true): Conversation {
-  return {
-    id,
-    sessionId: null,
-    title: withMessage ? id : NEW_CONVERSATION_TITLE,
-    messages: withMessage ? [{ id: "m", role: "user", text: "hi", at: 1 }] : [],
-    updatedAt: 1,
-  };
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
-describe("useConversations", () => {
-  beforeEach(() => localStorage.clear());
+function summary(id: string, title: string, updated: number) {
+  return { session_id: id, title, last_update_time: updated };
+}
 
-  it("starts with one empty conversation when storage is empty", () => {
-    const { result } = renderHook(() => useConversations());
+interface Handlers {
+  sessions?: () => Response | Promise<Response>;
+  session?: (id: string) => Response | Promise<Response>;
+  del?: (id: string) => Response | Promise<Response>;
+}
+
+/** Route each endpoint to a canned response, defaulting to "no history". */
+function stubApi(handlers: Handlers = {}) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    const id = decodeURIComponent(path.replace("/session/", ""));
+    if (init?.method === "DELETE") {
+      return handlers.del?.(id) ?? new Response(null, { status: 204 });
+    }
+    if (path === "/sessions") return handlers.sessions?.() ?? json({ sessions: [] });
+    if (path.startsWith("/session/")) {
+      return (
+        handlers.session?.(id) ??
+        json({ session_id: id, title: "", messages: [], last_update_time: 0 })
+      );
+    }
+    return json({});
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** Render the hook and wait for the initial history fetch to settle. */
+async function renderLoaded(handlers: Handlers = {}) {
+  const fetchMock = stubApi(handlers);
+  const rendered = renderHook(() => useConversations("tok"));
+  await waitFor(() => expect(rendered.result.current.isLoading).toBe(false));
+  return { ...rendered, fetchMock };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+describe("useConversations — server-backed history", () => {
+  it("starts with one empty conversation when the store has none", async () => {
+    const { result } = await renderLoaded();
     expect(result.current.conversations).toHaveLength(1);
+    expect(result.current.active.title).toBe(NEW_CONVERSATION_TITLE);
+    expect(result.current.active.sessionId).toBeNull();
+  });
+
+  it("rebuilds the sidebar from the store, newest first", async () => {
+    const { result } = await renderLoaded({
+      sessions: () =>
+        json({
+          sessions: [
+            summary("old", "check kafka", 100),
+            summary("new", "restart payment-api", 200),
+          ],
+        }),
+    });
+
+    expect(result.current.conversations.map((c) => c.title)).toEqual([
+      "restart payment-api",
+      "check kafka",
+    ]);
+    // Coming back to the console opens the conversation you were last in, and
+    // the untouched draft is dropped rather than sitting above real history.
+    expect(result.current.activeId).toBe("new");
+    expect(result.current.conversations.map((c) => c.sessionId)).toEqual(["new", "old"]);
+  });
+
+  it("labels an untitled stored session with the placeholder", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("s1", "", 5)] }),
+    });
     expect(result.current.active.title).toBe(NEW_CONVERSATION_TITLE);
   });
 
-  it("newConversation reuses an existing blank instead of piling up", () => {
-    const { result } = renderHook(() => useConversations());
+  it("fetches the transcript of the conversation it opens", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("s1", "check kafka", 100)] }),
+      session: (id) =>
+        json({
+          session_id: id,
+          title: "check kafka",
+          messages: [
+            { role: "user", text: "check kafka", at: 100 },
+            { role: "assistant", text: "All brokers up.", at: 101 },
+          ],
+          last_update_time: 101,
+        }),
+    });
+
+    await waitFor(() => expect(result.current.active.loaded).toBe(true));
+    expect(result.current.active.messages.map((m) => m.text)).toEqual([
+      "check kafka",
+      "All brokers up.",
+    ]);
+    // Server seconds become browser milliseconds.
+    expect(result.current.active.messages[0].at).toBe(100_000);
+  });
+
+  it("loads a transcript once, however often it is reselected", async () => {
+    const { result, fetchMock } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("a", "A", 2), summary("b", "B", 1)] }),
+    });
+    await waitFor(() => expect(result.current.active.loaded).toBe(true));
+
+    act(() => result.current.selectConversation("b"));
+    await waitFor(() => expect(result.current.active.loaded).toBe(true));
+    act(() => result.current.selectConversation("a"));
+    act(() => result.current.selectConversation("b"));
+
+    await waitFor(() => {
+      const transcripts = fetchMock.mock.calls.filter(([u]) => /\/session\/[ab]$/.test(String(u)));
+      expect(transcripts).toHaveLength(2); // one per conversation, not one per click
+    });
+  });
+
+  it("keeps a turn sent while the history list was still in flight", async () => {
+    // The reply landed in the draft before /sessions answered; hydrating must
+    // not re-add the server's row for that same session as a second entry.
+    let release: (r: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => (release = resolve));
+    stubApi({ sessions: () => pending });
+    const { result } = renderHook(() => useConversations("tok"));
+
+    act(() => result.current.patchActive({ sessionId: "s1", messages: [msg("m1")] }));
+    act(() => release(json({ sessions: [summary("s1", "check kafka", 5)] })));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.conversations).toHaveLength(1);
+    expect(result.current.active.messages.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("stays usable when the history list fails to load", async () => {
+    const { result } = await renderLoaded({ sessions: () => json({ detail: "boom" }, 500) });
+    expect(result.current.error).toMatch(/server failed/i);
+    // A console with no history is still a console: the draft is there to type in.
+    expect(result.current.conversations).toHaveLength(1);
+    expect(result.current.active.sessionId).toBeNull();
+  });
+
+  it("reports a transcript that will not load, leaving it retryable", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("s1", "check kafka", 5)] }),
+      session: () => json({ detail: "nope" }, 500),
+    });
+    await waitFor(() => expect(result.current.error).toMatch(/server failed/i));
+    expect(result.current.active.loaded).toBe(false);
+  });
+
+  it("newConversation reuses an existing blank instead of piling up", async () => {
+    const { result } = await renderLoaded();
     const firstId = result.current.activeId;
     act(() => result.current.newConversation());
     expect(result.current.conversations).toHaveLength(1);
     expect(result.current.activeId).toBe(firstId);
   });
 
-  it("newConversation adds a fresh one once the current has messages", () => {
-    const { result } = renderHook(() => useConversations());
-    act(() => result.current.patchActive({ messages: makeConversation("x").messages }));
+  it("newConversation adds a fresh one once the current has messages", async () => {
+    const { result } = await renderLoaded();
+    act(() => result.current.patchActive({ messages: [msg("m")] }));
     act(() => result.current.newConversation());
     expect(result.current.conversations).toHaveLength(2);
     expect(result.current.active.messages).toHaveLength(0);
   });
 
-  it("deleting the active conversation reassigns activeId", () => {
-    localStorage.setItem(
-      storageKeys.conversations,
-      JSON.stringify([makeConversation("a"), makeConversation("b")]),
-    );
-    localStorage.setItem(storageKeys.activeConversation, "a");
-    const { result } = renderHook(() => useConversations());
-    act(() => result.current.deleteConversation("a"));
-    expect(result.current.conversations.map((c) => c.id)).toEqual(["b"]);
-    expect(result.current.activeId).toBe("b");
-  });
-
-  it("deleting the last conversation creates a fresh empty one", () => {
-    localStorage.setItem(storageKeys.conversations, JSON.stringify([makeConversation("only")]));
-    const { result } = renderHook(() => useConversations());
-    act(() => result.current.deleteConversation("only"));
-    expect(result.current.conversations).toHaveLength(1);
-    expect(result.current.active.messages).toHaveLength(0);
-  });
-
-  it("caps a large stored history at load", () => {
-    const many = Array.from({ length: 70 }, (_, i) => makeConversation(`c${i}`));
-    localStorage.setItem(storageKeys.conversations, JSON.stringify(many));
-    const { result } = renderHook(() => useConversations());
-    expect(result.current.conversations.length).toBeLessThanOrEqual(50);
-  });
-
-  it("keeps a reply that arrives in the same tick as a New-chat click", () => {
+  it("keeps a reply that arrives in the same tick as a New-chat click", async () => {
     // The regression: newConversation wrote a whole new array built from the
     // render closure, so an update queued earlier in the same tick — the
     // assistant's reply landing via patchActive — was silently overwritten.
-    const { result } = renderHook(() => useConversations());
+    const { result } = await renderLoaded();
     act(() => result.current.patchActive({ messages: [msg("user-1")] }));
     const originalId = result.current.activeId;
 
@@ -88,84 +204,77 @@ describe("useConversations", () => {
     expect(original?.messages.map((m) => m.id)).toEqual(["user-1", "assistant-reply"]);
     expect(result.current.conversations).toHaveLength(2);
   });
+});
 
-  it("keeps a reply that arrives in the same tick as a delete", () => {
-    const { result } = renderHook(() => useConversations());
-    act(() => result.current.patchActive({ messages: [msg("user-1")] }));
-    act(() => result.current.newConversation());
-    const secondId = result.current.activeId;
-
-    act(() => {
-      result.current.patchActive((c) => ({ messages: [...c.messages, msg("late-reply")] }));
-      result.current.deleteConversation("does-not-exist");
+describe("useConversations — deletion", () => {
+  it("deletes the stored session, then drops the row", async () => {
+    const { result, fetchMock } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("a", "A", 2), summary("b", "B", 1)] }),
     });
 
-    const second = result.current.conversations.find((c) => c.id === secondId);
-    expect(second?.messages.map((m) => m.id)).toEqual(["late-reply"]);
+    await act(() => result.current.deleteConversation("a"));
+
+    expect(
+      fetchMock.mock.calls.some(
+        ([u, init]) => String(u).endsWith("/session/a") && init?.method === "DELETE",
+      ),
+    ).toBe(true);
+    expect(result.current.conversations.map((c) => c.id)).toEqual(["b"]);
+    expect(result.current.activeId).toBe("b");
   });
 
-  it("evicts the least-recently-updated conversation, not the oldest-inserted", () => {
-    const many = Array.from({ length: 50 }, (_, i) => ({
-      ...makeConversation(`c${i}`),
-      // c0 is the oldest insertion but the most recently used.
-      updatedAt: i === 0 ? 10_000 : i,
-    }));
-    localStorage.setItem(storageKeys.conversations, JSON.stringify(many));
-    const { result } = renderHook(() => useConversations());
+  it("deleting a draft touches no endpoint", async () => {
+    const { result, fetchMock } = await renderLoaded();
+    const draftId = result.current.activeId;
+    fetchMock.mockClear();
 
-    act(() => result.current.patchActive({ messages: [msg("m")] }));
-    act(() => result.current.newConversation());
+    await act(() => result.current.deleteConversation(draftId));
 
-    const ids = result.current.conversations.map((c) => c.id);
-    expect(ids).toHaveLength(50);
-    expect(ids).toContain("c0"); // recently used — survives
-    expect(ids).not.toContain("c1"); // least recently updated — evicted
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The last conversation is replaced by a fresh empty one, never nothing.
+    expect(result.current.conversations).toHaveLength(1);
+    expect(result.current.active.messages).toHaveLength(0);
   });
 
-  it("trims a very long transcript when persisting but not in memory", () => {
-    const { result } = renderHook(() => useConversations());
-    const long = Array.from({ length: 250 }, (_, i) => msg(`m${i}`));
-    act(() => result.current.patchActive({ messages: long }));
-
-    expect(result.current.active.messages).toHaveLength(250);
-    const stored = JSON.parse(localStorage.getItem(storageKeys.conversations)!) as Conversation[];
-    expect(stored[0].messages).toHaveLength(200);
-    expect(stored[0].messages.at(-1)?.id).toBe("m249"); // the most recent survive
-  });
-
-  it("sheds older conversations rather than losing the write when storage is full", () => {
-    const { result } = renderHook(() => useConversations());
-    act(() => result.current.patchActive({ messages: [msg("m")] }));
-    act(() => result.current.newConversation());
-
-    const original = Storage.prototype.setItem;
-    let calls = 0;
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
-      this: Storage,
-      key: string,
-      value: string,
-    ) {
-      // Reject the first (full) write the way a quota-exceeded browser would.
-      calls += 1;
-      if (calls === 1) throw new DOMException("QuotaExceededError");
-      original.call(this, key, value);
+  it("keeps the row when the server refuses the delete", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("a", "A", 2)] }),
+      del: () => json({ detail: "nope" }, 500),
     });
 
-    act(() => result.current.patchActive({ messages: [msg("m2")] }));
+    await act(() => result.current.deleteConversation("a"));
 
-    expect(calls).toBeGreaterThan(1); // it retried instead of giving up
-    setItem.mockRestore();
-    const stored = localStorage.getItem(storageKeys.conversations);
-    expect(stored).not.toBeNull();
-    expect(JSON.parse(stored!)).toHaveLength(2);
+    // The list still says what the store says — the failure is reported instead.
+    expect(result.current.conversations.map((c) => c.id)).toEqual(["a"]);
+    expect(result.current.error).toMatch(/server failed/i);
   });
 
-  it("drops malformed stored entries instead of crashing", () => {
-    localStorage.setItem(
-      storageKeys.conversations,
-      JSON.stringify([makeConversation("ok"), { id: "bad", messages: "not-an-array" }]),
-    );
-    const { result } = renderHook(() => useConversations());
-    expect(result.current.conversations.map((c) => c.id)).toEqual(["ok"]);
+  it("drops the row when the session is already gone (404)", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("a", "A", 2), summary("b", "B", 1)] }),
+      del: () => json({ detail: "Session not found" }, 404),
+    });
+
+    await act(() => result.current.deleteConversation("a"));
+
+    expect(result.current.conversations.map((c) => c.id)).toEqual(["b"]);
+    expect(result.current.error).toBeNull();
+  });
+});
+
+describe("useConversations — no local transcripts", () => {
+  it("writes nothing to localStorage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("s1", "check kafka", 5)] }),
+    });
+    act(() => result.current.patchActive({ messages: [msg("m")] }));
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("purges history an earlier build left on disk", async () => {
+    legacyStorageKeys.forEach((key) => localStorage.setItem(key, "stale"));
+    await renderLoaded();
+    legacyStorageKeys.forEach((key) => expect(localStorage.getItem(key)).toBeNull());
   });
 });

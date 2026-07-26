@@ -356,6 +356,162 @@ def _alice_token() -> str:
     )
 
 
+# ── Conversation history: /sessions, GET+DELETE /session/{id} ────────
+
+
+def _auth() -> dict[str, str]:
+    return {"Authorization": f"Bearer {_alice_token()}"}
+
+
+def _listed(session_id: str, *, title: str = "", updated: float = 0.0) -> MagicMock:
+    """A session as `list_sessions` returns it: state, but no events."""
+    session = MagicMock()
+    session.id = session_id
+    session.state = {"conversation_title": title} if title else {}
+    session.last_update_time = updated
+    session.events = []
+    return session
+
+
+def _text_event(text: str, *, author: str, timestamp: float) -> MagicMock:
+    part = MagicMock()
+    part.text = text
+    part.thought = None
+    event = MagicMock()
+    event.content.parts = [part]
+    event.author = author
+    event.timestamp = timestamp
+    event.actions.compaction = None
+    return event
+
+
+def test_sessions_requires_auth(app_with_auth):
+    assert TestClient(app_with_auth).get("/sessions").status_code == 401
+
+
+def test_sessions_lists_the_callers_conversations_newest_first(app_with_auth, patched_runner):
+    patched_runner.list_sessions = AsyncMock(
+        return_value=MagicMock(
+            sessions=[
+                _listed("old", title="check kafka", updated=100.0),
+                _listed("new", title="restart payment-api", updated=200.0),
+            ]
+        )
+    )
+    r = TestClient(app_with_auth).get("/sessions", headers=_auth())
+    assert r.status_code == 200
+    assert r.json()["sessions"] == [
+        {"session_id": "new", "title": "restart payment-api", "last_update_time": 200.0},
+        {"session_id": "old", "title": "check kafka", "last_update_time": 100.0},
+    ]
+
+
+def test_sessions_listing_is_scoped_to_the_verified_subject(app_with_auth, patched_runner):
+    patched_runner.list_sessions = AsyncMock(return_value=MagicMock(sessions=[]))
+    TestClient(app_with_auth).get("/sessions", headers=_auth())
+    assert patched_runner.list_sessions.call_args.kwargs["user_id"] == "alice"
+
+
+def test_sessions_untitled_conversation_has_an_empty_title(app_with_auth, patched_runner):
+    """A session opened by another transport carries no title; the client
+    supplies the placeholder rather than the server inventing one."""
+    patched_runner.list_sessions = AsyncMock(
+        return_value=MagicMock(sessions=[_listed("s1", updated=1.0)])
+    )
+    r = TestClient(app_with_auth).get("/sessions", headers=_auth())
+    assert r.json()["sessions"][0]["title"] == ""
+
+
+def test_sessions_listing_is_capped(app_with_auth, patched_runner):
+    many = [_listed(f"s{i}", title=f"c{i}", updated=float(i)) for i in range(70)]
+    patched_runner.list_sessions = AsyncMock(return_value=MagicMock(sessions=many))
+    r = TestClient(app_with_auth).get("/sessions", headers=_auth())
+    listed = r.json()["sessions"]
+    assert len(listed) == 50
+    assert listed[0]["session_id"] == "s69"  # newest kept, oldest dropped
+
+
+def test_chat_titles_a_new_conversation_from_its_first_message(app_with_auth, patched_runner):
+    client = TestClient(app_with_auth)
+    client.post("/chat", headers=_auth(), json={"message": "why is orders lagging?\nmore detail"})
+    assert patched_runner.last_state_delta["conversation_title"] == "why is orders lagging?"
+
+
+def test_chat_does_not_relabel_an_existing_conversation(
+    app_with_auth, patched_runner, mock_session
+):
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    client = TestClient(app_with_auth)
+    client.post("/chat", headers=_auth(), json={"message": "follow-up", "session_id": "sess-1"})
+    assert "conversation_title" not in patched_runner.last_state_delta
+
+
+def test_chat_elides_a_very_long_title(app_with_auth, patched_runner):
+    client = TestClient(app_with_auth)
+    client.post("/chat", headers=_auth(), json={"message": "x" * 200})
+    title = patched_runner.last_state_delta["conversation_title"]
+    assert len(title) == 48
+    assert title.endswith("…")
+
+
+def test_get_session_returns_the_rebuilt_transcript(app_with_auth, patched_runner, mock_session):
+    mock_session.state = {"conversation_title": "check kafka"}
+    mock_session.last_update_time = 42.0
+    mock_session.events = [
+        _text_event("check kafka", author="user", timestamp=1.0),
+        _text_event("Checking… ", author="orrery_chat_agent", timestamp=2.0),
+        _text_event("all brokers up.", author="orrery_chat_agent", timestamp=3.0),
+    ]
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    r = TestClient(app_with_auth).get("/session/sess-1", headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["title"] == "check kafka"
+    assert body["last_update_time"] == 42.0
+    # The agent's two text events are one message, as /chat returned them.
+    assert body["messages"] == [
+        {"role": "user", "text": "check kafka", "at": 1.0},
+        {"role": "assistant", "text": "Checking… all brokers up.", "at": 2.0},
+    ]
+
+
+def test_get_session_unknown_id_is_404(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    assert TestClient(app_with_auth).get("/session/nope", headers=_auth()).status_code == 404
+
+
+def test_get_session_is_pinned_to_the_verified_subject(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    TestClient(app_with_auth).get("/session/someone-elses", headers=_auth())
+    assert patched_runner.get_session.call_args.kwargs["user_id"] == "alice"
+
+
+def test_delete_session_removes_it(app_with_auth, patched_runner, mock_session):
+    patched_runner.get_session = AsyncMock(return_value=mock_session)
+    patched_runner.delete_session = AsyncMock()
+    r = TestClient(app_with_auth).delete("/session/sess-1", headers=_auth())
+    assert r.status_code == 204
+    assert patched_runner.delete_session.call_args.kwargs == {
+        "app_name": "test",
+        "user_id": "alice",
+        "session_id": "sess-1",
+    }
+
+
+def test_delete_session_unknown_id_is_404(app_with_auth, patched_runner):
+    patched_runner.get_session = AsyncMock(return_value=None)
+    patched_runner.delete_session = AsyncMock()
+    r = TestClient(app_with_auth).delete("/session/nope", headers=_auth())
+    assert r.status_code == 404
+    patched_runner.delete_session.assert_not_called()
+
+
+def test_delete_session_requires_auth(app_with_auth, patched_runner):
+    patched_runner.delete_session = AsyncMock()
+    assert TestClient(app_with_auth).delete("/session/sess-1").status_code == 401
+    patched_runner.delete_session.assert_not_called()
+
+
 def test_activity_requires_auth(app_with_auth):
     client = TestClient(app_with_auth)
     assert client.get("/session/sess-1/activity").status_code == 401

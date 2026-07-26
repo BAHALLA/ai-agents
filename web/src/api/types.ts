@@ -20,6 +20,36 @@ export interface ChatResponse {
   response: string;
 }
 
+/** One of the caller's conversations, as GET /sessions lists it (no transcript). */
+export interface SessionSummary {
+  session_id: string;
+  /** Empty when nothing labelled the session — the client supplies the placeholder. */
+  title: string;
+  /** Unix *seconds* of the last write (the server's clock, not the browser's). */
+  last_update_time: number;
+}
+
+/** GET /sessions response. */
+export interface SessionsResponse {
+  sessions: SessionSummary[];
+}
+
+/** One stored message from a session's transcript. */
+export interface SessionMessage {
+  role: "user" | "assistant";
+  text: string;
+  /** Unix *seconds*. */
+  at: number;
+}
+
+/** GET /session/{id} response — one conversation, transcript included. */
+export interface SessionResponse {
+  session_id: string;
+  title: string;
+  messages: SessionMessage[];
+  last_update_time: number;
+}
+
 /** The three roles the platform's RBAC resolves to. */
 export type Role = "viewer" | "operator" | "admin";
 

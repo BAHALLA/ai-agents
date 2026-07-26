@@ -1,5 +1,6 @@
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
+import type { Conversation } from "../conversations/types";
 import type { ConversationsController } from "../conversations/useConversations";
 import { IdentityBadge } from "./IdentityBadge";
 
@@ -24,6 +25,16 @@ function relativeTime(ts: number): string {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+/** The second line of a history row.
+ *
+ * A stored conversation is dated even before its transcript is fetched, so the
+ * age comes from the listing rather than from `messages` — which is empty until
+ * the conversation is opened. Only an unused draft is "empty". */
+function historyLabel(c: Conversation): string {
+  if (c.sessionId === null && c.messages.length === 0) return "empty";
+  return c.updatedAt > 0 ? relativeTime(c.updatedAt) : "—";
+}
+
 /** Left rail: brand, primary actions, conversation history, identity footer. */
 export function Sidebar({
   conversations,
@@ -35,7 +46,14 @@ export function Sidebar({
   onOpenSystem,
   onSignOut,
 }: Props) {
-  const { conversations: list, activeId, selectConversation, deleteConversation } = conversations;
+  const {
+    conversations: list,
+    activeId,
+    isLoading,
+    error,
+    selectConversation,
+    deleteConversation,
+  } = conversations;
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -80,6 +98,14 @@ export function Sidebar({
         <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
           History
         </p>
+        {isLoading ? (
+          <p className="px-2 py-1 text-xs text-slate-400 dark:text-slate-500">Loading…</p>
+        ) : null}
+        {error ? (
+          <p role="status" className="px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+            {error}
+          </p>
+        ) : null}
         <ul className="flex flex-col gap-0.5">
           {list.map((c) => {
             const active = c.id === activeId;
@@ -98,13 +124,13 @@ export function Sidebar({
                     {c.title}
                   </span>
                   <span className="block text-xs text-slate-400 dark:text-slate-500">
-                    {c.messages.length > 0 ? relativeTime(c.updatedAt) : "empty"}
+                    {historyLabel(c)}
                   </span>
                 </button>
                 <button
                   type="button"
                   aria-label={`Delete conversation: ${c.title}`}
-                  onClick={() => deleteConversation(c.id)}
+                  onClick={() => void deleteConversation(c.id)}
                   className="absolute top-2 right-1 rounded p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 hover:text-red-600 focus:opacity-100 dark:hover:bg-slate-700"
                 >
                   🗑
