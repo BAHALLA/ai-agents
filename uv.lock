@@ -2058,7 +2058,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.13.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.10" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.51.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.52.0" },
 ]
 provides-extras = ["postgres", "auth", "server", "otel"]
 
