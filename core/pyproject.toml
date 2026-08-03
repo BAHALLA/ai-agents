@@ -37,7 +37,7 @@ auth = [
 # (orrery_core.server). Includes the auth dependencies transitively.
 server = [
     "pyjwt[crypto]>=2.13.0",
-    "fastapi>=0.140.0",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.0",
     "slowapi>=0.1.10",
 ]
