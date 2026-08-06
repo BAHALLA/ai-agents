@@ -9,7 +9,7 @@ dependencies = [
     "orrery-core[postgres]",
     "orrery-assistant",
     "slack-bolt>=1.30.0",
-    "fastapi>=0.140.0",
+    "fastapi>=0.141.1",
     "uvicorn>=0.52.0",
     "aiohttp>=3.14.3",
     "slowapi>=0.1.10",
