@@ -17,7 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.7.1",
-    "litellm>=1.94.1",
+    "litellm>=1.97.0",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +56,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "hypothesis>=6.161.5",
+    "hypothesis>=6.165.2",
     "ruff>=0.16.0",
     "ty>=0.0.63",
     "mkdocs>=1.6.1",
@@ -84,7 +84,7 @@ environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
 # litellm requirement in core/pyproject.toml and the root dependency above —
 # an override replaces every other litellm constraint, so a stale value here
 # silently caps resolution below the declared floor.
-override-dependencies = ["litellm>=1.94.1"]
+override-dependencies = ["litellm>=1.97.0"]
 
 [tool.ruff]
 target-version = "py314"
