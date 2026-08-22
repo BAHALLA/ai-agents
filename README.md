@@ -50,6 +50,8 @@ graph LR
         P3[Memory & Resilience]
     end
 
+    KB[(Knowledge<br/>runbooks, postmortems, ADRs)]
+
     WEB --> ROOT
     SLACK --> ROOT
     GCHAT --> ROOT
@@ -60,6 +62,7 @@ graph LR
     ROOT --> DOCKER
     ROOT --> JOURNAL
     ROOT --> TRIAGE
+    ROOT --> KB
     ROOT -.-> P1
     ROOT -.-> P2
     ROOT -.-> P3
@@ -72,6 +75,7 @@ graph LR
 - **Opt-in planning** — Set `ORRERY_PLANNER=plan_react` (provider-agnostic) or `builtin` (Gemini thinking tokens) to attach an ADK planner to the root orchestrator, triage summarizer, and remediation actor — explicit reasoning before destructive ops.
 - **Self-healing (graph workflow)** — Closed-loop remediation as a bounded graph cycle: **Act** (restart/scale) → **Verify** → **Retry** (up to 3 times), capped by `verify_route`.
 - **Cross-session memory** — Agents recall past incidents, investigations, and team preferences across sessions.
+- **Reads your runbooks, not just your clusters** — Opt-in retrieval over the documentation humans actually wrote: runbooks, postmortems, ADRs, Confluence. Two pluggable seams — sources (filesystem, git, Confluence) and backends (Elasticsearch/BM25, or hybrid pgvector fusing semantic and lexical ranks) — so neither a document store nor a search vendor is hard-wired. Every passage cites its source and its age, because an operator at 03:00 needs to tell a retrieved fact from a hallucination.
 - **Long incidents don't hit the context wall** — Past a token threshold, older turns are compacted into a digest while recent ones stay verbatim. Lossy for the model, **lossless for the record**: the original events remain in the session and are filtered only when the request is assembled, so audit and replay are untouched.
 
 ### 🛡️ Safety & Governance
@@ -80,13 +84,13 @@ graph LR
 - **Prompt-injection screening in both directions** — An injected user message is blocked before the model runs. Text that arrives *inside a tool result* — a pod annotation, a log line, a topic name — is neutralized in place instead, because that payload is also the evidence being diagnosed. Credentials are scrubbed from tool results and from long-term memory by one shared pattern set.
 - **SSO / OIDC sign-in** — The web console signs in with **Authorization Code + PKCE** against any OIDC provider (Keycloak, Authentik, Auth0, Okta, Entra ID, Google); the front door verifies the resulting tokens via RS256/JWKS and maps claims → roles. A local Keycloak with viewer/operator/admin demo users ships behind `make up PROFILES=sso`. Without an issuer configured it falls back to a pasted bearer token, so CI and offline work need no IdP.
 - **JWT authentication** — The HTTP front door (`orrery_core.serving.server`) verifies HS256 or RS256/JWKS bearer tokens, maps claims → roles (including nested paths like `realm_access.roles`), and rejects unauthenticated traffic. See [`docs/config/security.md`](https://bahalla.github.io/orrery/config/security/).
-- **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context.
+- **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context. Guarded actions add a confirmation lifecycle — raised, decided, refused, expired — so "who approved this?" is a line in the log rather than an inference, and a **refused** approval (someone other than the requester trying to approve) raises a critical alert.
 - **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
 
 ### 🔌 Integration & Observability
 - **Multi-Interface** — Interact via the **Web Console**, **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
 - **Web Console** — Opt-in React SPA (`ORRERY_WEB_CONSOLE_ENABLED=true`) served by the FastAPI front door: SSO or token-gated chat, a tool-call timeline, the approve/deny panel for guarded actions, a triage view, and a first-run **environment check** that tells you which integrations are actually wired and what to configure when one isn't. See [`docs/integrations/web-console.md`](https://bahalla.github.io/orrery/integrations/web-console/).
-- **Observability** — Built-in Prometheus metrics for tool latency, error rates, and circuit breaker states.
+- **Observability** — Built-in Prometheus metrics for tool latency, error rates, circuit breaker states, injection screening and approval decisions. Every alert rule carries a `runbook_url` pointing at an [on-call runbook](https://bahalla.github.io/orrery/runbooks/) written for 03:00, not for a reader with the source open.
 - **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
 
 ## 🚀 Quick Start (Docker)
@@ -161,6 +165,8 @@ and `make check` runs the whole gate (lint, types, Python tests, web tests).
 - ⚙️ **[Configuration](https://bahalla.github.io/orrery/config/general/)** — LLM providers, env vars, and infrastructure.
 - 🛠️ **[Developer Guide](https://bahalla.github.io/orrery/adding-an-agent/)** — How to build and test your own specialist agents.
 - 🏗️ **[Architecture](https://bahalla.github.io/orrery/agent-design-patterns/)** — Design patterns, RBAC, and ADRs.
+- 📖 **[Knowledge Retrieval](https://bahalla.github.io/orrery/knowledge/)** — Indexing your runbooks and docs so the agent can cite them.
+- 🚨 **[Runbooks](https://bahalla.github.io/orrery/runbooks/)** — Operating Orrery itself: on-call checklist, escalation, and per-alert procedures.
 
 ## ⚖️ License
 

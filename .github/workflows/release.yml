@@ -123,6 +123,7 @@ jobs:
       - name: Trivy image scan (gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          trivyignores: .trivyignore.yaml
           image-ref: ${{ steps.imageref.outputs.ref }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -133,6 +134,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          trivyignores: .trivyignore.yaml
           image-ref: ${{ steps.imageref.outputs.ref }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true

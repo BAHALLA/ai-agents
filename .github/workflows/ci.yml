@@ -93,6 +93,7 @@ jobs:
           # chart, leaving it unscanned for misconfigurations.
           TRIVY_HELM_KUBE_VERSION: "1.28.0"
         with:
+          trivyignores: .trivyignore.yaml
           scan-type: fs
           scan-ref: .
           scanners: vuln,misconfig,secret
