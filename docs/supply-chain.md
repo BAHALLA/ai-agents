@@ -61,6 +61,49 @@ docker buildx imagetools inspect ghcr.io/bahalla/orrery:0.2.1 \
   (vulnerabilities, IaC misconfigurations, committed secrets) and `bandit`
   checks the Python source.
 
+## Triaged findings must expire
+
+The scans gate on `HIGH,CRITICAL` with `ignore-unfixed: true`, so a *fixed*
+advisory anywhere in the dependency graph fails the build. That is deliberate,
+and it means the gate occasionally fires on something with no upgrade
+available — a CVE fixed in a Go release that no upstream image has been rebuilt
+against yet, for example.
+
+Those go in **`.trivyignore.yaml`**, and every entry **must** carry
+`expired_at`. Trivy stops honouring an expired entry and the gate goes red
+again, which is the review mechanism: without it an ignore silently becomes
+permanent, and a permanent ignore is indistinguishable from not scanning.
+
+Before adding one, exhaust the alternatives in order:
+
+1. Upgrade the dependency (`uv lock --upgrade-package <name>`).
+2. Re-pin the base or tool image to a rebuilt digest — and *verify* the rebuild
+   actually carries the fix by scanning it, rather than assuming a newer digest
+   is a patched one.
+3. Remove the component if it is not actually needed.
+
+Only then triage, and write the reasoning into `statement`. A reader at 03:00
+needs to know why the finding was accepted, not the CVE id they already have.
+
+The file is wired through the `trivyignores` input on every Trivy step, in both
+`ci.yml` and `release.yml`: Trivy auto-loads a plain `.trivyignore`, but only
+the YAML form supports expiry, and the YAML form is not auto-loaded.
+
+## Two scans, two failure modes
+
+They are separate workflows and fail independently, which is worth knowing when
+one is red and the other is green:
+
+| | Where | Scans |
+|---|---|---|
+| **CI → Security Scan** | every PR and push | the repo filesystem: `uv.lock`, `web/package-lock.json`, Helm/K8s/Terraform config, committed secrets |
+| **Release & Publish → Trivy image scan** | pushes to `main` | the *built image*: OS packages, installed Python distributions, and any compiled binary copied in |
+
+A vulnerable binary that is copied into the image but has no manifest in the
+repo — the bundled Docker CLI is the standing example — is invisible to the
+first and caught only by the second. `main` can therefore have a green CI badge
+and a failing release, so check both before concluding the branch is healthy.
+
 ## Admission-time enforcement (optional)
 
 Clusters running the [Sigstore Policy

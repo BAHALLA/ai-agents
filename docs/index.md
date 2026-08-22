@@ -129,11 +129,23 @@ graph LR
 
     Let agents recall past incidents, resolutions, and team preferences.
 
+-   :material-book-open-variant:{ .lg .middle } __[Knowledge retrieval](knowledge.md)__
+
+    ---
+
+    Index your runbooks, postmortems and ADRs so the agent answers from what your team wrote — with a citation and a document age.
+
 -   :material-chart-bar:{ .lg .middle } __[Observability](metrics.md)__
 
     ---
 
     Prometheus metrics, OpenTelemetry traces, and log↔trace correlation — with a one-command Grafana stack.
+
+-   :material-fire-alert:{ .lg .middle } __[Runbooks](runbooks/README.md)__
+
+    ---
+
+    Operating Orrery itself: the first five minutes, escalation, and a page per alert.
 
 -   :material-lifebuoy:{ .lg .middle } __[Troubleshooting](troubleshooting.md)__
 
