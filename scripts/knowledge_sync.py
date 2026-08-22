@@ -20,7 +20,7 @@ from pathlib import Path
 
 from orrery_core import setup_logging
 from orrery_core.knowledge import KnowledgeConfig, resolve_index, sync_sources
-from orrery_core.knowledge.sources import FilesystemSource, GitSource
+from orrery_core.knowledge.sources import FilesystemSource, GitSource, confluence_from_env
 
 #: Indexed by default: the on-call runbooks AEP-017 produces, and the ADRs,
 #: which are the closest thing the repo has to "why is it built this way".
@@ -84,6 +84,15 @@ async def _main() -> int:
 
     repo_root = Path(__file__).resolve().parent.parent
     sources = _build_sources(repo_root, args.roots or list(DEFAULT_ROOTS), not args.no_git)
+
+    # Confluence is opt-in through the environment and refuses to auto-discover
+    # spaces — retrieval is not ACL-aware, so only explicitly listed spaces are
+    # ever indexed. See orrery_core.knowledge.sources.confluence.
+    confluence = confluence_from_env([("collection", "confluence")])
+    if confluence is not None:
+        sources.append(confluence)
+        logger.info("confluence source enabled", extra={"spaces": confluence._spaces})
+
     if not sources:
         print("No knowledge sources found — nothing to sync.", file=sys.stderr)
         return 0

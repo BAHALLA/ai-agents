@@ -12,6 +12,9 @@ dependency of an unconfigured backend is never a hard requirement.
 from .chunking import chunk_document as chunk_document
 from .config import KNOWLEDGE_BACKENDS as KNOWLEDGE_BACKENDS
 from .config import KnowledgeConfig as KnowledgeConfig
+from .embedding import Embedder as Embedder
+from .embedding import EmbeddingError as EmbeddingError
+from .embedding import resolve_embedder as resolve_embedder
 from .factory import KnowledgeConfigError as KnowledgeConfigError
 from .factory import knowledge_tool as knowledge_tool
 from .factory import resolve_index as resolve_index

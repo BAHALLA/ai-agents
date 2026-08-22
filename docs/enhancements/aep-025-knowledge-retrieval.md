@@ -2,11 +2,31 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | High (2-3 weeks, phased) |
 | **Impact** | High |
 | **Dependencies** | AEP-017 (runbooks — supplies the first corpus); AEP-013 (safety chain) — completed |
+
+> **Phase 1 completed 2026-08-22** (seams, chunking, sync, Elasticsearch/BM25,
+> `search_knowledge` on the tool path with a build-failing guard against model
+> built-in grounding). **Phase 2 completed 2026-08-22**: `resolve_embedder()`
+> (Gemini direct, everything else through LiteLLM), the pgvector backend, and
+> the Confluence source.
+>
+> Two decisions worth recording, neither of them in the plan below:
+>
+> - **pgvector is hybrid, not pure vector.** Semantic search is weakest exactly
+>   where SRE queries are strongest — an exact identifier like
+>   `CrashLoopBackOff` or a consumer-group name. Both rankings are computed and
+>   fused with Reciprocal Rank Fusion, which combines *ranks* rather than
+>   scores because cosine distance and `ts_rank_cd` share no scale.
+> - **Confluence refuses to auto-discover spaces.** Retrieval is `viewer`-level
+>   and not ACL-aware, so a constructor without an explicit space list raises
+>   rather than indexing whatever the integration user happens to see.
+>
+> Still open: retrieval-quality evals (the acceptance criterion below), and
+> ACL-aware retrieval.
 
 ## Gap Analysis
 

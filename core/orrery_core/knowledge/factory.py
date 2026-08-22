@@ -47,6 +47,16 @@ def _backend(config: KnowledgeConfig) -> object | None:
             ) from exc
 
         return ElasticsearchKnowledgeBackend(config)
+    if name == "pgvector":
+        try:
+            from .backends.pgvector import PgVectorKnowledgeBackend
+        except ImportError as exc:  # pragma: no cover — depends on install shape
+            raise KnowledgeConfigError(
+                "ORRERY_KNOWLEDGE_BACKEND=pgvector requires the 'knowledge' extra: "
+                "install orrery-core[knowledge]."
+            ) from exc
+
+        return PgVectorKnowledgeBackend(config)
     raise KnowledgeConfigError(
         f"Unknown ORRERY_KNOWLEDGE_BACKEND={name!r}. Supported: {', '.join(KNOWLEDGE_BACKENDS)}."
     )
