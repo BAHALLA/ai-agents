@@ -2,11 +2,30 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | Low (2-3 days) |
 | **Impact** | High |
 | **Dependencies** | AEP-010 (tracing), AEP-011 (completed), AEP-015 (cost alerts) |
+
+> **Completed 2026-08-22.** Eleven pages under `docs/runbooks/`, and a
+> `runbook_url` annotation on all ten Prometheus rules. Two deviations from the
+> plan below, both deliberate:
+>
+> - The runbook set is organised around *which system is actually broken* —
+>   Orrery, or something Orrery is correctly reporting on. That distinction
+>   turned out to be the first question in nearly every scenario, so it is a
+>   fixed section in the template rather than prose inside each page.
+> - `OrreryPromptInjectionDetected` is **not** shipped as an alert. It cannot
+>   fire: `SafetyScreenPlugin` exports no metric and `MetricsPlugin` bounds the
+>   `status` label to four values, so a `BLOCKED` result records as `ok`.
+>   Detection is log-only and the runbook says so. Shipping an alert that can
+>   never fire would be worse than not having one.
+>
+> The runbooks are indexed by `make knowledge-sync`
+> ([AEP-025](aep-025-knowledge-retrieval.md)), so the agent retrieves them
+> through `search_knowledge` — which was the dependency that made writing them
+> the next step.
 
 ## Gap Analysis
 
