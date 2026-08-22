@@ -86,14 +86,35 @@ groups:
           runbook_url: "https://bahalla.github.io/orrery/runbooks/high-llm-spend/"
 
       # ── Content safety ────────────────────────────────────────────
-      # NOT YET ALERTABLE. SafetyScreenPlugin logs every detection but exports
-      # no metric, and MetricsPlugin bounds the `status` label to
-      # {ok, success, error, confirmation_required} to cap cardinality — so a
-      # BLOCKED tool result is recorded as `ok` and no expression over
-      # orrery_tool_calls_total can distinguish it. Detection is log-only
-      # today; docs/runbooks/prompt-injection-detected.md carries the log
-      # queries. Adding an orrery_safety_screen_total counter would make this
-      # alertable, and pairs naturally with the counters AEP-024 proposes.
+      # Split by direction, because the two halves have different owners and
+      # different responses — summing them would be meaningless.
+      #
+      # Indirect: instruction-like text arrived inside a tool result and was
+      # neutralized in place. The control worked; the finding is that
+      # attacker-reachable content is sitting in the monitored infrastructure.
+      # Warning, because the agent was never at risk of acting on it.
+      - alert: OrreryIndirectInjectionDetected
+        expr: sum by (source) (increase(orrery_safety_screen_total{direction="indirect"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Instruction-like text neutralized in {{ $labels.source }} results"
+          description: "{{ $value }} span(s) in 15m. Investigate why that text is in the infrastructure, not the screen that caught it."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/prompt-injection-detected/"
+
+      # Direct: a user message was refused before it reached a tool or cost a
+      # token. A single one is usually curiosity; a sustained rate is someone
+      # working at it, which is why this one has a threshold and a `for`.
+      - alert: OrreryDirectInjectionAttempts
+        expr: increase(orrery_safety_screen_total{direction="direct"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Repeated prompt-injection attempts against the agent"
+          description: "{{ $value }} user messages blocked in 15m. Identify the caller from the audit trail."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/prompt-injection-detected/"
 
   - name: demo_alerts
     rules:

@@ -1,23 +1,22 @@
 # Runbook: Prompt Injection Detected
 
-**Alert:** none yet — **log-only detection** · **Severity:** warning · **Owner:** @ai-platform-team
+**Alerts:** `OrreryIndirectInjectionDetected`, `OrreryDirectInjectionAttempts`
+**Severity:** warning · **Owner:** @ai-platform-team
 **Auto-remediation:** yes — the request is blocked, or the span is neutralized in place
 
 ## Symptom
 
-`SafetyScreenPlugin` logged a detection. Either a user message was refused
-before it cost a token, or a tool result came back with a span replaced by the
-filter marker.
+`SafetyScreenPlugin` engaged. Either a user message was refused before it cost
+a token, or a tool result came back with a span replaced by the filter marker.
 
-!!! warning "There is no Prometheus alert for this"
-    `SafetyScreenPlugin` logs every detection but exports no metric, and
-    `MetricsPlugin` bounds the `status` label to
-    `{ok, success, error, confirmation_required}` to cap cardinality — so a
-    `BLOCKED` result is recorded as `ok` and no expression over
-    `orrery_tool_calls_total` can find it. **You will reach this page from a log
-    search or a report, not from a page.** Until an
-    `orrery_safety_screen_total` counter exists, run the queries below on a
-    cadence rather than waiting to be told.
+**Which alert fired tells you which, and they mean different things:**
+
+| Alert | Direction | Reading |
+|---|---|---|
+| `OrreryIndirectInjectionDetected` | Tool result neutralized | Attacker-reachable text is sitting in the **monitored infrastructure**. A finding about that system. |
+| `OrreryDirectInjectionAttempts` | User messages blocked (>3 in 15m) | Someone is **probing the agent**. A conversation to have with that person. |
+
+Do not sum them — different owners, different responses.
 
 ## What already happened — read this before acting
 
@@ -50,8 +49,19 @@ infrastructure?"**
 
 ## Diagnosis
 
+Start with the counter — `source` names the tool whose results carried the
+text, which is the fastest route to where it lives:
+
 ```bash
 export NS=orrery
+kubectl -n $NS port-forward svc/orrery-assistant 9100:9100 &
+curl -s localhost:9100/metrics | grep '^orrery_safety_screen_total'
+```
+
+Then read the detections themselves. The counter says *how much*; the log says
+*what*:
+
+```bash
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=2000 \
   | jq -r 'select(.name | test("safety")) | "\(.asctime) \(.message)"' | tail -30
 ```

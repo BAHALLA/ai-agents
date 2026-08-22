@@ -54,10 +54,13 @@ All metrics use the `orrery_` namespace prefix following [Prometheus naming conv
 | `orrery_llm_tokens_total` | Counter | `agent`, `direction` | LLM token consumption (input/output) |
 | `orrery_context_cache_events_total` | Counter | `event` | Context cache hits and misses |
 | `orrery_context_compaction_total` | Counter | — | Conversation histories compacted into a summary |
+| `orrery_safety_screen_total` | Counter | `direction`, `source` | Prompt-injection screening engagements |
 
 The `status` label on `orrery_tool_calls_total` is restricted to a fixed set — `ok`, `success`, `error`, `confirmation_required` — to prevent [cardinality explosion](https://prometheus.io/docs/practices/naming/#labels); any other value is normalised to `ok`.
 
 Watch `orrery_context_compaction_total` against the cache counter: each compaction rewrites the history and so invalidates the cached prefix. A rising compaction rate alongside a falling cache-hit rate means `ORRERY_COMPACTION_TOKEN_THRESHOLD` is set too low.
+
+`orrery_safety_screen_total` counts the injection screen *engaging*, which is the control working rather than a breach — a direct hit was refused before it cost a token, an indirect one had only the matched span replaced. The `direction` label separates two findings that must not be summed: `direct` (`source="user_message"`) means someone is probing the agent, while `indirect` (`source=<tool>`) means attacker-reachable text is sitting in the monitored infrastructure, which is a finding about *that* system. Indirect hits count **spans**, not events: two injected lines in one payload is a worse finding than one.
 
 ### How it works
 
@@ -85,6 +88,7 @@ histogram_quantile(0.95, rate(orrery_tool_duration_seconds_bucket[5m]))  # p95 l
 rate(orrery_tool_calls_total[1m]) * 60                               # calls/min by tool
 orrery_circuit_breaker_state == 1                                    # breakers currently open
 increase(orrery_llm_tokens_total[1h])                                # tokens/agent, last hour
+sum by (source) (increase(orrery_safety_screen_total{direction="indirect"}[15m]))  # injected text by tool
 ```
 
 ---
