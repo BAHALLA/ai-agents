@@ -172,6 +172,9 @@ nav:
     - "AEP-021: Provider Fallback": enhancements/aep-021-provider-fallback.md
     - "AEP-022: Trajectory Capture": enhancements/aep-022-trajectory-capture.md
     - "AEP-023: Scheduled Tasks": enhancements/aep-023-scheduled-tasks.md
+    - "AEP-024: Approval Audit Events": enhancements/aep-024-approval-audit-events.md
+    - "AEP-025: Knowledge Retrieval": enhancements/aep-025-knowledge-retrieval.md
+    - "AEP-026: Experience Capture & REX": enhancements/aep-026-experience-capture-rex.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md
