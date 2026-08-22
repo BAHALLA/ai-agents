@@ -23,6 +23,7 @@ from .observability.metrics import CONTEXT_CACHE_EVENTS_TOTAL as CONTEXT_CACHE_E
 from .observability.metrics import MetricsCollector as MetricsCollector
 from .observability.metrics import track_cache_event as track_cache_event
 from .observability.metrics import track_llm_tokens as track_llm_tokens
+from .observability.metrics import track_safety_screen as track_safety_screen
 from .persistence.db import create_session_service as create_session_service
 from .persistence.db import database_reachable as database_reachable
 from .persistence.memory import DatabaseMemoryService as DatabaseMemoryService

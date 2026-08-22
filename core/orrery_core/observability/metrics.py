@@ -90,6 +90,27 @@ CONTEXT_COMPACTION_TOTAL = Counter(
     "Conversation history compactions performed",
 )
 
+#: Prompt-injection screening outcomes.
+#:
+#: ``direction`` separates the two halves of the defence, which have very
+#: different meanings and must not be summed together:
+#:
+#: - ``direct`` — an injected *user message*, blocked in ``before_run_callback``
+#:   before it reached a tool or cost a token. Someone is probing the agent.
+#: - ``indirect`` — instruction-like text inside a *tool result*, neutralized in
+#:   place. Attacker-reachable content is sitting in the monitored
+#:   infrastructure (a pod annotation, a log line, an indexed document), which
+#:   is a finding about that system rather than about Orrery.
+#:
+#: ``source`` is the tool name for indirect hits and ``"user_message"`` for
+#: direct ones, so an alert can point at where the text came from. Tool names
+#: are a bounded set, so this does not risk cardinality growth.
+SAFETY_SCREEN_TOTAL = Counter(
+    "orrery_safety_screen_total",
+    "Prompt-injection screening engagements by direction and source",
+    ["direction", "source"],
+)
+
 # ── Module-level server guard ─────────────────────────────────────────
 # Multiple MetricsCollector instances may exist (one per agent module).
 # The HTTP server should start exactly once per process.
@@ -298,3 +319,22 @@ def track_compaction_event() -> None:
     observes it has no agent identity to attribute the event to.
     """
     CONTEXT_COMPACTION_TOTAL.inc()
+
+
+def track_safety_screen(*, direction: str, source: str, spans: int = 1) -> None:
+    """Record that prompt-injection screening engaged.
+
+    The counter measures *the control working*, not a breach: a direct hit was
+    refused before it cost a token, and an indirect one had only the matched
+    span replaced. Alert on it anyway — a non-zero rate means instruction-shaped
+    text is reaching the agent from somewhere, and the interesting question is
+    where.
+
+    Args:
+        direction: ``"direct"`` (user message blocked) or ``"indirect"``
+            (tool result neutralized).
+        source: Tool name for indirect hits, ``"user_message"`` for direct.
+        spans: Number of spans neutralized. One for a blocked message, since
+            the run stops at the first match.
+    """
+    SAFETY_SCREEN_TOTAL.labels(direction=direction, source=source).inc(spans)

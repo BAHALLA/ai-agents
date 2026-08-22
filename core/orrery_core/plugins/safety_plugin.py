@@ -49,6 +49,7 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from ..observability.metrics import track_safety_screen
 from ..payload import OFFLOAD_THRESHOLD_CHARS, map_strings, text_volume
 
 logger = logging.getLogger("orrery.safety")
@@ -137,6 +138,9 @@ class SafetyScreenPlugin(BasePlugin):
                     pattern.pattern,
                     text,
                 )
+                # One span, not a count: the loop stops at the first match, so
+                # the run never learns how many others the message held.
+                track_safety_screen(direction="direct", source="user_message")
                 return types.Content(role="model", parts=[types.Part(text=REFUSAL_TEXT)])
         return None
 
@@ -175,6 +179,7 @@ class SafetyScreenPlugin(BasePlugin):
                 tool.name,
                 type(result).__name__,
             )
+            track_safety_screen(direction="indirect", source=tool.name, spans=count)
             return neutralized
 
         if text_volume(result, OFFLOAD_THRESHOLD_CHARS) >= OFFLOAD_THRESHOLD_CHARS:
@@ -188,4 +193,5 @@ class SafetyScreenPlugin(BasePlugin):
                 count,
                 tool.name,
             )
+            track_safety_screen(direction="indirect", source=tool.name, spans=count)
         return None

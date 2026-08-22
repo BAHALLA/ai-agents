@@ -26,7 +26,7 @@ you should expect, not abstract prose.
 | [Circuit breaker open](circuit-breaker-open.md) | `OrreryCircuitBreakerOpen` | warning |
 | [High tool error rate](high-tool-error-rate.md) | `OrreryHighToolErrorRate` | warning |
 | [High LLM spend](high-llm-spend.md) | `OrreryHighTokenBurn` | warning |
-| [Prompt injection detected](prompt-injection-detected.md) | — (log-only; no metric yet) | warning |
+| [Prompt injection detected](prompt-injection-detected.md) | `OrreryIndirectInjectionDetected`, `OrreryDirectInjectionAttempts` | warning |
 | [Knowledge index unavailable](knowledge-index-unavailable.md) | — (surfaces as tool errors) | warning |
 
 ## Two things to know before you touch anything
