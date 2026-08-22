@@ -2054,6 +2054,9 @@ auth = [
 knowledge = [
     { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
+knowledge-pg = [
+    { name = "psycopg2-binary", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
 otel = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -2078,6 +2081,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "prometheus-client", specifier = ">=0.26.0" },
+    { name = "psycopg2-binary", marker = "extra == 'knowledge-pg'", specifier = ">=2.9.12" },
     { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9.12" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
@@ -2088,7 +2092,7 @@ requires-dist = [
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.10" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.52.0" },
 ]
-provides-extras = ["postgres", "auth", "server", "otel", "knowledge"]
+provides-extras = ["postgres", "auth", "server", "otel", "knowledge", "knowledge-pg"]
 
 [[package]]
 name = "packaging"

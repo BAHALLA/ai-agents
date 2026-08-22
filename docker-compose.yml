@@ -65,7 +65,12 @@ services:
   # ── Session storage ──────────────────────────────────────────────────
 
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector is the stock postgres image plus the `vector`
+    # extension, which the pgvector knowledge backend needs (AEP-025 phase 2).
+    # Same data directory and same defaults as postgres:16-alpine, so sessions,
+    # memory and confirmations are unaffected — an existing volume keeps
+    # working, and `CREATE EXTENSION vector` starts succeeding.
+    image: pgvector/pgvector:pg16
     container_name: postgres
     restart: unless-stopped
     environment:

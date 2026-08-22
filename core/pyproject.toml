@@ -57,6 +57,13 @@ otel = [
 knowledge = [
     "requests>=2.34.2",
 ]
+# Install with: uv sync --extra knowledge-pg
+# pgvector-backed semantic retrieval (AEP-025 phase 2). Only the psycopg2
+# driver is added — vectors go over the wire as pgvector's text literal cast
+# in SQL, so the `pgvector` Python package is not required.
+knowledge-pg = [
+    "psycopg2-binary>=2.9.12",
+]
 
 [tool.setuptools.packages.find]
 include = ["orrery_core*"]

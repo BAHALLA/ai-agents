@@ -15,6 +15,15 @@ make knowledge-sync                          # index docs/runbooks + docs/adr
 make run-api                                 # the coordinator now has search_knowledge
 ```
 
+Or with semantic search (phase 2):
+
+```bash
+make up                                      # postgres now ships pgvector
+export ORRERY_KNOWLEDGE_BACKEND=pgvector
+export EMBEDDING_PROVIDER=gemini             # defaults to MODEL_PROVIDER
+make knowledge-sync
+```
+
 `make knowledge-sync` prints what it did:
 
 ```
@@ -46,7 +55,7 @@ rather than failing.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `ORRERY_KNOWLEDGE_BACKEND` | `none` | `none` or `elasticsearch` |
+| `ORRERY_KNOWLEDGE_BACKEND` | `none` | `none`, `elasticsearch`, or `pgvector` |
 | `ORRERY_KNOWLEDGE_TOP_K` | `6` | Passages per query |
 | `ORRERY_KNOWLEDGE_MAX_CHARS` | `1600` | Chunk budget (~400 tokens) |
 | `ORRERY_KNOWLEDGE_OVERLAP_CHARS` | `200` | Context carried between chunks |
@@ -55,6 +64,15 @@ rather than failing.
 | `KNOWLEDGE_ES_API_KEY` | — | Or `KNOWLEDGE_ES_USERNAME`/`_PASSWORD` |
 | `KNOWLEDGE_ES_VERIFY_CERTS` | `true` | `KNOWLEDGE_ES_CA_CERTS` sets a bundle |
 | `KNOWLEDGE_ES_SEARCH_TIMEOUT` | `10s` | Server-side query ceiling |
+| `KNOWLEDGE_PG_URL` | `DATABASE_URL` | pgvector store (needs the `vector` extension) |
+| `KNOWLEDGE_PG_TABLE` | `orrery_knowledge_chunks` | Table name |
+| `EMBEDDING_PROVIDER` | `MODEL_PROVIDER` | `gemini`, `openai`, `ollama`, … |
+| `EMBEDDING_MODEL` | per provider | Overrides the provider default |
+| `EMBEDDING_DIMENSIONS` | per model | Must match the index column |
+| `KNOWLEDGE_CONFLUENCE_URL` | — | e.g. `https://acme.atlassian.net` |
+| `KNOWLEDGE_CONFLUENCE_SPACES` | — | Comma-separated space keys (required) |
+| `KNOWLEDGE_CONFLUENCE_EMAIL` | — | Integration user |
+| `KNOWLEDGE_CONFLUENCE_API_TOKEN` | — | API token |
 
 `KNOWLEDGE_ES_*` is deliberately **not** `ELASTICSEARCH_*`: the Elasticsearch
 *agent* diagnoses somebody's production cluster, while this indexes our own
@@ -172,14 +190,75 @@ Confluence spaces and private directories by configuration. Per-principal
 filtering is deferred to a later phase; pretending to enforce ACLs that are not
 enforced would be worse than not indexing.
 
+## Choosing a backend
+
+| | `elasticsearch` | `pgvector` |
+|---|---|---|
+| Matching | BM25 lexical | **Hybrid** — semantic + lexical, fused |
+| Infrastructure | Container `make up` already starts | Postgres with the `vector` extension |
+| Embeddings | none | an `EMBEDDING_PROVIDER` and its cost |
+| Finds "broker unreachable" → "kafka node down" | ✗ | ✓ |
+
+Start with Elasticsearch. Move to pgvector when queries are phrased in the
+words of the incident rather than the words of the runbook.
+
+### Why pgvector is hybrid, not pure vector
+
+Semantic search is weakest exactly where SRE queries are strongest: an exact
+identifier. A query for `CrashLoopBackOff` or a specific consumer-group name
+wants the document containing that literal string, and a nearest-neighbour
+search will happily return three plausible-sounding pages that never mention
+it.
+
+So both rankings are computed and fused with Reciprocal Rank Fusion. RRF
+combines *ranks*, not scores — deliberately, because cosine distance and
+`ts_rank_cd` share no scale, and any weighted sum of the raw numbers would be
+dominated by whichever happens to have the larger range.
+
+### The image swap
+
+`docker-compose.yml` now uses `pgvector/pgvector:pg16` instead of
+`postgres:16-alpine`. It is the stock Postgres image plus the extension — same
+data directory, same defaults — so an existing volume keeps working and
+sessions, memory and confirmations are unaffected.
+
+The Helm chart does not ship a database (it takes an external `DATABASE_URL`),
+so nothing changes there beyond pointing at a server that has the extension.
+Managed Postgres offerings generally support `CREATE EXTENSION vector`.
+
+### Changing the embedding model
+
+Requires a re-index — vectors from different models are not comparable. The
+backend checks the column width against the configured embedder at
+`ensure_ready()` and fails with an explicit message rather than letting every
+query die on a cast error:
+
+```
+Index column 'orrery_knowledge_chunks.embedding' holds vector(3072) but the
+configured embedder produces 1536 dimensions.
+```
+
+## Confluence
+
+Opt-in, and it **refuses to auto-discover spaces**. Retrieval runs at `viewer`
+for everyone, so indexing a space nobody explicitly listed would make
+restricted content readable through the agent with no trace on the Confluence
+side. Only the spaces in `KNOWLEDGE_CONFLUENCE_SPACES` are ever fetched, and a
+403 fails loudly rather than being skipped.
+
+Page *version* is the revision, so a re-sync only fetches bodies for pages that
+actually moved — the difference between polling a few dozen files and polling
+thousands over a rate-limited API.
+
+Storage-format XHTML is flattened to markdown-ish text: headings become ATX so
+the heading-aware chunker keeps working, and code macros become fences so the
+chunker treats them as atomic. Layout macros and attachments are dropped — a
+half-rendered macro reads as garbage to a model, and the prose around it is
+what carries the answer.
+
 ## Not yet implemented
 
-Phase 1 is lexical (BM25) retrieval over repository markdown. Still to come,
-per AEP-025:
-
-- **pgvector backend** with semantic search — needs the `pgvector/pgvector:pg16`
-  image and a provider-agnostic `resolve_embedder()`.
-- **Confluence source.**
 - **Retrieval-quality evals** — the existing 33 scenarios score
   `tool_trajectory_avg_score` only, which is blind to whether the right
   document came back.
+- **ACL-aware retrieval** — see the access-control section above.

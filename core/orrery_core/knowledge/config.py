@@ -12,7 +12,7 @@ from __future__ import annotations
 from ..agent.config import AgentConfig
 
 #: Backends ``resolve_retriever()`` knows how to build.
-KNOWLEDGE_BACKENDS = ("none", "elasticsearch")
+KNOWLEDGE_BACKENDS = ("none", "elasticsearch", "pgvector")
 
 
 class KnowledgeConfig(AgentConfig):
@@ -52,3 +52,10 @@ class KnowledgeConfig(AgentConfig):
     #: burning cluster resources with nobody left to read the answer. Mirrors
     #: the same protection in the Elasticsearch agent.
     knowledge_es_search_timeout: str = "10s"
+
+    # ── pgvector backend ─────────────────────────────────────────────
+    #: Defaults to ``DATABASE_URL`` when unset — the corpus can share the
+    #: platform's PostgreSQL, but only if that server has the ``vector``
+    #: extension (``pgvector/pgvector:pg16``, not ``postgres:16-alpine``).
+    knowledge_pg_url: str | None = None
+    knowledge_pg_table: str = "orrery_knowledge_chunks"
