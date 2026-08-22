@@ -116,6 +116,35 @@ groups:
           description: "{{ $value }} user messages blocked in 15m. Identify the caller from the audit trail."
           runbook_url: "https://bahalla.github.io/orrery/runbooks/prompt-injection-detected/"
 
+      # ── Approval integrity (AEP-024) ──────────────────────────────
+      # The one alert in this file about a *person* rather than a system.
+      # Someone other than the requester attempting to approve a guarded action
+      # is either a confused operator or an attempt to escalate, and both are
+      # worth waking someone for. The gate already refused it — this says it
+      # happened, which is what the platform previously could not.
+      - alert: OrreryUnauthorizedApprovalAttempt
+        expr: increase(orrery_confirmations_refused_total{reason="not_requester"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Non-requester tried to approve {{ $labels.tool }}"
+          description: "The confirmation gate refused it. Identify the actor from the confirmation_refused audit entry before anything else."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/unauthorized-approval-attempt/"
+
+      # No verified identity to attribute an approval to. A sustained rate means
+      # a transport is not stamping the actor — guarded actions become
+      # unapprovable, and the platform silently stops being able to remediate.
+      - alert: OrreryUnattributableApprovals
+        expr: increase(orrery_confirmations_refused_total{reason="unknown_requester"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Approvals cannot be attributed to a verified caller"
+          description: "A transport is likely not stamping the turn's actor. Guarded tools cannot be approved at all in this state."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/unauthorized-approval-attempt/"
+
   - name: demo_alerts
     rules:
       - alert: TargetDown

@@ -183,6 +183,36 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
     return callback
 
 
+def audit_event(event: str, **fields: Any) -> None:
+    """Emit a non-tool audit entry on the same stream as ``tool_attempt``.
+
+    The confirmation gate produces events that are not tool calls — an action
+    paused for approval, a decision accepted, a decision refused — and they
+    belong in the same trail as the calls they gate. Sharing this helper keeps
+    them in one stream with one shape: same logger, same ``event`` key, same
+    ``_sanitize()`` pass over any arguments, so a reader (or a log query) does
+    not need to know which producer wrote a line.
+
+    Args:
+        event: Event name, e.g. ``"confirmation_raised"``.
+        **fields: Structured fields. An ``args`` field is sanitized like a tool
+            call's arguments and emitted as ``tool_args`` — ``args`` is reserved
+            on ``LogRecord`` and passing it through ``extra`` raises. Everything
+            else is recorded verbatim, so pass identifiers and enums rather than
+            free text.
+    """
+    extra: dict[str, Any] = {"event": event}
+    for key, value in fields.items():
+        if key == "args":
+            extra["tool_args"] = _sanitize(value)
+        else:
+            extra[key] = value
+    # Flat keys, matching ``attempt_logger`` — ``JSONFormatter`` promotes them
+    # to top-level fields and stamps request/trace ids, so an approval event
+    # correlates with the tool call it gated without any extra plumbing.
+    logger.info("%s: %s", event, fields.get("tool", ""), extra=extra)
+
+
 def _audit_response(tool_response: Any) -> Any:
     """The response as it should appear in the audit trail: bounded, redacted.
 

@@ -55,12 +55,19 @@ All metrics use the `orrery_` namespace prefix following [Prometheus naming conv
 | `orrery_context_cache_events_total` | Counter | `event` | Context cache hits and misses |
 | `orrery_context_compaction_total` | Counter | — | Conversation histories compacted into a summary |
 | `orrery_safety_screen_total` | Counter | `direction`, `source` | Prompt-injection screening engagements |
+| `orrery_confirmations_raised_total` | Counter | `tool`, `mode` | Guarded calls paused for human approval |
+| `orrery_confirmations_decided_total` | Counter | `tool`, `decision` | Decisions the gate accepted |
+| `orrery_confirmations_refused_total` | Counter | `tool`, `reason` | Decisions the gate rejected |
+| `orrery_confirmations_expired_total` | Counter | — | Pendings that aged out unanswered |
+| `orrery_confirmation_decision_seconds` | Histogram | `tool` | How long humans take to decide |
 
 The `status` label on `orrery_tool_calls_total` is restricted to a fixed set — `ok`, `success`, `error`, `confirmation_required` — to prevent [cardinality explosion](https://prometheus.io/docs/practices/naming/#labels); any other value is normalised to `ok`.
 
 Watch `orrery_context_compaction_total` against the cache counter: each compaction rewrites the history and so invalidates the cached prefix. A rising compaction rate alongside a falling cache-hit rate means `ORRERY_COMPACTION_TOKEN_THRESHOLD` is set too low.
 
 `orrery_safety_screen_total` counts the injection screen *engaging*, which is the control working rather than a breach — a direct hit was refused before it cost a token, an indirect one had only the matched span replaced. The `direction` label separates two findings that must not be summed: `direct` (`source="user_message"`) means someone is probing the agent, while `indirect` (`source=<tool>`) means attacker-reachable text is sitting in the monitored infrastructure, which is a finding about *that* system. Indirect hits count **spans**, not events: two injected lines in one payload is a worse finding than one.
+
+The confirmation counters (AEP-024) record a gate that was already correct but silent. `orrery_confirmations_refused_total{reason="not_requester"}` is the one to alert on: someone other than the requester attempting to approve a guarded action is either a confused operator or an attempt to escalate, and before these counters existed it left no trace anywhere. `reason` is a bounded enum — `not_requester`, `unknown_requester`, `stale_decision`, `no_pending` — so it aggregates. The `mode` label on the raise counter distinguishes `requester_verified` from `scoped` transports, which is what lets an auditor tell a human-approved production change from a model re-call on a dev surface.
 
 ### How it works
 
@@ -89,6 +96,7 @@ rate(orrery_tool_calls_total[1m]) * 60                               # calls/min
 orrery_circuit_breaker_state == 1                                    # breakers currently open
 increase(orrery_llm_tokens_total[1h])                                # tokens/agent, last hour
 sum by (source) (increase(orrery_safety_screen_total{direction="indirect"}[15m]))  # injected text by tool
+increase(orrery_confirmations_refused_total{reason="not_requester"}[1h])  # unauthorized approvals
 ```
 
 ---

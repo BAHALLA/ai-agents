@@ -36,6 +36,11 @@ from typing import Any
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
 
+from ..observability.audit import audit_event
+from ..observability.metrics import (
+    track_confirmation_decided,
+    track_confirmation_refused,
+)
 from .confirmation_flow import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .confirmation_flow import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
 from .confirmation_flow import hash_args, raise_pending
@@ -382,6 +387,13 @@ def _handle_strict(
     requester = _state_actor(tool_context.state)
     if not requester:
         # No verified identity to attribute an approval to — cannot proceed.
+        audit_event(
+            "confirmation_refused",
+            tool=tool.name,
+            reason="unknown_requester",
+            mode="requester_verified",
+        )
+        track_confirmation_refused(tool=tool.name, reason="unknown_requester")
         return _confirmation_prompt(tool=tool, func=func, args=args, level=level, strict=True)
 
     decision = tool_context.state.get(CONFIRMATION_DECISION_STATE_KEY)
@@ -398,21 +410,40 @@ def _handle_strict(
     # comparison. ``consume_pending`` is the single-phase one-shot: a single
     # atomic check-and-remove (one DELETE..RETURNING on the postgres backend),
     # so a decision authorizes at most one execution even with replicas racing.
-    if (
-        decision.get("decision") in ("approve", "deny")
-        and decision_fresh
-        and decision_is_requester
-        and (pending := _pending_confirmations.consume_pending(requester, tool.name, args_hash))
-        # A decision can only authorize an action that already existed when it
-        # was spoken. Without this, an "approve" said before the pending was
-        # raised — for something else, or for nothing at all — would authorize
-        # whatever guarded call the model makes next, since the args-hash match
-        # is satisfied by a pending this very turn raised. The human must have
-        # seen the action to approve it.
-        and decided_at >= pending.created_at
-    ):
+    #
+    # Written as staged guards rather than one ``and`` chain purely so a
+    # refusal can name *why* (AEP-024). The order, the short-circuiting and the
+    # single ``consume_pending`` call are identical to the chain they replace —
+    # consume still happens only when the first three conditions hold, so no
+    # pending is claimed by a call that was going to be refused anyway.
+    is_decision = decision.get("decision") in ("approve", "deny")
+    pending = None
+    if is_decision and decision_fresh and decision_is_requester:
+        pending = _pending_confirmations.consume_pending(requester, tool.name, args_hash)
+
+    # A decision can only authorize an action that already existed when it was
+    # spoken. Without this, an "approve" said before the pending was raised —
+    # for something else, or for nothing at all — would authorize whatever
+    # guarded call the model makes next, since the args-hash match is satisfied
+    # by a pending this very turn raised. The human must have seen the action.
+    if pending is not None and decided_at >= pending.created_at:
         tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
-        if decision["decision"] == "approve":
+        verdict = decision["decision"]
+        audit_event(
+            "confirmation_decided",
+            confirmation_id=pending.action_id,
+            tool=tool.name,
+            decision=verdict,
+            decided_by=requester,
+            mode="requester_verified",
+            latency_ms=int(max(0.0, decided_at - pending.created_at) * 1000),
+        )
+        track_confirmation_decided(
+            tool=tool.name,
+            decision=verdict,
+            latency_s=max(0.0, decided_at - pending.created_at),
+        )
+        if verdict == "approve":
             return None  # verified requester approved, proceed
         return {
             "status": "denied",
@@ -421,6 +452,29 @@ def _handle_strict(
                 f"Do not retry it unless the user asks again."
             ),
         }
+
+    # A decision was offered and the gate would not take it. Record why —
+    # these are the entries that did not exist before AEP-024. No decision at
+    # all is not a refusal: that is the first call, and the raise below is its
+    # record.
+    if is_decision:
+        if not decision_is_requester:
+            reason = "not_requester"
+        elif not decision_fresh or pending is not None:
+            # `pending is not None` here means the decision predates it.
+            reason = "stale_decision"
+        else:
+            reason = "no_pending"
+        audit_event(
+            "confirmation_refused",
+            confirmation_id=pending.action_id if pending else None,
+            tool=tool.name,
+            requester=requester,
+            attempted_by=str(decision.get("by") or "") or None,
+            reason=reason,
+            mode="requester_verified",
+        )
+        track_confirmation_refused(tool=tool.name, reason=reason)
 
     # No/stale/mismatched decision — (re-)raise the pending and prompt.
     raise_pending(
