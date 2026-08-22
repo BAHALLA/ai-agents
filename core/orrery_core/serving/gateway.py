@@ -218,6 +218,14 @@ class AgentGateway:
             Off by default — the model-mediated flow is kept for dev surfaces.
     """
 
+    #: The session store, or ``None`` when built via :meth:`from_runner` without
+    #: one. Only :meth:`run` (the resolver path) needs it; ``run_in_session``
+    #: takes an already-resolved id, so a transport that maps sessions itself
+    #: can skip it. Declared here because ``__init__`` always sets a service
+    #: while ``from_runner`` may not — without the annotation the attribute
+    #: infers as non-optional and the two constructors disagree.
+    session_service: BaseSessionService | None
+
     def __init__(
         self,
         *,
@@ -271,12 +279,30 @@ class AgentGateway:
         self = cls.__new__(cls)
         self.app_name = app_name
         self.runner = runner
-        self.session_service = session_service  # type: ignore[assignment]
+        self.session_service = session_service
         self.resolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
         if verified_confirmation:
             ensure_pending_confirmation_store()
         return self
+
+    @property
+    def sessions(self) -> BaseSessionService:
+        """The session store, or a clear failure when there isn't one.
+
+        ``session_service`` is optional only on the :meth:`from_runner` path,
+        so every caller that genuinely needs the store — :meth:`run` and the
+        HTTP session endpoints — narrows through here rather than repeating a
+        ``None`` check or dereferencing an ``Optional`` and getting an
+        ``AttributeError`` from three frames down.
+        """
+        if self.session_service is None:
+            raise RuntimeError(
+                "This AgentGateway has no session_service: it was built by "
+                "from_runner() without one. Pass session_service=..., or use "
+                "run_in_session() with a session id you resolved yourself."
+            )
+        return self.session_service
 
     async def run_in_session(
         self,
@@ -338,9 +364,14 @@ class AgentGateway:
         return delta
 
     async def run(self, msg: InboundMessage, *, on_event: EventHook | None = None) -> OutboundReply:
-        """Resolve *msg*'s conversation to a session and run one turn."""
+        """Resolve *msg*'s conversation to a session and run one turn.
+
+        Raises:
+            RuntimeError: If the gateway has no session store — see
+                :attr:`sessions`.
+        """
         session_id = await self.resolver.resolve(
-            session_service=self.session_service,
+            session_service=self.sessions,
             app_name=self.app_name,
             user_id=msg.user_id,
             key=msg.conversation_key,

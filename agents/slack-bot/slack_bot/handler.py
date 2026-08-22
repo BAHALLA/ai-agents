@@ -69,7 +69,7 @@ class SlackAgentHandler:
         # (app, user_id, session_id) — see SessionMap's docstring.
         session_id = self.session_map.get(channel, thread_ts, user_id)
         if session_id is None:
-            session = await self.gateway.session_service.create_session(
+            session = await self.gateway.sessions.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
             )
