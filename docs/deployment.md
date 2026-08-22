@@ -308,6 +308,14 @@ forthcoming **AEP-015: Cost Observability** for per-tenant budgets.
 
 ## Troubleshooting
 
+!!! tip "Running this on-call? Start with the runbooks."
+    This section covers problems you hit while *installing*. Once the platform
+    is serving traffic, the [runbooks](runbooks/README.md) are the operational
+    reference — begin with the
+    [on-call checklist](runbooks/oncall-checklist.md), and note that every
+    Prometheus alert carries a `runbook_url` annotation pointing straight at
+    the right page.
+
 ### Pods crash-loop on startup
 
 Check the logs — the most common causes are:

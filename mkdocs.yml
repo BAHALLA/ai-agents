@@ -122,6 +122,19 @@ nav:
     - Agent Evaluations: evals.md
     - Cross-Session Memory: memory.md
     - Knowledge Retrieval: knowledge.md
+  - Runbooks:
+    - Overview: runbooks/README.md
+    - On-Call Checklist: runbooks/oncall-checklist.md
+    - Escalation: runbooks/escalation.md
+    - "Agents Unavailable": runbooks/agents-unavailable.md
+    - "Session DB Unreachable": runbooks/session-db-unreachable.md
+    - "Remediation Loop Storm": runbooks/remediation-loop-storm.md
+    - "Circuit Breaker Open": runbooks/circuit-breaker-open.md
+    - "High Tool Error Rate": runbooks/high-tool-error-rate.md
+    - "High LLM Spend": runbooks/high-llm-spend.md
+    - "Prompt Injection Detected": runbooks/prompt-injection-detected.md
+    - "Knowledge Index Unavailable": runbooks/knowledge-index-unavailable.md
+    - Template: runbooks/template.md
     - Observability (Metrics & Tracing): metrics.md
   - Operations:
     - Production Deployment: deployment.md

@@ -1,4 +1,100 @@
+# Prometheus alerting rules.
+#
+# Every rule carries a `runbook_url` annotation (AEP-017). An alert without one
+# is an alert that becomes a source-code archaeology session at 03:00, so the
+# annotation is mandatory — see docs/runbooks/template.md when adding a rule.
+#
+# Runbook URLs point at the published docs site rather than the repository, so
+# the page renders with its cross-links intact.
 groups:
+  - name: orrery_platform
+    rules:
+      # ── Availability ──────────────────────────────────────────────
+      - alert: OrreryAgentDown
+        expr: up{job="agents"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Orrery instance {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has failed scraping for 2 minutes. Chat transports and the web console are unavailable."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/agents-unavailable/"
+
+      # The metrics endpoint keeps serving while the session store is gone, so
+      # database failures surface as tool errors rather than a down target.
+      - alert: OrreryDatabaseUnreachable
+        expr: increase(orrery_tool_errors_total{error_type=~"DatabaseUnavailableError|OperationalError|InterfaceError"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Orrery cannot reach its session database"
+          description: "Session, memory, confirmation and idempotency stores share one PostgreSQL; they degrade together."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/session-db-unreachable/"
+
+      # ── Autonomous remediation ────────────────────────────────────
+      # verify_route caps a single sweep at 3 act->verify cycles, so a sustained
+      # rate above that means sweeps are being re-triggered — the cap is
+      # per-run, not across runs. This is the one path with no human in the
+      # conversation, hence critical rather than warning.
+      - alert: OrreryRemediationStorm
+        expr: sum(increase(orrery_tool_calls_total{agent="remediation_actor"}[15m])) > 6
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Remediation actor has taken {{ $value }} actions in 15m"
+          description: "A single sweep is capped at 3 actions. More means repeated sweeps, a verifier that cannot observe its own effect, or autonomy above L2 on an unattended run."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/remediation-loop-storm/"
+
+      # ── Tool health ───────────────────────────────────────────────
+      - alert: OrreryCircuitBreakerOpen
+        expr: orrery_circuit_breaker_state == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.tool }}"
+          description: "5 consecutive failures opened the breaker. Most often the monitored backend is genuinely down — the breaker is protecting it."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/circuit-breaker-open/"
+
+      - alert: OrreryHighToolErrorRate
+        expr: |
+          sum by (agent, tool) (rate(orrery_tool_calls_total{status="error"}[5m]))
+            /
+          clamp_min(sum by (agent, tool) (rate(orrery_tool_calls_total[5m])), 0.001)
+            > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.agent }}/{{ $labels.tool }} error rate above 10%"
+          description: "Check the error_type label: connection errors mean the backend is unhealthy, ValidationError means the model is mis-calling the tool."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/high-tool-error-rate/"
+
+      # ── Cost ──────────────────────────────────────────────────────
+      # Input tokens rising while tool calls stay flat is the context-bloat
+      # signature — the runbook separates that from genuine incident load.
+      - alert: OrreryHighTokenBurn
+        expr: sum(rate(orrery_llm_tokens_total[15m])) * 900 > 2000000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM token burn above 2M per 15 minutes"
+          description: "A major incident legitimately costs more. Compare token growth against tool-call growth before treating this as a fault."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/high-llm-spend/"
+
+      # ── Content safety ────────────────────────────────────────────
+      # NOT YET ALERTABLE. SafetyScreenPlugin logs every detection but exports
+      # no metric, and MetricsPlugin bounds the `status` label to
+      # {ok, success, error, confirmation_required} to cap cardinality — so a
+      # BLOCKED tool result is recorded as `ok` and no expression over
+      # orrery_tool_calls_total can distinguish it. Detection is log-only
+      # today; docs/runbooks/prompt-injection-detected.md carries the log
+      # queries. Adding an orrery_safety_screen_total counter would make this
+      # alertable, and pairs naturally with the counters AEP-024 proposes.
+
   - name: demo_alerts
     rules:
       - alert: TargetDown
@@ -9,6 +105,7 @@ groups:
         annotations:
           summary: "Target {{ $labels.instance }} is down"
           description: "{{ $labels.job }}/{{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/agents-unavailable/"
 
       - alert: HighPrometheusScrapeLatency
         expr: scrape_duration_seconds > 1
@@ -18,7 +115,11 @@ groups:
         annotations:
           summary: "High scrape latency on {{ $labels.instance }}"
           description: "Scrape duration is {{ $value }}s on {{ $labels.instance }}."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/"
 
+  # Alerts about the *monitored* infrastructure. Orrery reporting these is
+  # Orrery working; the runbook index explains that distinction, and the
+  # specific remediation belongs to whoever owns Kafka.
   - name: kafka_alerts
     rules:
       - alert: KafkaConsumerGroupLag
@@ -29,6 +130,7 @@ groups:
         annotations:
           summary: "Consumer group {{ $labels.consumergroup }} has high lag"
           description: "Lag is {{ $value }} on topic {{ $labels.topic }}."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/"
 
       - alert: KafkaUnderReplicatedPartitions
         expr: kafka_topic_partition_under_replicated_partition > 0
@@ -38,3 +140,4 @@ groups:
         annotations:
           summary: "Under-replicated partitions on {{ $labels.topic }}"
           description: "Partition {{ $labels.partition }} of topic {{ $labels.topic }} is under-replicated."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/"
