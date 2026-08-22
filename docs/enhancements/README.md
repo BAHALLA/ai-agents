@@ -22,7 +22,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-021](aep-021-provider-fallback.md) | LLM Provider Fallback Chain | <span class="badge badge--amber">proposed</span> | Low-Medium | High |
-| <span class="badge badge--amber">P1</span> | [AEP-024](aep-024-approval-audit-events.md) | Approval Audit Events | <span class="badge badge--amber">proposed</span> | Low | Medium-High |
+| <span class="badge badge--amber">P1</span> | [AEP-024](aep-024-approval-audit-events.md) | Approval Audit Events | <span class="badge badge--green">completed</span> | Low | Medium-High |
 | <span class="badge badge--amber">P1</span> | [AEP-025](aep-025-knowledge-retrieval.md) | Pluggable Knowledge Retrieval | <span class="badge badge--green">completed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-022](aep-022-trajectory-capture.md) | Trajectory Capture & Eval Harvesting | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">proposed</span> | Medium | Medium |
@@ -73,8 +73,8 @@ make agents truly autonomous and operable in production:
 - **AEP-017 ✅**: On-call runbooks + `runbook_url` on every alert *(completed 2026-08-22)*
 - **AEP-020 ✅**: Conversation context compaction so long incident sessions don't overflow the model window *(completed 2026-07-25)*
 - **AEP-021**: LLM provider fallback chain so a provider outage/quota isn't a full platform outage
-- **AEP-024**: Approval audit events — record *who approved* a destructive action, and every refused approval
-- **AEP-025 (phase 1) ✅**: Pluggable knowledge retrieval — two seams, Elasticsearch/BM25 backend, `search_knowledge` on the tool path *(completed 2026-08-22; pgvector + Confluence remain)*
+- **AEP-024 ✅**: Approval audit events — four lifecycle events, counters, and a critical alert on non-requester approval attempts *(completed 2026-08-22)*
+- **AEP-025 ✅**: Pluggable knowledge retrieval — two seams, Elasticsearch/BM25 and hybrid pgvector backends, filesystem/git/Confluence sources *(completed 2026-08-22; retrieval-quality evals remain)*
 
 ### Phase 3 - Extended Features (P2)
 
@@ -127,6 +127,6 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-08-22 | AEP-024 added (P1) | Audit review: the confirmation gate enforces requester-verified approval correctly but records no approval event. Refused approvals — a second person trying to approve someone else's destructive action — leave no trace at all. |
 | 2026-08-22 | AEP-025 added (P1) | Largest remaining capability gap: the agent reads live infrastructure through ~70 tools but cannot read anything a human wrote. No runbooks, postmortems or indexed docs exist, and memory recall is lexical. Scoped as two seams (sources, retrieval backends) so neither a document store nor a search vendor is hard-wired. |
 | 2026-08-22 | AEP-026 added (P2) | The platform records every session, tool outcome and triage verdict and never reads them in aggregate. Sequenced behind AEP-025, which gives generated REX documents somewhere to land. |
-| 2026-08-22 | AEP-025: proposed → phase 1 completed | Seams, chunking, sync and the Elasticsearch backend shipped; `search_knowledge` is a real tool so the safety chain observes it, with a build-failing guard against model built-in grounding. pgvector, Confluence and retrieval evals remain. |
 | 2026-08-22 | AEP-017: proposed → completed | Eleven runbooks and `runbook_url` on all ten alert rules. Unblocked by AEP-025: the corpus now has somewhere to be retrieved from. One planned alert was dropped rather than shipped broken — prompt-injection detection exports no metric, so it cannot be alerted on today. |
 | 2026-08-22 | AEP-025: proposed → completed | Phase 1 (seams, chunking, sync, Elasticsearch/BM25, `search_knowledge` on the tool path) then phase 2 (provider-agnostic `resolve_embedder()`, a hybrid pgvector backend fusing semantic and lexical ranks because pure vector search misses exact identifiers, and a Confluence source that refuses to auto-discover spaces). Retrieval-quality evals remain the one open acceptance criterion. |
+| 2026-08-22 | AEP-024: proposed → completed | Four confirmation lifecycle events on the audit stream, four counters and a decision-latency histogram, plus a critical alert on non-requester approval attempts. No `confirmation_id` column was needed — `action_id` was already a uuid primary key. |

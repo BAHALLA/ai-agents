@@ -52,6 +52,9 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from ..observability.audit import audit_event
+from ..observability.metrics import track_confirmations_expired
+
 logger = logging.getLogger("orrery.confirmation")
 
 #: Env var selecting the backend: ``memory`` (default) or ``postgres``.
@@ -85,6 +88,19 @@ class PendingConfirmation:
     created_at: float = field(default_factory=time.time)
     approved: bool = False
     approved_at: float | None = None
+
+
+def _record_expiry(count: int) -> None:
+    """Log and count pendings that aged out unanswered.
+
+    An expired pending and one the operator never saw look identical without
+    this — both simply stop existing. Shared by both backends so the record
+    does not depend on which one a deployment runs.
+    """
+    if count <= 0:
+        return
+    audit_event("confirmation_expired", count=count, age_ms=int(_CONFIRMATION_TTL * 1000))
+    track_confirmations_expired(count)
 
 
 class ConfirmationStore:
@@ -235,7 +251,9 @@ class ConfirmationStore:
         with self._lock:
             before = len(self._pending)
             self._prune_expired_locked()
-            return before - len(self._pending)
+            expired = before - len(self._pending)
+        _record_expiry(expired)
+        return expired
 
     # ── internals ────────────────────────────────────────────────────
 
@@ -488,7 +506,9 @@ class PostgresConfirmationStore:
     def purge_expired(self) -> int:
         """Delete expired rows; returns the count (also the reachability probe)."""
         with self._engine.begin() as conn:
-            return self._prune_expired(conn)
+            expired = self._prune_expired(conn)
+        _record_expiry(expired)
+        return expired
 
     # ── internals ────────────────────────────────────────────────────
 

@@ -2,11 +2,29 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | Low (1-2 days) |
 | **Impact** | Medium-High |
 | **Dependencies** | AEP-001 (confirmation), AEP-013 (auth) — both completed |
+
+> **Completed 2026-08-22.** One deviation from the plan below: **no
+> `confirmation_id` column was added.** `PendingConfirmation.action_id` is
+> already a `uuid4` primary key on both backends, so a second identifier would
+> have been a redundant column that could drift out of step. The events carry
+> `action_id` under the `confirmation_id` field name, which keeps the log
+> schema this AEP specified without touching the store.
+>
+> Everything else landed as written: four lifecycle events on the audit stream,
+> a shared `audit_event()` helper, `mode` provenance, four counters plus a
+> decision-latency histogram, and two alert rules — including
+> `OrreryUnauthorizedApprovalAttempt` at **critical**, the only alert in the
+> file about a person rather than a system.
+>
+> The gate's `and` chain was decomposed into staged guards so a refusal can
+> name *why*. Ordering, short-circuiting and the single `consume_pending()`
+> call are unchanged, and `test_guardrails.py` passes untouched — which was the
+> requirement, since this was meant to be observability only.
 
 ## Gap Analysis
 

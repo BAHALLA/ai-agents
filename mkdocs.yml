@@ -133,6 +133,7 @@ nav:
     - "High Tool Error Rate": runbooks/high-tool-error-rate.md
     - "High LLM Spend": runbooks/high-llm-spend.md
     - "Prompt Injection Detected": runbooks/prompt-injection-detected.md
+    - "Unauthorized Approval Attempt": runbooks/unauthorized-approval-attempt.md
     - "Knowledge Index Unavailable": runbooks/knowledge-index-unavailable.md
     - Template: runbooks/template.md
     - Observability (Metrics & Tracing): metrics.md

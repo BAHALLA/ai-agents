@@ -87,7 +87,11 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Merge extra fields (audit entries, custom context, etc.)
+        # Merge extra fields (audit entries, custom context, etc.).
+        # An explicit allowlist rather than a sweep over ``record.__dict__``:
+        # logging puts a lot of machinery on a record, and a caller can attach
+        # anything through ``extra``, so an unfiltered merge would leak both
+        # into the log stream and make the shape unstable.
         for key in (
             "agent",
             "tool",
@@ -96,6 +100,18 @@ class JSONFormatter(logging.Formatter):
             "response",
             "user_id",
             "session_id",
+            # ── Confirmation lifecycle (AEP-024) ──
+            "event",
+            "confirmation_id",
+            "requester",
+            "decided_by",
+            "attempted_by",
+            "decision",
+            "reason",
+            "mode",
+            "latency_ms",
+            "age_ms",
+            "count",
         ):
             value = getattr(record, key, None)
             if value is not None:
