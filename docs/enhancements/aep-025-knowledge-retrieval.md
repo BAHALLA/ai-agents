@@ -83,12 +83,13 @@ Three records in `core/orrery_core/knowledge/models.py`, deliberately small:
 ```python
 @dataclass(frozen=True)
 class Document:
-    uri: str            # stable identity: "git://repo@path", "confluence://SPACE/12345"
+    uri: str  # stable identity: "git://repo@path", "confluence://SPACE/12345"
     title: str
     text: str
-    revision: str       # commit sha, Confluence version, file mtime+size
+    revision: str  # commit sha, Confluence version, file mtime+size
     updated_at: datetime
-    labels: Mapping[str, str]   # space, repo, severity, system…
+    labels: Mapping[str, str]  # space, repo, severity, system…
+
 
 @dataclass(frozen=True)
 class Passage:
@@ -111,14 +112,17 @@ retrieval entirely.
 ```python
 class KnowledgeSource(Protocol):
     name: str
+
     def documents(self, since: str | None = None) -> AsyncIterator[Document]: ...
+
 
 class KnowledgeRetriever(Protocol):
     async def retrieve(
         self, query: str, *, top_k: int, labels: Mapping[str, str] | None = None
     ) -> list[Passage]: ...
 
-class KnowledgeIndex(Protocol):        # optional — self-hosted backends only
+
+class KnowledgeIndex(Protocol):  # optional — self-hosted backends only
     async def upsert(self, chunks: Sequence[Chunk]) -> None: ...
     async def delete_by_uri(self, uri: str) -> None: ...
 ```
