@@ -1,6 +1,6 @@
 .PHONY: help \
         install check fmt test test-web test-cov eval lint type-check ty clean \
-        lock lock-check \
+        lock lock-check knowledge-sync \
         run-dev run-cli run-api run-web run-slack run-chat run-triage \
         up down reset logs ps \
         dev-token dev-token-reset \
@@ -180,6 +180,16 @@ endif
 
 run-triage: ## Run the deterministic triage Workflow once (batch / scheduled)
 	cd $(ASSISTANT_DIR) && uv run python run_triage.py
+
+# Indexing is a build-time action, never lazy at request time — a first query
+# that silently triggers a full crawl is an outage waiting for its moment.
+# ROOT is repeatable via `ROOT="docs/runbooks docs/adr"`; PRUNE=0 keeps
+# documents no source produced this run.
+knowledge-sync: ## Index the docs corpus into ORRERY_KNOWLEDGE_BACKEND
+	uv run python scripts/knowledge_sync.py \
+		$(foreach r,$(ROOT),--root $(r)) \
+		$(if $(filter 0,$(PRUNE)),--no-prune,) \
+		$(if $(filter 0,$(GIT)),--no-git,)
 
 run-web: ## Web console dev server with HMR (Vite :5173, proxies the API on :8000)
 	cd $(WEB_DIR) && npm run dev

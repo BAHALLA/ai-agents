@@ -2051,6 +2051,9 @@ dependencies = [
 auth = [
     { name = "pyjwt", extra = ["crypto"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
+knowledge = [
+    { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
 otel = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -2081,10 +2084,11 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'auth'", specifier = ">=2.13.0" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'server'", specifier = ">=2.13.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "requests", marker = "extra == 'knowledge'", specifier = ">=2.34.2" },
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.10" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.52.0" },
 ]
-provides-extras = ["postgres", "auth", "server", "otel"]
+provides-extras = ["postgres", "auth", "server", "otel", "knowledge"]
 
 [[package]]
 name = "packaging"

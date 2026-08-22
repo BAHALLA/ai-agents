@@ -88,8 +88,15 @@ from orrery_core import (
     load_agent_env,
     resolve_planner,
 )
+from orrery_core.knowledge import knowledge_tool
 
 load_agent_env(__file__)
+
+# ``None`` when ORRERY_KNOWLEDGE_BACKEND is unset (the default). Attaching a
+# search tool with no corpus behind it would teach the model to call it and get
+# nothing back, which is worse than not offering it at all — so the tool and
+# the instruction section that documents it both appear only when configured.
+_knowledge_tool = knowledge_tool()
 
 # Resolve once at import time so triage_summarizer + remediation share an instance.
 _planner = resolve_planner()
@@ -327,6 +334,29 @@ incident_triage_agent = create_agent(
 # The interactive root. A chat-mode LlmAgent (default for a root agent) that holds
 # real conversational history and delegates to specialists via AgentTool. It must
 # be the root — ADK 2.0 forbids a chat-mode agent as a routed node inside a graph.
+# Appended to the coordinator's instruction only when a corpus is configured.
+# `load_memory` recalls what *this platform* did before; `search_knowledge`
+# returns what *humans wrote* — different sources, and the model needs to be
+# told when each is the right one or it will reach for whichever it saw last.
+_KNOWLEDGE_INSTRUCTION = (
+    ""
+    if _knowledge_tool is None
+    else (
+        "\n\n## Written documentation (search_knowledge)\n"
+        "`search_knowledge` searches the team's runbooks, postmortems and ADRs — "
+        "what humans wrote, as opposed to `load_memory`, which recalls what this "
+        "platform did in past sessions. **When to call it:** before diagnosing a "
+        "symptom or alert from scratch, to check whether a documented procedure "
+        "already exists. Prefer it over improvising a remediation. **How to "
+        "query:** a short phrase naming the system and symptom, not the user's "
+        "whole message. **Using results:** every passage carries a `source` and "
+        "an `age_days`; cite the source for any claim you take from it, and when "
+        "a passage is marked `stale` say so rather than presenting it as current. "
+        "If the search returns no results, that means nothing is written down — "
+        "carry on from live signals and say the corpus had no coverage."
+    )
+)
+
 orrery_chat_agent = create_agent(
     name="orrery_chat_agent",
     description="Conversational DevOps orchestrator that routes queries to specialist agents.",
@@ -380,7 +410,7 @@ orrery_chat_agent = create_agent(
         "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
         "message. Call it at most once per turn, then correlate with any genuine "
         "match — cite it only when it actually fits; if nothing matches, proceed "
-        "normally without mentioning memory."
+        "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION
     ),
     tools=[
         AgentTool(agent=kafka_agent),
@@ -391,6 +421,7 @@ orrery_chat_agent = create_agent(
         AgentTool(agent=journal_agent),
         AgentTool(agent=incident_triage_agent),
         LoadMemoryTool(),
+        *([_knowledge_tool] if _knowledge_tool is not None else []),
     ],
 )
 

@@ -121,6 +121,7 @@ nav:
     - Testing RBAC: rbac-testing.md
     - Agent Evaluations: evals.md
     - Cross-Session Memory: memory.md
+    - Knowledge Retrieval: knowledge.md
     - Observability (Metrics & Tracing): metrics.md
   - Operations:
     - Production Deployment: deployment.md
