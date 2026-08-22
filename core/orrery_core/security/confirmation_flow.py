@@ -17,6 +17,11 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from ..observability.audit import audit_event
+from ..observability.metrics import (
+    track_confirmation_raised,
+    track_confirmation_refused,
+)
 from .confirmation_store import AnyConfirmationStore, PendingConfirmation
 
 # Guard levels attached by the @confirm / @destructive decorators
@@ -66,6 +71,20 @@ def raise_pending(
         invocation_id=invocation_id,
     )
     store.add(pending)
+    # Emitted here rather than in each transport's gate: every surface
+    # (HTTP, Slack, Chat, CLI) funnels through this one function, so the
+    # trail cannot miss a pending because a new transport forgot to log it.
+    mode = "requester_verified" if scope_key == requester else "scoped"
+    audit_event(
+        "confirmation_raised",
+        confirmation_id=pending.action_id,
+        tool=tool_name,
+        requester=requester,
+        session_id=session_id,
+        mode=mode,
+        args=dict(args),
+    )
+    track_confirmation_raised(tool=tool_name, mode=mode)
     return pending
 
 
@@ -92,6 +111,18 @@ def approval_refusal(
     requester_norm = (pending.requester or "").strip().lower()
     if decider_norm and requester_norm and decider_norm == requester_norm:
         return None
+    # The event the platform previously had no record of at all: someone other
+    # than the requester trying to approve a guarded action.
+    reason = "unknown_requester" if not decider_norm else "not_requester"
+    audit_event(
+        "confirmation_refused",
+        confirmation_id=pending.action_id,
+        tool=pending.tool_name,
+        requester=pending.requester,
+        attempted_by=decider or None,
+        reason=reason,
+    )
+    track_confirmation_refused(tool=pending.tool_name, reason=reason)
     who = requester_display or pending.requester or "unknown"
     return (
         f"Approval refused: only the requester ({who}) may approve "

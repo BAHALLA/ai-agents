@@ -111,6 +111,45 @@ SAFETY_SCREEN_TOTAL = Counter(
     ["direction", "source"],
 )
 
+#: Confirmation lifecycle (AEP-024).
+#:
+#: The gate already enforced requester-verified approval correctly; what it did
+#: not do was leave a record. ``refused`` is the reason these exist: a second
+#: person attempting to approve someone else's destructive action is the most
+#: interesting event this subsystem can produce, and it left no trace anywhere.
+CONFIRMATIONS_RAISED_TOTAL = Counter(
+    "orrery_confirmations_raised_total",
+    "Guarded tool calls paused for human approval",
+    ["tool", "mode"],
+)
+
+CONFIRMATIONS_DECIDED_TOTAL = Counter(
+    "orrery_confirmations_decided_total",
+    "Confirmation decisions accepted by the gate",
+    ["tool", "decision"],
+)
+
+CONFIRMATIONS_REFUSED_TOTAL = Counter(
+    "orrery_confirmations_refused_total",
+    "Confirmation decisions rejected by the gate",
+    ["tool", "reason"],
+)
+
+CONFIRMATIONS_EXPIRED_TOTAL = Counter(
+    "orrery_confirmations_expired_total",
+    "Pending confirmations that aged out unanswered",
+)
+
+#: How long humans actually take to decide. Useful capacity data for tuning the
+#: pending TTL: a p95 above the TTL means operators are routinely losing
+#: actions to expiry rather than deciding late.
+CONFIRMATION_DECISION_SECONDS = Histogram(
+    "orrery_confirmation_decision_seconds",
+    "Seconds between raising a confirmation and an accepted decision",
+    ["tool"],
+    buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0),
+)
+
 # ── Module-level server guard ─────────────────────────────────────────
 # Multiple MetricsCollector instances may exist (one per agent module).
 # The HTTP server should start exactly once per process.
@@ -338,3 +377,36 @@ def track_safety_screen(*, direction: str, source: str, spans: int = 1) -> None:
             the run stops at the first match.
     """
     SAFETY_SCREEN_TOTAL.labels(direction=direction, source=source).inc(spans)
+
+
+def track_confirmation_raised(*, tool: str, mode: str) -> None:
+    """Record a guarded call paused for approval."""
+    CONFIRMATIONS_RAISED_TOTAL.labels(tool=tool, mode=mode).inc()
+
+
+def track_confirmation_decided(*, tool: str, decision: str, latency_s: float | None) -> None:
+    """Record an accepted decision, and how long the human took.
+
+    ``latency_s`` is ``None`` when the pending's creation time is unknown (the
+    model-mediated flow has no recorded pending), in which case only the
+    counter moves — an invented latency would poison the histogram.
+    """
+    CONFIRMATIONS_DECIDED_TOTAL.labels(tool=tool, decision=decision).inc()
+    if latency_s is not None and latency_s >= 0:
+        CONFIRMATION_DECISION_SECONDS.labels(tool=tool).observe(latency_s)
+
+
+def track_confirmation_refused(*, tool: str, reason: str) -> None:
+    """Record a decision the gate rejected.
+
+    ``reason`` is a bounded enum (``not_requester``, ``unknown_requester``,
+    ``stale_decision``, ``no_pending``) rather than free text, so it is
+    aggregatable and cannot explode label cardinality.
+    """
+    CONFIRMATIONS_REFUSED_TOTAL.labels(tool=tool, reason=reason).inc()
+
+
+def track_confirmations_expired(count: int = 1) -> None:
+    """Record pending confirmations that aged out unanswered."""
+    if count > 0:
+        CONFIRMATIONS_EXPIRED_TOTAL.inc(count)
