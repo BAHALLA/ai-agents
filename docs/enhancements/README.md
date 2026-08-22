@@ -22,8 +22,11 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--amber">proposed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-021](aep-021-provider-fallback.md) | LLM Provider Fallback Chain | <span class="badge badge--amber">proposed</span> | Low-Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-024](aep-024-approval-audit-events.md) | Approval Audit Events | <span class="badge badge--amber">proposed</span> | Low | Medium-High |
+| <span class="badge badge--amber">P1</span> | [AEP-025](aep-025-knowledge-retrieval.md) | Pluggable Knowledge Retrieval | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-022](aep-022-trajectory-capture.md) | Trajectory Capture & Eval Harvesting | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">proposed</span> | Medium | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-026](aep-026-experience-capture-rex.md) | Experience Capture & REX Generation | <span class="badge badge--amber">proposed</span> | Medium-High | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--amber">proposed</span> | Medium | Medium |
@@ -70,6 +73,8 @@ make agents truly autonomous and operable in production:
 - **AEP-017**: Runbooks for common incidents (circuit breaker open, loop storm, session DB full)
 - **AEP-020 ✅**: Conversation context compaction so long incident sessions don't overflow the model window *(completed 2026-07-25)*
 - **AEP-021**: LLM provider fallback chain so a provider outage/quota isn't a full platform outage
+- **AEP-024**: Approval audit events — record *who approved* a destructive action, and every refused approval
+- **AEP-025**: Pluggable knowledge retrieval — give the agent the runbooks, postmortems and docs humans wrote
 
 ### Phase 3 - Extended Features (P2)
 
@@ -84,6 +89,7 @@ tool organization, and load/chaos coverage:
 - **AEP-019**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter
 - **AEP-022**: Trajectory capture — harvest real runs into eval scenarios (and a fine-tune corpus)
 - **AEP-023**: First-class scheduled agent tasks — recurring triage sweeps with persisted run history
+- **AEP-026**: Experience capture & REX — mine the platform's own incident history into reviewed runbooks
 
 > **AEP-020 – 023** were identified by benchmarking Orrery against the mature
 > [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture):
@@ -118,3 +124,6 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-07-19 | AEP-019: Milestone 1 complete | Tool-call timeline (GET /session/{id}/activity over ActivityPlugin's session_log, owner-scoped) and confirmation UI (GET /confirmations/pending + Approve/Deny panel sending the literal decision words through POST /chat) landed — the console now renders the orchestration and the guarded-action handshake, with the requester-verified gate unchanged as the sole approval authority. Milestones 2–3 (triage view, onboarding wizard) remain. |
 | 2026-07-25 | AEP-020: proposed → completed | Delivered by configuring ADK's native `EventsCompactionConfig` (ADK ≥ 1.16) rather than the hand-rolled `ContextEngine`/plugin the AEP originally specified. Native compaction also avoids splitting a `function_call` from its `function_response` — a bug the proposed slice-based design would have had — and preserves the original events by construction, so lineage needed no custom state. Effort dropped Medium → Low. |
 | 2026-07-19 | AEP-019: Milestone 2 triage view shipped | Run-triage button → incident_triage_agent; GET /session/{id}/triage exposes the recorded incident_severity + triage_report (AgentTool forwards sub-session state deltas to the parent session, verified against ADK 2.4); severity banner with collapsible markdown report; timeline polled every 2.5s while a request is in flight. Remaining for M2: per-system status chips and the remediation trace (batch-workflow-only today). |
+| 2026-08-22 | AEP-024 added (P1) | Audit review: the confirmation gate enforces requester-verified approval correctly but records no approval event. Refused approvals — a second person trying to approve someone else's destructive action — leave no trace at all. |
+| 2026-08-22 | AEP-025 added (P1) | Largest remaining capability gap: the agent reads live infrastructure through ~70 tools but cannot read anything a human wrote. No runbooks, postmortems or indexed docs exist, and memory recall is lexical. Scoped as two seams (sources, retrieval backends) so neither a document store nor a search vendor is hard-wired. |
+| 2026-08-22 | AEP-026 added (P2) | The platform records every session, tool outcome and triage verdict and never reads them in aggregate. Sequenced behind AEP-025, which gives generated REX documents somewhere to land. |
