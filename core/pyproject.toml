@@ -49,6 +49,14 @@ otel = [
     "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
 ]
+# Install with: uv sync --extra knowledge
+# Elasticsearch-backed knowledge retrieval (AEP-025). Talks to the REST API
+# with requests in a worker thread, mirroring agents/elasticsearch — no
+# Elasticsearch client library, and the backend module is imported lazily so
+# a deployment with ORRERY_KNOWLEDGE_BACKEND=none never needs this.
+knowledge = [
+    "requests>=2.34.2",
+]
 
 [tool.setuptools.packages.find]
 include = ["orrery_core*"]
