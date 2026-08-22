@@ -2,7 +2,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { API_PREFIXES } from "./src/api/paths";
+// Explicit .ts extension: Vite's native config loader (planned default in a
+// future major) resolves this file through Node, which does not do
+// extensionless resolution. tsconfig.node.json sets
+// allowImportingTsExtensions, so tsc accepts the specifier as written.
+import { API_PREFIXES } from "./src/api/paths.ts";
 
 // The console is served same-origin by the FastAPI front door in production
 // (StaticFiles from serving/static). During local dev we proxy API calls to a
