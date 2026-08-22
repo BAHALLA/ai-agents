@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -58,6 +59,25 @@ _RRF_K = 60
 _CANDIDATE_POOL = 50
 
 
+#: A table name cannot be a bound parameter — SQL binds values, not
+#: identifiers — so ``KNOWLEDGE_PG_TABLE`` is interpolated into every
+#: statement. It comes from configuration rather than a request, but "config is
+#: trusted" is exactly the assumption that ages badly once values arrive from a
+#: Helm chart, a ConfigMap or an operator CR. Validating once at construction
+#: makes the interpolation provably safe instead of conventionally safe.
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+
+def _validated_identifier(name: str) -> str:
+    """Return *name* if it is a plain SQL identifier; raise otherwise."""
+    if not _IDENTIFIER.match(name or ""):
+        raise KnowledgeBackendError(
+            f"KNOWLEDGE_PG_TABLE={name!r} is not a plain SQL identifier "
+            "(letters, digits and underscores; not starting with a digit)."
+        )
+    return name
+
+
 class PgVectorKnowledgeBackend:
     """Implements both :class:`KnowledgeRetriever` and :class:`KnowledgeIndex`."""
 
@@ -70,7 +90,7 @@ class PgVectorKnowledgeBackend:
         self._config = config or KnowledgeConfig()
         self._embedder = embedder or resolve_embedder()
         self._engine: sa.Engine | None = None
-        self._table = self._config.knowledge_pg_table
+        self._table = _validated_identifier(self._config.knowledge_pg_table)
 
     # ── Engine ───────────────────────────────────────────────────────
 
@@ -214,7 +234,7 @@ class PgVectorKnowledgeBackend:
                 body = EXCLUDED.body, revision = EXCLUDED.revision,
                 updated_at = EXCLUDED.updated_at, ordinal = EXCLUDED.ordinal,
                 labels = EXCLUDED.labels, embedding = EXCLUDED.embedding
-        """)
+        """)  # nosec B608 — identifier validated at construction; all values are bound
         import json as _json
 
         with self._get_engine().begin() as conn:
@@ -225,14 +245,14 @@ class PgVectorKnowledgeBackend:
     async def delete_by_uri(self, uri: str) -> int:
         return await asyncio.to_thread(
             self._execute_count,
-            f"DELETE FROM {self._table} WHERE uri = :uri",
+            f"DELETE FROM {self._table} WHERE uri = :uri",  # nosec B608 — identifier validated by _validated_identifier(); values are bound
             {"uri": uri},
         )
 
     async def delete_stale(self, uri: str, revision: str) -> int:
         return await asyncio.to_thread(
             self._execute_count,
-            f"DELETE FROM {self._table} WHERE uri = :uri AND revision <> :revision",
+            f"DELETE FROM {self._table} WHERE uri = :uri AND revision <> :revision",  # nosec B608 — identifier validated by _validated_identifier(); values are bound
             {"uri": uri, "revision": revision},
         )
 
@@ -244,7 +264,7 @@ class PgVectorKnowledgeBackend:
         def _read() -> dict[str, str]:
             with self._get_engine().connect() as conn:
                 rows = conn.execute(
-                    sa.text(f"SELECT DISTINCT ON (uri) uri, revision FROM {self._table}")
+                    sa.text(f"SELECT DISTINCT ON (uri) uri, revision FROM {self._table}")  # nosec B608 — identifier validated by _validated_identifier(); values are bound
                 ).all()
             return {row.uri: row.revision for row in rows}
 
@@ -311,7 +331,7 @@ class PgVectorKnowledgeBackend:
             JOIN {self._table} c ON c.id = f.id
             ORDER BY f.score DESC
             LIMIT :k
-        """)
+        """)  # nosec B608 — identifier validated at construction; all values are bound
         import json as _json
 
         params: dict[str, Any] = {
