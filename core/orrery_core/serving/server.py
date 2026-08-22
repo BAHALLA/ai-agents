@@ -533,9 +533,7 @@ def create_app(
         the transcript costs a second call (``GET /session/{id}``) and is only
         paid for the conversation actually opened.
         """
-        listed = await gateway.session_service.list_sessions(
-            app_name=app_name, user_id=auth.subject
-        )
+        listed = await gateway.sessions.list_sessions(app_name=app_name, user_id=auth.subject)
         newest_first = sorted(
             listed.sessions, key=lambda s: s.last_update_time or 0.0, reverse=True
         )
@@ -565,7 +563,7 @@ def create_app(
         Same owner scoping as the activity endpoint: another user's session id
         is a plain 404, indistinguishable from one that never existed.
         """
-        session = await gateway.session_service.get_session(
+        session = await gateway.sessions.get_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
         if session is None:
@@ -594,12 +592,12 @@ def create_app(
         missing id a 404 rather than a silent success; the delete itself is
         user-scoped in ADK, so it could never touch another user's session.
         """
-        session = await gateway.session_service.get_session(
+        session = await gateway.sessions.get_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        await gateway.session_service.delete_session(
+        await gateway.sessions.delete_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
         logger.info("Session %s deleted by %s", session_id, auth.subject)
@@ -616,7 +614,7 @@ def create_app(
         session id resolves to nothing — a plain 404, indistinguishable from
         a session that never existed.
         """
-        session = await gateway.session_service.get_session(
+        session = await gateway.sessions.get_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
         if session is None:
@@ -647,7 +645,7 @@ def create_app(
         pins ``user_id`` to the verified subject, so another user's session
         id is a plain 404.
         """
-        session = await gateway.session_service.get_session(
+        session = await gateway.sessions.get_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
         if session is None:
