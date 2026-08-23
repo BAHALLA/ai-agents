@@ -13,7 +13,7 @@ dependencies = [
     # in lockstep with that override.
     "litellm>=1.97.0",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
+    "pydantic-settings>=2.15.0",
     "prometheus-client>=0.26.0",
     "python-dotenv>=1.2.2",
 ]
