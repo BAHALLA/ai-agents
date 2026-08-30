@@ -38,7 +38,7 @@ auth = [
 server = [
     "pyjwt[crypto]>=2.13.0",
     "fastapi>=0.141.1",
-    "uvicorn[standard]>=0.52.0",
+    "uvicorn[standard]>=0.52.4",
     "slowapi>=0.1.10",
 ]
 # Install with: uv sync --extra otel
